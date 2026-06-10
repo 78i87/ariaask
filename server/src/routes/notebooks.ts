@@ -9,6 +9,8 @@ import { sanitizeName, toSummary } from "../domain/store.js";
 import type { SessionManager } from "../domain/session.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
+import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
+import type { SettingsStore } from "../domain/settings.js";
 import { config } from "../config.js";
 
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
@@ -65,7 +67,7 @@ async function processUploads(
   return { sourceFiles, warnings };
 }
 
-export function notebookRoutes(store: NotebookStore, sessions: SessionManager): Router {
+export function notebookRoutes(store: NotebookStore, sessions: SessionManager, settings: SettingsStore): Router {
   const router = Router();
 
   const upload = multer({
@@ -149,6 +151,7 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       // Head start: generate the model-authored setup questions while the
       // user's browser navigates to the session.
       if (nb.intake) void sessions.ensureIntakeQuestions(nb);
+      void ensureRagIndex(store, settings, nb);
 
       res.status(201).json({ notebook: toSummary(nb), warnings });
     },
@@ -298,6 +301,8 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       // these on the next turn via a hidden note (see session.ts).
       nb.pendingNewSources = [...(nb.pendingNewSources ?? []), ...sourceFiles.map((f) => f.storedName)];
       await store.save(nb);
+      // An explicit upload is also the user's signal to retry a failed embedder.
+      void ensureRagIndex(store, settings, nb, { retryNow: true });
 
       res.status(201).json({ notebook: toSummary(nb), added: sourceFiles, warnings });
     },
@@ -326,6 +331,8 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       nb.pendingRemovedSources = [...(nb.pendingRemovedSources ?? []), file.originalName];
     }
     await store.save(nb);
+    // Retrieval already filters deleted sources by storedName; the rebuild compacts.
+    void ensureRagIndex(store, settings, nb, { retryNow: true });
 
     res.json({ notebook: toSummary(nb) });
   });
@@ -350,6 +357,7 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     await sessions.dispose(nb.id);
+    dropRagIndex(nb.id);
     await store.delete(nb.id);
     res.status(204).end();
   });

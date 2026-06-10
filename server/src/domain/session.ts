@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { Response } from "express";
 import { SseConnection } from "../lib/sse.js";
 import { HttpError } from "../lib/errors.js";
@@ -25,6 +27,7 @@ import {
   parseInitialState,
 } from "./learning.js";
 import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntakeQuestions } from "./intake.js";
+import { buildRagQuery, buildRetrievalBlock, ensureRagIndex } from "./rag.js";
 import { buildResearchPrompt, stripWrappingFence, writeResearchDigest } from "./research.js";
 import { toSummary } from "./store.js";
 import type {
@@ -92,6 +95,9 @@ export class SessionManager {
     const conn = new SseConnection(res, () => session.clients.delete(conn));
     session.clients.add(conn);
     const nb = this.store.get(notebookId);
+    // Pre-warm the retrieval index (pre-existing notebooks have none) while
+    // the user reads and types; fire-and-forget, fails open.
+    if (nb) void ensureRagIndex(this.store, this.settings, nb);
     conn.send(
       "state",
       {
@@ -130,6 +136,10 @@ export class SessionManager {
     if (!nb.kickoffDone && nb.intake?.status === "pending") {
       throw new HttpError(409, "intake_pending", "Finish the setup form before starting the session.");
     }
+
+    // Head start for the retrieval block below: build/refresh the index while
+    // the evaluator pass runs. Fire-and-forget, fails open.
+    void ensureRagIndex(this.store, this.settings, nb);
 
     let input: string;
     let kickoff = false;
@@ -236,7 +246,19 @@ export class SessionManager {
       // on a recreated thread the inventory overrides anything the transcript
       // replay might suggest the student should know.
       const beliefBlock = !kickoff && nb.learningState ? buildBeliefBlock(nb.learningState, { includeChanges: true }) : "";
-      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + beliefBlock + input, s.model, effort);
+      // Retrieved-passage grounding (rag.ts): hidden excerpts go after the
+      // belief block so the inventory still bounds what the student
+      // understands. Never on kickoff — its prompt directs a full agentic
+      // read instead. Bounded internally; "" on any failure.
+      const ragBlock = !kickoff
+        ? await buildRetrievalBlock(this.store, this.settings, nb, buildRagQuery(nb.messages, input))
+        : "";
+      if (session.cancelRequested) {
+        // Retrieval is the only await between the pre-evaluator cancel check
+        // and turn/start — don't let a Stop pressed during it be lost.
+        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+      }
+      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + beliefBlock + ragBlock + input, s.model, effort);
       // Only clear once the turn actually started — a failed turn/start must
       // not cost the fresh thread its transcript catch-up or the new-reading note.
       session.catchUpNeeded = false;
@@ -378,7 +400,7 @@ export class SessionManager {
         const topic = nb.type === "topic" ? (nb.topic ?? nb.title) : nb.title;
         const manifest = nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null;
         const raw = await this.client.runOneShotTurn({
-          prompt: buildIntakeQuestionsPrompt(topic, manifest),
+          prompt: buildIntakeQuestionsPrompt(topic, manifest, await this.readSourceHeads(nb)),
           model: s.model,
           effort: this.config.evaluatorEffort,
           timeoutMs: 30_000,
@@ -467,6 +489,8 @@ export class SessionManager {
       fresh.intake!.research = "done";
       await this.store.save(fresh);
       this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
+      // Index the digest while the kickoff turn runs (kickoff never retrieves).
+      void ensureRagIndex(this.store, this.settings, fresh);
     } catch (err) {
       const aborted = session.researchAbort?.signal.aborted === true;
       if (!aborted) console.error(`[aria] online research failed for notebook ${nb.id}; proceeding without it:`, err);
@@ -480,6 +504,36 @@ export class SessionManager {
         this.broadcast(session, "notice", { message: "Aria couldn't finish her online reading — starting without it." });
       }
     }
+  }
+
+  /**
+   * The opening lines of each readable source, for prompts that must know what
+   * the corpus is actually about without spending a tool-using read (file
+   * names and titles alone invite wrong guesses — "CRE" could be catalysis or
+   * religious education). Fail-open: unreadable files are skipped; null when
+   * nothing is readable.
+   */
+  private async readSourceHeads(nb: Notebook, perFileChars = 600, maxFiles = 8): Promise<string | null> {
+    const parts: string[] = [];
+    for (const f of nb.sourceFiles.slice(0, maxFiles)) {
+      const name = f.extractedName ?? (f.storedName.endsWith(".pdf") ? null : f.storedName);
+      if (!name) continue;
+      try {
+        const fh = await fs.open(path.join(this.store.sourcesDir(nb.id), name), "r");
+        try {
+          const buf = Buffer.alloc(perFileChars);
+          const { bytesRead } = await fh.read(buf, 0, perFileChars, 0);
+          // A multibyte char cut at the boundary decodes to U+FFFD — drop it.
+          const text = buf.subarray(0, bytesRead).toString("utf8").replace(/�/g, "").trim();
+          if (text) parts.push(`— ${f.originalName}:\n${text}`);
+        } finally {
+          await fh.close();
+        }
+      } catch {
+        // unreadable file — the prompt just gets fewer excerpts
+      }
+    }
+    return parts.length > 0 ? parts.join("\n\n") : null;
   }
 
   /** One-line description of what the session is about, for the state-manager prompts. */

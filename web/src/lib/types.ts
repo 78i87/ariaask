@@ -60,12 +60,16 @@ export interface AuthStatus {
 
 export type ReplyLength = "concise" | "default" | "chatty";
 export type Probing = "gentle" | "default" | "relentless";
+export type RagMode = "off" | "auto" | "always";
+export type RagRecall = "light" | "default" | "generous";
 
 export interface AppSettings {
   model: string | null;
   effort: string | null;
   replyLength: ReplyLength;
   probing: Probing;
+  ragMode: RagMode;
+  ragRecall: RagRecall;
 }
 
 export interface EffortInfo {

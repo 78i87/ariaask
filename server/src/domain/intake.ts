@@ -79,7 +79,7 @@ export function composeIntakeQuestions(nb: Notebook): IntakeQuestion[] {
 
 // ---------- generation ----------
 
-export function buildIntakeQuestionsPrompt(topic: string | null, manifest: string | null): string {
+export function buildIntakeQuestionsPrompt(topic: string | null, manifest: string | null, heads: string | null): string {
   return `You are designing at most two multiple-choice setup questions for a teaching app. A human
 is about to teach a simulated student named Aria; before the session starts, the teacher
 fills in a short form that tunes Aria. You are a form designer, not the student. Output
@@ -87,6 +87,13 @@ JSON only — no prose, no code fences.
 
 ${topic ? `Topic the teacher will teach: ${topic}.` : ""}
 ${manifest ? `The teacher uploaded reading material for the session:\n${manifest}` : ""}
+${
+  heads
+    ? `\nHow the reading begins (titles and file names can be cryptic or misleading — determine
+the real subject from these excerpts; if the topic name is an abbreviation, expand it from
+the reading, never by guessing):\n${heads}`
+    : ""
+}
 
 The form already asks two fixed questions — do not duplicate them:
 1. Aria's starting point (how fundamental vs. advanced Aria's confusions should be).

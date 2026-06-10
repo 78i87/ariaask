@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { AppServerClient } from "../appserver/client.js";
 import type { Model, ReasoningEffortOption } from "../appserver/protocol.js";
 import type { Probing, ReplyLength } from "../domain/persona.js";
+import type { RagMode, RagRecall } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
 import { HttpError } from "../lib/errors.js";
 
@@ -21,6 +22,8 @@ export interface ModelInfo {
 
 const REPLY_LENGTHS = new Set<ReplyLength>(["concise", "default", "chatty"]);
 const PROBINGS = new Set<Probing>(["gentle", "default", "relentless"]);
+const RAG_MODES = new Set<RagMode>(["off", "auto", "always"]);
+const RAG_RECALLS = new Set<RagRecall>(["light", "default", "generous"]);
 
 /** model/list elements may carry efforts as plain strings or objects; normalize. */
 function normalizeEfforts(raw: Model["supportedReasoningEfforts"]): EffortInfo[] {
@@ -85,8 +88,14 @@ export function settingsRoutes(settings: SettingsStore, client: AppServerClient)
 
   router.put("/", async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const patch: Partial<{ model: string | null; effort: string | null; replyLength: ReplyLength; probing: Probing }> =
-      {};
+    const patch: Partial<{
+      model: string | null;
+      effort: string | null;
+      replyLength: ReplyLength;
+      probing: Probing;
+      ragMode: RagMode;
+      ragRecall: RagRecall;
+    }> = {};
 
     if ("replyLength" in body) {
       if (!REPLY_LENGTHS.has(body.replyLength as ReplyLength)) {
@@ -99,6 +108,18 @@ export function settingsRoutes(settings: SettingsStore, client: AppServerClient)
         throw new HttpError(400, "invalid_settings", `Invalid probing "${String(body.probing)}"`);
       }
       patch.probing = body.probing as Probing;
+    }
+    if ("ragMode" in body) {
+      if (!RAG_MODES.has(body.ragMode as RagMode)) {
+        throw new HttpError(400, "invalid_settings", `Invalid ragMode "${String(body.ragMode)}"`);
+      }
+      patch.ragMode = body.ragMode as RagMode;
+    }
+    if ("ragRecall" in body) {
+      if (!RAG_RECALLS.has(body.ragRecall as RagRecall)) {
+        throw new HttpError(400, "invalid_settings", `Invalid ragRecall "${String(body.ragRecall)}"`);
+      }
+      patch.ragRecall = body.ragRecall as RagRecall;
     }
 
     const needsModels = "model" in body || "effort" in body;

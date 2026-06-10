@@ -210,6 +210,45 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </section>
 
           <section className="settings__section">
+            <h3 className="settings__heading label-large">Reading recall</h3>
+            <div className="settings__style-row">
+              <span className="body-medium settings__style-label">Recall</span>
+              <Segmented
+                ariaLabel="Reading recall"
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "auto", label: "Auto" },
+                  { value: "always", label: "Always" },
+                ]}
+                value={settings.ragMode}
+                onChange={(v) => update({ ragMode: v as AppSettings["ragMode"] })}
+              />
+            </div>
+            {settings.ragMode !== "off" && (
+              <div className="settings__style-row">
+                <span className="body-medium settings__style-label">Amount</span>
+                <Segmented
+                  ariaLabel="Recall amount"
+                  options={[
+                    { value: "light", label: "Light" },
+                    { value: "default", label: "Default" },
+                    { value: "generous", label: "Generous" },
+                  ]}
+                  value={settings.ragRecall}
+                  onChange={(v) => update({ ragRecall: v as AppSettings["ragRecall"] })}
+                />
+              </div>
+            )}
+            <span className="settings__supporting body-medium">
+              {settings.ragMode === "off"
+                ? "Aria relies only on her own read of the sources."
+                : settings.ragMode === "always"
+                  ? "While you teach, Aria quietly recalls the most relevant passages from any reading."
+                  : "For larger readings, Aria quietly recalls the most relevant passages while you teach."}
+            </span>
+          </section>
+
+          <section className="settings__section">
             <h3 className="settings__heading label-large">Color theme</h3>
             <div className="settings__swatches" role="radiogroup" aria-label="Color theme">
               {SWATCHES.map((s) => (

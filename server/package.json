@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "express": "^5.1.0",
     "multer": "^2.0.1",
     "pdf-parse": "1.1.1"

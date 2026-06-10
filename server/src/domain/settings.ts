@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { writeFileAtomic } from "../lib/atomic.js";
 import type { Probing, ReplyLength } from "./persona.js";
+import type { RagMode, RagRecall } from "./rag.js";
 
 export interface Settings {
   schemaVersion: 1;
@@ -11,10 +12,16 @@ export interface Settings {
   effort: string | null;
   replyLength: ReplyLength;
   probing: Probing;
+  /** Reading recall (rag.ts): off / auto (large readings only) / always. */
+  ragMode: RagMode;
+  /** How much reading the student recalls per turn. */
+  ragRecall: RagRecall;
 }
 
 const REPLY_LENGTHS: ReplyLength[] = ["concise", "default", "chatty"];
 const PROBINGS: Probing[] = ["gentle", "default", "relentless"];
+const RAG_MODES: RagMode[] = ["off", "auto", "always"];
+const RAG_RECALLS: RagRecall[] = ["light", "default", "generous"];
 
 export class SettingsStore {
   private settings: Settings;
@@ -30,6 +37,8 @@ export class SettingsStore {
       effort: seed.effort,
       replyLength: "default",
       probing: "default",
+      ragMode: "auto",
+      ragRecall: "default",
     };
   }
 
@@ -50,6 +59,8 @@ export class SettingsStore {
             ? (parsed.replyLength as ReplyLength)
             : "default",
           probing: PROBINGS.includes(parsed.probing as Probing) ? (parsed.probing as Probing) : "default",
+          ragMode: RAG_MODES.includes(parsed.ragMode as RagMode) ? (parsed.ragMode as RagMode) : "auto",
+          ragRecall: RAG_RECALLS.includes(parsed.ragRecall as RagRecall) ? (parsed.ragRecall as RagRecall) : "default",
         };
         return;
       }
@@ -63,7 +74,9 @@ export class SettingsStore {
     return this.settings;
   }
 
-  async update(patch: Partial<Pick<Settings, "model" | "effort" | "replyLength" | "probing">>): Promise<Settings> {
+  async update(
+    patch: Partial<Pick<Settings, "model" | "effort" | "replyLength" | "probing" | "ragMode" | "ragRecall">>,
+  ): Promise<Settings> {
     this.settings = { ...this.settings, ...patch };
     await this.persist();
     return this.settings;

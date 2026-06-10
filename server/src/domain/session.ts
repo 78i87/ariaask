@@ -7,7 +7,16 @@ import { RpcError } from "../appserver/rpc.js";
 import type { Config } from "../config.js";
 import type { ChatMessage, Notebook, NotebookStore } from "./store.js";
 import type { SettingsStore } from "./settings.js";
-import { buildCatchUpBlock, buildDeveloperInstructions, buildKickoffPrompt, buildNewSourcesNote } from "./persona.js";
+import { buildCatchUpBlock, buildDeveloperInstructions, buildKickoffPrompt, buildNewSourcesNote, sourcesManifest } from "./persona.js";
+import {
+  applyEvaluatorOutput,
+  buildBeliefBlock,
+  buildBootstrapPrompt,
+  buildEvaluatorPrompt,
+  buildInitialStatePromptSources,
+  buildInitialStatePromptTopic,
+  parseInitialState,
+} from "./learning.js";
 import type {
   AgentMessageDeltaNotification,
   ErrorNotification,
@@ -40,6 +49,10 @@ interface NotebookSession {
   threadGeneration: number;
   /** When the thread was recreated after a lost rollout, prepend a transcript catch-up. */
   catchUpNeeded: boolean;
+  /** Belief-state bootstrap for a pre-feature notebook is tried once per session, not per turn. */
+  learningBootstrapAttempted: boolean;
+  /** Set by interrupt() while a turn is still "starting" (belief evaluator running); aborts before turn/start. */
+  cancelRequested: boolean;
   unsubscribe: (() => void) | null;
   watchdog: NodeJS.Timeout | null;
   /** Inner watchdog timer that force-resets a wedged turn; tracked so it can be cancelled. */
@@ -120,9 +133,19 @@ export class SessionManager {
     session.partials.clear();
     session.finalizedItems.clear();
     session.kickoffMessages = [];
+    session.cancelRequested = false;
 
     let teacherMessageId: string | null = null;
     try {
+      if (kickoff && !nb.learningState && !this.config.learningStateDisabled) {
+        // The belief inventory must exist before ensureThread pins the
+        // persona (the belief contract is part of developerInstructions) and
+        // before the kickoff prompt is built from it. Fail-open: without a
+        // state the kickoff falls back to self-invented misconceptions.
+        await this.generateInitialState(nb);
+        input = buildKickoffPrompt(nb);
+      }
+
       await this.ensureThread(nb, session);
 
       // Snapshot the catch-up transcript BEFORE persisting the new teacher
@@ -165,12 +188,34 @@ export class SessionManager {
         this.broadcast(session, "message", { id: teacherMessageId, role: "teacher", text: input, turnId: null });
       }
 
+      // The strict gate: a separate evaluator pass decides whether the
+      // teacher's message justifies updating the student's beliefs, BEFORE
+      // the student replies — so the reply already reflects (only) the
+      // justified changes.
+      if (!kickoff && !this.config.learningStateDisabled) {
+        await this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!);
+      }
+      if (session.cancelRequested) {
+        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+      }
+
       const s = this.settings.get();
       const effort = kickoff ? this.kickoffEffort(s.effort) : s.effort;
-      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + input, s.model, effort);
+      // The kickoff prompt already carries the belief inventory; every later
+      // turn gets it as a prepended block — after the catch-up transcript, so
+      // on a recreated thread the inventory overrides anything the transcript
+      // replay might suggest the student should know.
+      const beliefBlock = !kickoff && nb.learningState ? buildBeliefBlock(nb.learningState, { includeChanges: true }) : "";
+      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + beliefBlock + input, s.model, effort);
       // Only clear once the turn actually started — a failed turn/start must
       // not cost the fresh thread its transcript catch-up or the new-reading note.
       session.catchUpNeeded = false;
+      if (nb.learningState && nb.learningState.lastChanges.length > 0) {
+        // The realizations were delivered with this turn — don't replay them
+        // on the next one. (A failed turn/start keeps them for the retry.)
+        nb.learningState.lastChanges = [];
+        await this.store.save(nb);
+      }
       if (notifiedNames.size > 0) {
         // Remove only what this turn's note covered — files added while the
         // turn was starting stay pending for the next one.
@@ -206,6 +251,12 @@ export class SessionManager {
     const session = this.sessions.get(notebookId);
     const nb = this.store.get(notebookId);
     if (!session || !nb || session.state === "idle") return false;
+    if (session.state === "starting") {
+      // The student turn hasn't reached Codex yet (the belief evaluator may
+      // be running) — flag it so startTurn aborts before turn/start.
+      session.cancelRequested = true;
+      return true;
+    }
     if (!session.turnId || !nb.threadId) return false;
     session.state = "interrupting";
     try {
@@ -244,6 +295,8 @@ export class SessionManager {
         kickoffMessages: [],
         threadGeneration: -1,
         catchUpNeeded: false,
+        learningBootstrapAttempted: false,
+        cancelRequested: false,
         unsubscribe: null,
         watchdog: null,
         forceResetTimer: null,
@@ -256,14 +309,119 @@ export class SessionManager {
   private static readonly EFFORT_LADDER = ["low", "medium", "high", "xhigh"];
 
   /**
-   * The kickoff turn reads sources and designs misconceptions — never run it
-   * below medium, but honor a user who chose high/xhigh.
+   * The kickoff turn reads sources and composes the opener from its assigned
+   * beliefs (or, in the fallback, designs misconceptions itself) — never run
+   * it below medium, but honor a user who chose high/xhigh.
    */
   private kickoffEffort(chosen: string | null): string {
     if (this.config.kickoffEffortOverride) return this.config.kickoffEffortOverride;
     if (!chosen) return "medium";
     const ladder = SessionManager.EFFORT_LADDER;
     return ladder.indexOf(chosen) > ladder.indexOf("medium") ? chosen : "medium";
+  }
+
+  /** One-line description of what the session is about, for the state-manager prompts. */
+  private learningContext(nb: Notebook): string {
+    const parts: string[] = [];
+    if (nb.type === "topic" || nb.topic) parts.push(`The subject being taught: ${nb.topic ?? nb.title}.`);
+    if (nb.sourceFiles.length > 0) parts.push(`The session has assigned reading:\n${sourcesManifest(nb.sourceFiles)}`);
+    return parts.join("\n\n") || `The subject being taught: ${nb.title}.`;
+  }
+
+  /**
+   * Generate the kickoff belief inventory via a one-shot side call. Fail-open:
+   * on any failure the notebook stays stateless and the whole learning-state
+   * layer is skipped, reproducing pre-feature behavior exactly.
+   */
+  private async generateInitialState(nb: Notebook): Promise<void> {
+    const s = this.settings.get();
+    try {
+      const raw =
+        nb.sourceFiles.length > 0
+          ? await this.client.runOneShotTurn({
+              prompt: buildInitialStatePromptSources(sourcesManifest(nb.sourceFiles), nb.type === "topic" ? (nb.topic ?? nb.title) : null),
+              model: s.model,
+              // It has to actually read the sources — low effort skimps on that.
+              effort: "medium",
+              cwd: this.store.sourcesDir(nb.id),
+              timeoutMs: 120_000,
+            })
+          : await this.client.runOneShotTurn({
+              prompt: buildInitialStatePromptTopic(nb.topic ?? nb.title),
+              model: s.model,
+              effort: this.config.evaluatorEffort,
+              timeoutMs: 90_000,
+            });
+      const state = parseInitialState(raw);
+      if (!state) {
+        console.error(`[aria] initial belief state for notebook ${nb.id} was unusable; falling back to stateless kickoff`);
+        return;
+      }
+      nb.learningState = state;
+      await this.store.save(nb);
+    } catch (err) {
+      console.error(`[aria] initial belief state generation failed for notebook ${nb.id}; falling back:`, err);
+    }
+  }
+
+  /**
+   * The gatekeeper between the teacher's message and the student's beliefs:
+   * a strict one-shot evaluator decides which belief changes the message
+   * justifies — and usually that is none. Never throws; any failure leaves
+   * the beliefs unchanged and the turn proceeds.
+   */
+  private async runEvaluator(
+    nb: Notebook,
+    session: NotebookSession,
+    teacherText: string,
+    teacherMessageId: string,
+  ): Promise<void> {
+    try {
+      const s = this.settings.get();
+      if (!nb.learningState) {
+        // Pre-feature notebook: reconstruct an inventory from the transcript,
+        // at most once per session so a persistent failure doesn't tax every turn.
+        if (session.learningBootstrapAttempted || nb.messages.length === 0) return;
+        session.learningBootstrapAttempted = true;
+        this.broadcast(session, "activity", { kind: "thinking" });
+        const raw = await this.client.runOneShotTurn({
+          prompt: buildBootstrapPrompt(nb.messages, this.learningContext(nb)),
+          model: s.model,
+          effort: this.config.evaluatorEffort,
+          timeoutMs: 90_000,
+        });
+        const state = parseInitialState(raw);
+        if (!state) return;
+        nb.learningState = state;
+        await this.store.save(nb);
+        this.broadcast(session, "learning-state", { state });
+      }
+
+      const state = nb.learningState;
+      if (state.lastEvaluatedMessageId === teacherMessageId) return; // retry of an already-evaluated message
+      this.broadcast(session, "activity", { kind: "thinking" });
+      const context = nb.messages.filter((m) => m.id !== teacherMessageId).slice(-6);
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildEvaluatorPrompt(state, teacherText, context),
+        model: s.model,
+        effort: this.config.evaluatorEffort,
+        timeoutMs: 60_000,
+      });
+      const next = applyEvaluatorOutput(raw, state);
+      if (!next) {
+        state.lastChanges = [];
+        console.error(`[aria] belief evaluator output for notebook ${nb.id} was unparseable; beliefs unchanged`);
+        return;
+      }
+      next.lastEvaluatedMessageId = teacherMessageId;
+      nb.learningState = next;
+      await this.store.save(nb);
+      this.broadcast(session, "learning-state", { state: next });
+    } catch (err) {
+      // Stale realizations from an earlier turn must not be replayed as new.
+      if (nb.learningState) nb.learningState.lastChanges = [];
+      console.error(`[aria] belief evaluator failed for notebook ${nb.id}; beliefs unchanged:`, err);
+    }
   }
 
   private async ensureThread(nb: Notebook, session: NotebookSession): Promise<void> {

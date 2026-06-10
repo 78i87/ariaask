@@ -63,6 +63,37 @@ export interface SettingsResponse {
   models: ModelInfo[];
 }
 
+// Mirrors server/src/domain/learning.ts. No UI consumes this yet — the state
+// is server-driven; it arrives on GET /api/notebooks/:id (`learningState`) and
+// via the "learning-state" SSE event for a future panel.
+export type BeliefStatus = "unknown" | "misconception" | "partial" | "understood";
+
+export interface Belief {
+  id: string;
+  concept: string;
+  status: BeliefStatus;
+  belief: string;
+  challenged?: true;
+  note?: string;
+}
+
+export interface BeliefChange {
+  beliefId: string;
+  concept: string;
+  from: BeliefStatus;
+  to: BeliefStatus;
+  belief?: string;
+  justification: string;
+}
+
+export interface LearningState {
+  version: 1;
+  beliefs: Belief[];
+  lastChanges: BeliefChange[];
+  lastEvaluatedMessageId: string | null;
+  updatedAt: string;
+}
+
 export interface SessionStateEvent {
   turnActive: boolean;
   turnId: string | null;

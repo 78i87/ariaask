@@ -13,6 +13,10 @@ export const config = {
   envEffort: process.env.ARIA_EFFORT ?? null,
   /** When set, pins kickoff effort instead of the max(medium, chosen) rule. */
   kickoffEffortOverride: process.env.ARIA_KICKOFF_EFFORT ?? null,
+  /** Reasoning effort for the belief-state side calls (initial state from a topic, per-turn evaluator). */
+  evaluatorEffort: process.env.ARIA_EVALUATOR_EFFORT ?? "low",
+  /** Kill switch for the learning-state layer: no state generation, no evaluator, no belief blocks. */
+  learningStateDisabled: process.env.ARIA_NO_LEARNING_STATE === "1",
 };
 
 export type Config = typeof config;

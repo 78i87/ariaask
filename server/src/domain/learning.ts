@@ -69,14 +69,14 @@ person could believe it; actually common among real beginners; falsifiable by a 
 explanation; and one that, when corrected, exposes a deep principle of the subject. Avoid
 silly errors, trivia slips, and strawmen.`;
 
-/** Initial inventory for a topic notebook (no assigned reading). */
-export function buildInitialStatePromptTopic(topic: string): string {
+/** Initial inventory for a topic notebook (no assigned reading). `tuning` = intake calibration block. */
+export function buildInitialStatePromptTopic(topic: string, tuning = ""): string {
   return `You are designing the starting knowledge of a simulated student for a teaching session
 where a human teaches the student. You are a course designer, not the student. Output JSON
 only — no prose, no code fences.
 
 Topic: ${topic}
-
+${tuning ? `\n${tuning}\n` : ""}
 Design the student's starting belief inventory:
 - 5 to 8 entries covering the key concepts a session on this topic would visit.
 - Most entries: status "unknown" — no real grasp yet; the "belief" sentence states what
@@ -92,7 +92,7 @@ ${STATE_SCHEMA}`;
 }
 
 /** Initial inventory grounded in assigned reading; runs with cwd = the notebook's sources dir. */
-export function buildInitialStatePromptSources(manifest: string, topic: string | null): string {
+export function buildInitialStatePromptSources(manifest: string, topic: string | null, tuning = ""): string {
   return `You are designing the starting knowledge of a simulated student for a teaching session
 where a human teaches the student${topic ? ` about: ${topic}` : ""}. You are a course designer, not the
 student. First read the assigned material — the files in your working directory:
@@ -101,7 +101,7 @@ ${manifest}
 
 Where a .txt sits alongside a PDF of the same name, read the .txt. If a file will not open
 or is empty, work with what you can read.
-
+${tuning ? `\n${tuning}\n` : ""}
 Then design the student's starting belief inventory: a partial and slightly wrong
 understanding from one honest novice read of this material. Output JSON only — no prose,
 no code fences.
@@ -281,7 +281,7 @@ function slugify(s: string, used: Set<string>): string {
 }
 
 /** Tolerates code fences and surrounding prose: parses the first {...last} span. */
-function extractJsonObject(raw: string): Record<string, unknown> | null {
+export function extractJsonObject(raw: string): Record<string, unknown> | null {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) return null;

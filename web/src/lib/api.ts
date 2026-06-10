@@ -1,4 +1,13 @@
-import type { AppSettings, AuthStatus, ChatMessage, Notebook, SettingsResponse, SourceFile } from "./types";
+import type {
+  AppSettings,
+  AuthStatus,
+  ChatMessage,
+  Intake,
+  IntakeAnswerPayload,
+  Notebook,
+  SettingsResponse,
+  SourceFile,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -55,7 +64,10 @@ export const api = {
       notebook: Notebook;
       messages: { id: string; role: "teacher" | "student"; text: string; interrupted?: boolean }[];
       turnActive: boolean;
+      intake: Intake | null;
     }>(`/api/notebooks/${id}`),
+  submitIntake: (id: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>
+    request<Record<string, never>>(`/api/notebooks/${id}/intake`, json(payload)),
   deleteNotebook: (id: string) => request<void>(`/api/notebooks/${id}`, { method: "DELETE" }),
 
   sendMessage: (id: string, text?: string, retry?: boolean, clientMessageId?: string) =>

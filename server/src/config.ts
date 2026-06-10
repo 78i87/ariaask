@@ -17,6 +17,10 @@ export const config = {
   evaluatorEffort: process.env.ARIA_EVALUATOR_EFFORT ?? "low",
   /** Kill switch for the learning-state layer: no state generation, no evaluator, no belief blocks. */
   learningStateDisabled: process.env.ARIA_NO_LEARNING_STATE === "1",
+  /** Reasoning effort for the pre-session online-research digest. */
+  researchEffort: process.env.ARIA_RESEARCH_EFFORT ?? "medium",
+  /** Kill switch for the setup form: new notebooks get no intake (auto-kickoff; research defaults silently). */
+  intakeDisabled: process.env.ARIA_NO_INTAKE === "1",
 };
 
 export type Config = typeof config;

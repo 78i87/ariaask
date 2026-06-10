@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "../lib/atomic.js";
 import type { LearningState } from "./learning.js";
+import type { Intake } from "./intake.js";
 
 export interface SourceFile {
   originalName: string;
@@ -12,6 +13,25 @@ export interface SourceFile {
   mimeType: string;
   size: number;
   approxWords: number | null;
+  /** "research" = server-generated online-research digest; absent = user upload. */
+  origin?: "research";
+}
+
+/** Collision-free, sandbox-safe file name within a notebook's sources dir. */
+export function sanitizeName(original: string, used: Set<string>): string {
+  const ext = path.extname(original).toLowerCase();
+  const stem =
+    path
+      .basename(original, path.extname(original))
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "source";
+  let candidate = stem + ext;
+  let n = 1;
+  while (used.has(candidate)) candidate = `${stem}-${n++}${ext}`;
+  used.add(candidate);
+  return candidate;
 }
 
 export interface ChatMessage {
@@ -51,6 +71,11 @@ export interface Notebook {
    * self-invented-misconceptions behavior).
    */
   learningState?: LearningState;
+  /**
+   * Pre-session setup form state (see intake.ts). Absent on pre-feature
+   * notebooks and when ARIA_NO_INTAKE=1 — absence means auto-kickoff as before.
+   */
+  intake?: Intake;
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;

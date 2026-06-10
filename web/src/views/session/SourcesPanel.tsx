@@ -5,6 +5,7 @@ import type { Notebook, SourceFile } from "../../lib/types";
 import "./SourcesPanel.css";
 
 export function sourceIcon(f: SourceFile): string {
+  if (f.origin === "research") return "travel_explore";
   return f.storedName.toLowerCase().endsWith(".pdf") ? "picture_as_pdf" : "description";
 }
 

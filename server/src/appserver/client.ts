@@ -143,8 +143,13 @@ export class AppServerClient extends EventEmitter {
     effort: string | null;
     cwd?: string;
     timeoutMs?: number;
+    /** Codex config overrides for the throwaway thread (e.g. { web_search: "live" }). */
+    config?: Record<string, unknown>;
+    /** Aborting interrupts the ephemeral turn server-side and rejects promptly. */
+    signal?: AbortSignal;
   }): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 90_000;
+    if (opts.signal?.aborted) throw new Error("one-shot turn aborted");
     const started = await this.threadStart({
       ephemeral: true,
       cwd: opts.cwd ?? null,
@@ -152,6 +157,7 @@ export class AppServerClient extends EventEmitter {
       approvalPolicy: "never",
       personality: "none",
       model: opts.model,
+      config: opts.config ?? null,
     });
     const threadId = started.thread.id;
 
@@ -198,18 +204,33 @@ export class AppServerClient extends EventEmitter {
       }
     });
 
+    // Abort path: interrupt the ephemeral turn server-side (stops token burn)
+    // and reject promptly so the caller unblocks without waiting for timeout.
+    let turnId: string | null = null;
+    const onAbort = () => {
+      if (turnId) void this.turnInterrupt(threadId, turnId).catch(() => {});
+      rejectDone(new Error("one-shot turn aborted"));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
     try {
       this.turnStart({
         threadId,
         input: [{ type: "text", text: opts.prompt, text_elements: [] }],
         model: opts.model,
         effort: opts.effort,
-      }).catch(rejectDone);
+      })
+        .then((res) => {
+          turnId = res.turn.id;
+          if (opts.signal?.aborted) onAbort();
+        })
+        .catch(rejectDone);
       return await done;
     } finally {
       clearTimeout(timer);
       unsubscribe();
       this.off("crashed", onCrash);
+      opts.signal?.removeEventListener("abort", onAbort);
     }
   }
 

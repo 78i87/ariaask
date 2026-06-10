@@ -24,6 +24,9 @@ import {
   buildInitialStatePromptTopic,
   parseInitialState,
 } from "./learning.js";
+import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntakeQuestions } from "./intake.js";
+import { buildResearchPrompt, stripWrappingFence, writeResearchDigest } from "./research.js";
+import { toSummary } from "./store.js";
 import type {
   AgentMessageDeltaNotification,
   ErrorNotification,
@@ -60,6 +63,10 @@ interface NotebookSession {
   learningBootstrapAttempted: boolean;
   /** Set by interrupt() while a turn is still "starting" (belief evaluator running); aborts before turn/start. */
   cancelRequested: boolean;
+  /** True while the pre-kickoff online-research one-shot is running. */
+  intakeResearch: boolean;
+  /** Aborts the in-flight research one-shot when the user presses Stop. */
+  researchAbort: AbortController | null;
   unsubscribe: (() => void) | null;
   watchdog: NodeJS.Timeout | null;
   /** Inner watchdog timer that force-resets a wedged turn; tracked so it can be cancelled. */
@@ -91,6 +98,7 @@ export class SessionManager {
         turnActive: session.state !== "idle",
         turnId: session.turnId,
         kickoffRunning: session.state !== "idle" && session.kickoffTurn,
+        intakeRunning: session.intakeResearch,
         partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
         messageCount: nb?.messages.length ?? 0,
       },
@@ -115,6 +123,13 @@ export class SessionManager {
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
     if (session.state !== "idle") throw new HttpError(409, "turn_active", "The student is already responding.");
+
+    // A kickoff before the setup form is submitted would lock the intake out
+    // forever (its answers could no longer apply) — stale clients and direct
+    // API calls must go through POST /intake first.
+    if (!nb.kickoffDone && nb.intake?.status === "pending") {
+      throw new HttpError(409, "intake_pending", "Finish the setup form before starting the session.");
+    }
 
     let input: string;
     let kickoff = false;
@@ -268,9 +283,11 @@ export class SessionManager {
     const nb = this.store.get(notebookId);
     if (!session || !nb || session.state === "idle") return false;
     if (session.state === "starting") {
-      // The student turn hasn't reached Codex yet (the belief evaluator may
-      // be running) — flag it so startTurn aborts before turn/start.
+      // The student turn hasn't reached Codex yet (the belief evaluator or
+      // pre-kickoff research may be running) — flag it so the pipeline aborts
+      // before turn/start, and cut the research one-shot short server-side.
       session.cancelRequested = true;
+      session.researchAbort?.abort();
       return true;
     }
     if (!session.turnId || !nb.threadId) return false;
@@ -313,6 +330,8 @@ export class SessionManager {
         catchUpNeeded: false,
         learningBootstrapAttempted: false,
         cancelRequested: false,
+        intakeResearch: false,
+        researchAbort: null,
         unsubscribe: null,
         watchdog: null,
         forceResetTimer: null,
@@ -336,6 +355,133 @@ export class SessionManager {
     return ladder.indexOf(chosen) > ladder.indexOf("medium") ? chosen : "medium";
   }
 
+  // ---------- intake (setup form + pre-kickoff research) ----------
+
+  private intakeGenerations = new Map<string, Promise<void>>();
+
+  /**
+   * Generate the model-authored setup questions, at most once per notebook.
+   * Memoized so concurrent GETs share one in-flight generation. Fail-open:
+   * any failure persists [] (deterministic-only form, never retried).
+   */
+  ensureIntakeQuestions(nb: Notebook): Promise<void> {
+    if (!nb.intake || nb.intake.status !== "pending" || nb.intake.generatedQuestions !== null) {
+      return Promise.resolve();
+    }
+    const existing = this.intakeGenerations.get(nb.id);
+    if (existing) return existing;
+
+    const run = (async () => {
+      let questions: ReturnType<typeof parseIntakeQuestions> = [];
+      try {
+        const s = this.settings.get();
+        const topic = nb.type === "topic" ? (nb.topic ?? nb.title) : nb.title;
+        const manifest = nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null;
+        const raw = await this.client.runOneShotTurn({
+          prompt: buildIntakeQuestionsPrompt(topic, manifest),
+          model: s.model,
+          effort: this.config.evaluatorEffort,
+          timeoutMs: 30_000,
+        });
+        questions = parseIntakeQuestions(raw) ?? [];
+      } catch (err) {
+        console.error(`[aria] intake question generation failed for notebook ${nb.id}; deterministic-only form:`, err);
+        questions = [];
+      }
+      const fresh = this.store.get(nb.id);
+      // A late resolution must never change a form the user may already be
+      // reading (GET persists [] after its cap) or has already submitted.
+      if (fresh?.intake && fresh.intake.status === "pending" && fresh.intake.generatedQuestions === null) {
+        fresh.intake.generatedQuestions = questions ?? [];
+        await this.store.save(fresh);
+      }
+    })().finally(() => this.intakeGenerations.delete(nb.id));
+
+    this.intakeGenerations.set(nb.id, run);
+    return run;
+  }
+
+  /**
+   * Runs after the setup form is submitted: optional online research (a
+   * one-shot, web-search-enabled side call whose digest becomes a visible
+   * source file), then the kickoff. The synchronous prefix occupies the turn
+   * state machine, so callers must invoke this BEFORE responding.
+   */
+  async runIntakePipeline(notebookId: string): Promise<void> {
+    const nb = this.store.get(notebookId);
+    const session = this.ensureSession(notebookId);
+    if (!nb || !nb.intake || session.state !== "idle") return;
+
+    if (nb.intake.answers?.research) {
+      session.state = "starting";
+      session.intakeResearch = true;
+      session.cancelRequested = false;
+      session.researchAbort = new AbortController();
+      this.broadcast(session, "activity", { kind: "researching" });
+      try {
+        await this.runResearch(nb, session);
+      } finally {
+        session.intakeResearch = false;
+        session.researchAbort = null;
+        session.state = "idle";
+      }
+      if (session.cancelRequested) {
+        session.cancelRequested = false;
+        this.broadcast(session, "turn-completed", { turnId: null, status: "interrupted" });
+        return; // digest (if written) is kept; reopening auto-kickoffs since intake is done
+      }
+    }
+    try {
+      await this.startTurn(notebookId, undefined);
+    } catch (err) {
+      if (!(err instanceof HttpError && err.code === "turn_active")) {
+        console.error(`[aria] intake kickoff failed for notebook ${notebookId}:`, err);
+      }
+    }
+  }
+
+  /** Fail-open: any failure marks intake.research "failed" and the session proceeds without the digest. */
+  private async runResearch(nb: Notebook, session: NotebookSession): Promise<void> {
+    const s = this.settings.get();
+    const answers = nb.intake!.answers!;
+    try {
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildResearchPrompt({
+          topic: nb.topic ?? nb.title,
+          focus: intakeFocus(answers),
+          note: answers.researchNote,
+          manifest: nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null,
+        }),
+        model: s.model,
+        effort: this.config.researchEffort,
+        timeoutMs: 240_000,
+        config: { web_search: "live" },
+        cwd: nb.sourceFiles.length > 0 ? this.store.sourcesDir(nb.id) : undefined,
+        signal: session.researchAbort?.signal,
+      });
+      const text = stripWrappingFence(raw);
+      if (text.length < 200) throw new Error(`digest too short (${text.length} chars)`);
+      const fresh = this.store.get(nb.id);
+      if (!fresh) return; // notebook deleted mid-research
+      await writeResearchDigest(this.store, fresh, text);
+      fresh.intake!.research = "done";
+      await this.store.save(fresh);
+      this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
+    } catch (err) {
+      const aborted = session.researchAbort?.signal.aborted === true;
+      if (!aborted) console.error(`[aria] online research failed for notebook ${nb.id}; proceeding without it:`, err);
+      const fresh = this.store.get(nb.id);
+      if (fresh?.intake) {
+        fresh.intake.research = "failed";
+        await this.store.save(fresh);
+      }
+      // A deliberate Stop needs no apology toast.
+      if (!aborted) {
+        this.broadcast(session, "notice", { message: "Aria couldn't finish her online reading — starting without it." });
+      }
+    }
+  }
+
   /** One-line description of what the session is about, for the state-manager prompts. */
   private learningContext(nb: Notebook): string {
     const parts: string[] = [];
@@ -351,11 +497,16 @@ export class SessionManager {
    */
   private async generateInitialState(nb: Notebook): Promise<void> {
     const s = this.settings.get();
+    const tuning = nb.intake?.answers ? buildIntakeTuning(nb.intake.answers) : "";
     try {
       const raw =
         nb.sourceFiles.length > 0
           ? await this.client.runOneShotTurn({
-              prompt: buildInitialStatePromptSources(sourcesManifest(nb.sourceFiles), nb.type === "topic" ? (nb.topic ?? nb.title) : null),
+              prompt: buildInitialStatePromptSources(
+                sourcesManifest(nb.sourceFiles),
+                nb.type === "topic" ? (nb.topic ?? nb.title) : null,
+                tuning,
+              ),
               model: s.model,
               // It has to actually read the sources — low effort skimps on that.
               effort: "medium",
@@ -363,7 +514,7 @@ export class SessionManager {
               timeoutMs: 120_000,
             })
           : await this.client.runOneShotTurn({
-              prompt: buildInitialStatePromptTopic(nb.topic ?? nb.title),
+              prompt: buildInitialStatePromptTopic(nb.topic ?? nb.title, tuning),
               model: s.model,
               effort: this.config.evaluatorEffort,
               timeoutMs: 90_000,

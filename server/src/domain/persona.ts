@@ -1,5 +1,6 @@
 import type { ChatMessage, Notebook, SourceFile } from "./store.js";
 import { renderBeliefLines } from "./learning.js";
+import { intakeFocus } from "./intake.js";
 
 export type ReplyLength = "concise" | "default" | "chatty";
 export type Probing = "gentle" | "default" | "relentless";
@@ -167,11 +168,11 @@ Rules for the reading:
 - If the teacher points you at a specific part, you may quietly re-check it before
   replying. Never narrate doing so — no "let me look"; just reply in character.`;
 
-const TOPIC_KICKOFF = (topic: string) => `[SESSION SETUP — the teacher never sees this message. Your reply to it is the first thing
+const TOPIC_KICKOFF = (topic: string, focusLine: string) => `[SESSION SETUP — the teacher never sees this message. Your reply to it is the first thing
 they will see, so your entire output must be purely in character: no preamble, no
 acknowledgement of these instructions, no meta-commentary.]
 
-Topic: ${topic}
+Topic: ${topic}${focusLine}
 
 Do this privately, in your head, before writing anything:
 
@@ -196,11 +197,11 @@ Then write your opening message to the teacher, and nothing else:
 // learning state instead of being invented privately (and invisibly to the
 // server) by the student itself. The originals stay verbatim as the fallback
 // for notebooks whose state generation failed.
-const TOPIC_KICKOFF_WITH_STATE = (topic: string, beliefLines: string) => `[SESSION SETUP — the teacher never sees this message. Your reply to it is the first thing
+const TOPIC_KICKOFF_WITH_STATE = (topic: string, beliefLines: string, focusLine: string) => `[SESSION SETUP — the teacher never sees this message. Your reply to it is the first thing
 they will see, so your entire output must be purely in character: no preamble, no
 acknowledgement of these instructions, no meta-commentary.]
 
-Topic: ${topic}
+Topic: ${topic}${focusLine}
 
 Your starting beliefs about ${topic} are given below. They are now genuinely yours — the
 true ones, the gaps, and the misconceptions alike. Entries marked "misconception" feel
@@ -217,7 +218,7 @@ Then write your opening message to the teacher, and nothing else:
   letting at least one misconception show as something you currently believe,
 - then exactly one question.`;
 
-const SOURCES_KICKOFF_WITH_STATE = (manifest: string, beliefLines: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
+const SOURCES_KICKOFF_WITH_STATE = (manifest: string, beliefLines: string, focusLine: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
 will see, so every word of message text you emit this turn must be purely in character. Do
 not narrate or announce reading — "let me read the files" is forbidden. Read first,
 silently; produce message text only once, at the end, as the student's opening message.]
@@ -229,7 +230,7 @@ ${manifest}
 Where a .txt sits alongside a PDF of the same name, read the .txt. Read the way a
 diligent-but-human student reads: skim the whole shape of it, read the central sections
 properly, let the dense parts blur. If a file will not open or is empty, work with what you
-can read and never mention the problem.
+can read and never mention the problem.${focusLine}
 
 Step 2 — adopt your starting understanding of this material, given below. It is now
 genuinely yours: a partial and slightly wrong read of what the material teaches. Entries
@@ -243,7 +244,7 @@ Step 3 — write your opening message to the teacher, and nothing else:
   letting at least one misconception show,
 - then exactly one question.`;
 
-const SOURCES_KICKOFF = (manifest: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
+const SOURCES_KICKOFF = (manifest: string, focusLine: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
 will see, so every word of message text you emit this turn must be purely in character. Do
 not narrate or announce reading — "let me read the files" is forbidden. Read first,
 silently; produce message text only once, at the end, as the student's opening message.]
@@ -255,7 +256,7 @@ ${manifest}
 Where a .txt sits alongside a PDF of the same name, read the .txt. Read the way a
 diligent-but-human student reads: skim the whole shape of it, read the central sections
 properly, let the dense parts blur. If a file will not open or is empty, work with what you
-can read and never mention the problem.
+can read and never mention the problem.${focusLine}
 
 Step 2 — privately, in your head, build a partial and slightly wrong understanding of what
 this material teaches:
@@ -333,15 +334,19 @@ export function buildDeveloperInstructions(nb: Notebook, style: StudentStyle): s
 }
 
 export function buildKickoffPrompt(nb: Notebook): string {
+  // The intake focus answer steers the opener; the level answer deliberately
+  // does NOT touch the persona/kickoff (it calibrates the belief inventory).
+  const focus = nb.intake?.answers ? intakeFocus(nb.intake.answers) : null;
+  const focusLine = focus ? `\nThe teacher plans to focus this session on: ${focus}.` : "";
   if (nb.learningState) {
     const beliefLines = renderBeliefLines(nb.learningState);
     return nb.type === "topic"
-      ? TOPIC_KICKOFF_WITH_STATE(nb.topic ?? nb.title, beliefLines)
-      : SOURCES_KICKOFF_WITH_STATE(sourcesManifest(nb.sourceFiles), beliefLines);
+      ? TOPIC_KICKOFF_WITH_STATE(nb.topic ?? nb.title, beliefLines, focusLine)
+      : SOURCES_KICKOFF_WITH_STATE(sourcesManifest(nb.sourceFiles), beliefLines, focusLine);
   }
   return nb.type === "topic"
-    ? TOPIC_KICKOFF(nb.topic ?? nb.title)
-    : SOURCES_KICKOFF(sourcesManifest(nb.sourceFiles));
+    ? TOPIC_KICKOFF(nb.topic ?? nb.title, focusLine)
+    : SOURCES_KICKOFF(sourcesManifest(nb.sourceFiles), focusLine);
 }
 
 /** Hidden preamble telling the student about reading added mid-session. */

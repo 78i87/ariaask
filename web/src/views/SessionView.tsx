@@ -13,6 +13,7 @@ import { useTeachingSession } from "../lib/useTeachingSession";
 import type { SourceFile } from "../lib/types";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { Composer } from "./session/Composer";
+import { IntakeForm } from "./session/IntakeForm";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
@@ -27,8 +28,22 @@ export function SessionView() {
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
   const session = useTeachingSession(id!);
-  const { notebook, messages, status, kickoffRunning, activity, error, send, interrupt, retry, updateNotebook } =
-    session;
+  const {
+    notebook,
+    messages,
+    status,
+    kickoffRunning,
+    activity,
+    error,
+    intake,
+    notice,
+    clearNotice,
+    submitIntake,
+    send,
+    interrupt,
+    retry,
+    updateNotebook,
+  } = session;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -92,12 +107,24 @@ export function SessionView() {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
+  // Non-fatal server notices (e.g. research failed) surface as snackbars.
+  useEffect(() => {
+    if (notice) {
+      snackbar.show(notice);
+      clearNotice();
+    }
+  }, [notice, clearNotice, snackbar]);
+
+  const intakePending = intake !== null && intake.status === "pending" && messages.length === 0;
   const busy = status === "waiting" || status === "streaming";
-  const waitingLabel = kickoffRunning
-    ? activity === "reading-sources"
-      ? "Aria is doing the reading…"
-      : "Aria is getting ready…"
-    : undefined;
+  const waitingLabel =
+    activity === "researching"
+      ? "Aria is reading up online…"
+      : kickoffRunning
+        ? activity === "reading-sources"
+          ? "Aria is doing the reading…"
+          : "Aria is getting ready…"
+        : undefined;
 
   return (
     <div className="session">
@@ -131,6 +158,15 @@ export function SessionView() {
         <div className="session__main">
           <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
             <div className="session__thread">
+              {intakePending && status !== "loading" && (
+                <IntakeForm
+                  questions={intake.questions}
+                  submitting={false}
+                  onSubmit={(answers) => submitIntake({ answers })}
+                  onSkip={() => submitIntake({ skip: true })}
+                />
+              )}
+
               {messages.map((m) => (
                 <MessageBubble key={m.id} message={m} />
               ))}
@@ -157,7 +193,7 @@ export function SessionView() {
           </div>
 
           <Composer
-            disabled={status === "loading" || status === "error" || kickoffRunning}
+            disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
             busy={busy}
             onSend={send}
             onStop={interrupt}

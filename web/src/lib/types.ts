@@ -5,7 +5,31 @@ export interface SourceFile {
   mimeType: string;
   size: number;
   approxWords: number | null;
+  /** "research" = server-generated online-research digest; absent = user upload. */
+  origin?: "research";
 }
+
+export interface IntakeOption {
+  value: string;
+  label: string;
+}
+
+export interface IntakeQuestion {
+  id: string;
+  question: string;
+  options: IntakeOption[];
+  allowsCustom: boolean;
+}
+
+export type ResearchStatus = "none" | "running" | "done" | "failed";
+
+export interface Intake {
+  status: "pending" | "done";
+  questions: IntakeQuestion[];
+  research: ResearchStatus;
+}
+
+export type IntakeAnswerPayload = Record<string, { value?: string; custom?: string }>;
 
 export interface Notebook {
   id: string;
@@ -98,6 +122,8 @@ export interface SessionStateEvent {
   turnActive: boolean;
   turnId: string | null;
   kickoffRunning: boolean;
+  /** True while the pre-kickoff online research is running. */
+  intakeRunning: boolean;
   /** In-flight streamed text keyed by agentMessage itemId. */
   partials: Record<string, string>;
   messageCount: number;

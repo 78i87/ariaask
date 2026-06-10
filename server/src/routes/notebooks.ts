@@ -5,9 +5,11 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
 import type { NotebookStore, SourceFile } from "../domain/store.js";
-import { toSummary } from "../domain/store.js";
+import { sanitizeName, toSummary } from "../domain/store.js";
 import type { SessionManager } from "../domain/session.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
+import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
+import { config } from "../config.js";
 
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 const MAX_FILES = 10;
@@ -61,22 +63,6 @@ async function processUploads(
     });
   }
   return { sourceFiles, warnings };
-}
-
-function sanitizeName(original: string, used: Set<string>): string {
-  const ext = path.extname(original).toLowerCase();
-  const stem =
-    path
-      .basename(original, path.extname(original))
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "source";
-  let candidate = stem + ext;
-  let n = 1;
-  while (used.has(candidate)) candidate = `${stem}-${n++}${ext}`;
-  used.add(candidate);
-  return candidate;
 }
 
 export function notebookRoutes(store: NotebookStore, sessions: SessionManager): Router {
@@ -156,21 +142,114 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
 
       const nb = await store.create({ title, type: type as "topic" | "files", topic }, id);
       nb.sourceFiles = sourceFiles;
+      if (!config.intakeDisabled) {
+        nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
+      }
       await store.save(nb);
+      // Head start: generate the model-authored setup questions while the
+      // user's browser navigates to the session.
+      if (nb.intake) void sessions.ensureIntakeQuestions(nb);
 
       res.status(201).json({ notebook: toSummary(nb), warnings });
     },
   );
 
-  router.get("/:id", (req, res) => {
+  router.get("/:id", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
+
+    if (nb.intake && nb.intake.status === "pending" && nb.intake.generatedQuestions === null) {
+      // Wait briefly for question generation; past the cap, lock in the
+      // deterministic-only form so it can never change under the user.
+      await Promise.race([sessions.ensureIntakeQuestions(nb), new Promise((r) => setTimeout(r, 25_000))]);
+      if (nb.intake.generatedQuestions === null) {
+        nb.intake.generatedQuestions = [];
+        await store.save(nb);
+      }
+    }
+    // Crash recovery: research marked running but no live session → failed.
+    if (nb.intake?.research === "running" && !sessions.getState(nb.id).turnActive) {
+      nb.intake.research = "failed";
+      await store.save(nb);
+    }
+
     res.json({
       notebook: toSummary(nb),
       messages: nb.messages,
       turnActive: sessions.getState(nb.id).turnActive,
       learningState: nb.learningState ?? null,
+      intake: nb.intake
+        ? { status: nb.intake.status, questions: composeIntakeQuestions(nb), research: nb.intake.research }
+        : null,
     });
+  });
+
+  router.post("/:id/intake", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (!nb.intake) throw new HttpError(409, "intake_unavailable", "This notebook has no setup form.");
+    if (nb.intake.status === "done" || nb.kickoffDone || nb.messages.length > 0) {
+      res.status(202).json({}); // idempotent no-op (double submit)
+      return;
+    }
+    if (sessions.getState(nb.id).turnActive) throw new HttpError(409, "turn_active");
+
+    const body = (req.body ?? {}) as {
+      skip?: boolean;
+      answers?: Record<string, { value?: string; custom?: string }>;
+    };
+    const raw = body.answers ?? {};
+    const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 500) : null);
+
+    let mapped: IntakeAnswers;
+    if (body.skip === true) {
+      mapped = {
+        level: null,
+        levelNote: null,
+        research: nb.sourceFiles.length === 0,
+        researchNote: null,
+        focus: {},
+        skipped: true,
+      };
+    } else {
+      const levelCustom = clip(raw.level?.custom);
+      const levelValue = raw.level?.value;
+      if (levelValue !== undefined && !["fundamental", "standard", "challenge"].includes(levelValue)) {
+        throw new HttpError(400, "invalid_answer", `Unknown level "${levelValue}"`);
+      }
+      const researchCustom = clip(raw.research?.custom);
+      const researchValue = raw.research?.value;
+      if (researchValue !== undefined && !["yes", "no"].includes(researchValue)) {
+        throw new HttpError(400, "invalid_answer", `Unknown research answer "${researchValue}"`);
+      }
+      const focus: Record<string, string> = {};
+      for (const q of nb.intake.generatedQuestions ?? []) {
+        const a = raw[q.id];
+        const text = clip(a?.custom) ?? clip(a?.value);
+        if (text) focus[q.id] = text;
+      }
+      mapped = {
+        level: levelCustom ? null : ((levelValue as IntakeLevel | undefined) ?? null),
+        levelNote: levelCustom,
+        // A free-text research answer is inherently a "yes, but…".
+        research: researchCustom ? true : researchValue === undefined ? true : researchValue === "yes",
+        researchNote: researchCustom,
+        focus,
+        skipped: false,
+      };
+    }
+
+    nb.intake.answers = mapped;
+    nb.intake.status = "done";
+    nb.intake.submittedAt = new Date().toISOString();
+    nb.intake.research = mapped.research ? "running" : "none";
+    await store.save(nb);
+
+    // Call before responding: the pipeline's synchronous prefix occupies the
+    // turn state machine, closing the race with a concurrent /messages POST.
+    const pipeline = sessions.runIntakePipeline(nb.id);
+    res.status(202).json({});
+    void pipeline.catch((err) => console.error("[aria] intake pipeline failed:", err));
   });
 
   router.post(

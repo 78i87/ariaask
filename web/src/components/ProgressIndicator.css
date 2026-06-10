@@ -1,0 +1,30 @@
+.m3-progress {
+  animation: m3-progress-rotate 1.3s linear infinite;
+}
+
+.m3-progress__track {
+  stroke: var(--md-sys-color-surface-container-highest);
+}
+
+.m3-progress__bar {
+  stroke: var(--md-sys-color-primary);
+  animation: m3-progress-dash 1.3s var(--md-sys-motion-easing-emphasized) infinite;
+}
+
+@keyframes m3-progress-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes m3-progress-dash {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dashoffset: calc(var(--c) * 0.5);
+  }
+  100% {
+    stroke-dashoffset: var(--c);
+  }
+}

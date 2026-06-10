@@ -1,0 +1,61 @@
+.m3-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  cursor: pointer;
+  background: transparent;
+  transition:
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.m3-button:hover:not(:disabled)::before {
+  opacity: var(--md-sys-state-hover-opacity);
+}
+.m3-button:active:not(:disabled)::before {
+  opacity: var(--md-sys-state-pressed-opacity);
+}
+
+.m3-button--filled {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+.m3-button--filled.m3-button--destructive {
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+}
+.m3-button--tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.m3-button--text {
+  color: var(--md-sys-color-primary);
+  padding: 0 12px;
+}
+.m3-button--text.m3-button--destructive {
+  color: var(--md-sys-color-error);
+}
+
+.m3-button:disabled {
+  cursor: default;
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+.m3-button--text:disabled {
+  background: transparent;
+}

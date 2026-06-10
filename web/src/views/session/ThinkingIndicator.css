@@ -1,0 +1,48 @@
+.thinking {
+  display: flex;
+  gap: 12px;
+  animation: msg-in 250ms var(--md-sys-motion-easing-emphasized-decelerate);
+}
+
+.thinking__bubble {
+  display: flex;
+  align-items: center;
+  background: var(--md-sys-color-surface-container);
+  border-radius: 4px 20px 20px 20px;
+  padding: 14px 18px;
+  min-height: 24px;
+}
+
+.thinking__label {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.thinking__dots {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.thinking__dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--md-sys-color-on-surface-variant);
+  animation: thinking-bounce 900ms var(--md-sys-motion-easing-emphasized) infinite;
+}
+.thinking__dots span:nth-child(2) {
+  animation-delay: 120ms;
+}
+.thinking__dots span:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+@keyframes thinking-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
+}

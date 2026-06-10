@@ -1,0 +1,63 @@
+.m3-textfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.m3-textfield__box {
+  position: relative;
+}
+
+.m3-textfield__input {
+  width: 100%;
+  height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  outline: none;
+  transition: border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-textfield__input:focus {
+  border: 2px solid var(--md-sys-color-primary);
+  padding: 0 15px;
+}
+
+.m3-textfield__label {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 4px;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 16px;
+  pointer-events: none;
+  background: transparent;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-textfield__input:focus + .m3-textfield__label,
+.m3-textfield__input:not(:placeholder-shown) + .m3-textfield__label {
+  top: 0;
+  font-size: 12px;
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.m3-textfield__input:focus + .m3-textfield__label {
+  color: var(--md-sys-color-primary);
+}
+
+.m3-textfield__supporting {
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 0 16px;
+}
+
+.m3-textfield--error .m3-textfield__input {
+  border-color: var(--md-sys-color-error);
+}
+.m3-textfield--error .m3-textfield__label,
+.m3-textfield--error .m3-textfield__supporting {
+  color: var(--md-sys-color-error);
+}

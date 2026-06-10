@@ -1,0 +1,93 @@
+.home {
+  min-height: 100dvh;
+}
+
+.home__account {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+}
+.home__account::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.home__account:hover::before {
+  opacity: var(--md-sys-state-hover-opacity);
+}
+
+.home__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  flex-shrink: 0;
+}
+
+.home__content {
+  max-width: var(--aria-content-max);
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+
+.home__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 32px 0 24px;
+}
+
+.home__hero h1 {
+  margin: 0;
+}
+
+.home__hero-accent {
+  color: var(--md-sys-color-primary);
+}
+
+.home__loading {
+  display: flex;
+  justify-content: center;
+  padding: 64px;
+}
+
+.home__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .home__content {
+    padding: 0 16px 112px;
+  }
+  .home__hero {
+    padding: 24px 0 16px;
+  }
+  .home__email {
+    display: none;
+  }
+  .home__fab {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 5;
+  }
+}

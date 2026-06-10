@@ -1,0 +1,39 @@
+.m3-snackbar {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 48px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 8px 16px;
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  box-shadow: var(--md-sys-elevation-2);
+  animation: m3-snackbar-in var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+
+.m3-snackbar__action {
+  border: none;
+  background: none;
+  color: var(--md-sys-color-inverse-primary);
+  cursor: pointer;
+  padding: 8px;
+  margin: -8px -8px -8px 0;
+  flex-shrink: 0;
+}
+
+@keyframes m3-snackbar-in {
+  from {
+    transform: translate(-50%, 16px);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}

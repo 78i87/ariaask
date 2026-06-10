@@ -1,0 +1,40 @@
+.m3-card {
+  position: relative;
+  overflow: hidden;
+  display: block;
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-large);
+  text-align: inherit;
+  font: inherit;
+  padding: 0;
+  transition:
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-card--interactive {
+  cursor: pointer;
+}
+
+.m3-card--interactive::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+  z-index: 1;
+}
+.m3-card--interactive:hover::before {
+  opacity: var(--md-sys-state-hover-opacity);
+}
+.m3-card--interactive:active::before {
+  opacity: var(--md-sys-state-pressed-opacity);
+}
+.m3-card--interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--md-sys-elevation-1);
+}

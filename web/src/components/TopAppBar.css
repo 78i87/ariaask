@@ -1,0 +1,36 @@
+.m3-top-app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  height: 64px;
+  padding: 0 16px;
+  background: var(--md-sys-color-surface);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-top-app-bar[data-scrolled] {
+  background: var(--md-sys-color-surface-container);
+}
+
+.m3-top-app-bar__leading,
+.m3-top-app-bar__trailing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.m3-top-app-bar__headline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .m3-top-app-bar {
+    padding: 0 8px;
+  }
+}

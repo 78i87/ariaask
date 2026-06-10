@@ -1,0 +1,37 @@
+.dropzone-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 144px;
+  border: 2px dashed var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  transition:
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.dropzone--over {
+  border-color: var(--md-sys-color-primary);
+  border-style: solid;
+  background: color-mix(in srgb, var(--md-sys-color-primary-container) 20%, transparent);
+}
+
+.dropzone__formats {
+  color: var(--md-sys-color-outline);
+}
+
+.dropzone__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

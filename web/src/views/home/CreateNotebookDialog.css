@@ -1,0 +1,29 @@
+.create-nb__mode {
+  display: flex;
+  height: 40px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-full);
+  overflow: hidden;
+}
+
+.create-nb__segment {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.create-nb__segment + .create-nb__segment {
+  border-left: 1px solid var(--md-sys-color-outline);
+}
+
+.create-nb__segment--selected {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}

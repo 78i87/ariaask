@@ -1,0 +1,61 @@
+.m3-dialog {
+  border: none;
+  padding: 0;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  box-shadow: var(--md-sys-elevation-2);
+  max-height: calc(100dvh - 64px);
+}
+
+.m3-dialog[open] {
+  animation: m3-dialog-in var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+
+.m3-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.m3-dialog__content {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.m3-dialog__icon {
+  display: flex;
+  justify-content: center;
+  color: var(--md-sys-color-secondary);
+}
+
+.m3-dialog__headline {
+  margin: 0;
+}
+.m3-dialog__headline--centered {
+  text-align: center;
+}
+
+.m3-dialog__body {
+  color: var(--md-sys-color-on-surface-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.m3-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes m3-dialog-in {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

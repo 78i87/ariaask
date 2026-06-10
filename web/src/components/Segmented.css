@@ -1,0 +1,35 @@
+.m3-segmented {
+  display: flex;
+  height: 40px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-full);
+  overflow: hidden;
+}
+
+.m3-segmented__btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  padding: 0 8px;
+  white-space: nowrap;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-segmented__btn + .m3-segmented__btn {
+  border-left: 1px solid var(--md-sys-color-outline);
+}
+
+.m3-segmented__btn:hover:not(.m3-segmented__btn--selected) {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+
+.m3-segmented__btn--selected {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}

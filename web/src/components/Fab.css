@@ -1,0 +1,34 @@
+.m3-fab {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  cursor: pointer;
+  box-shadow: var(--md-sys-elevation-1);
+  transition: box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+.m3-fab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.m3-fab:hover::before {
+  opacity: var(--md-sys-state-hover-opacity);
+}
+.m3-fab:active::before {
+  opacity: var(--md-sys-state-pressed-opacity);
+}
+.m3-fab:hover {
+  box-shadow: var(--md-sys-elevation-2);
+}

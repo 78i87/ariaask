@@ -1,0 +1,58 @@
+.m3-chip {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.m3-chip--clickable {
+  cursor: pointer;
+}
+.m3-chip--clickable::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.m3-chip--clickable:hover::before {
+  opacity: var(--md-sys-state-hover-opacity);
+}
+
+.m3-chip--selected {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: transparent;
+}
+
+.m3-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m3-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+  margin-right: -6px;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+.m3-chip__remove:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}

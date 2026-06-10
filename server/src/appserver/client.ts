@@ -4,12 +4,14 @@ import { JsonRpcStdioConnection, RpcError } from "./rpc.js";
 import type {
   AccountLoginCompletedNotification,
   GetAccountResponse,
+  ItemNotification,
   LoginChatGptResponse,
   ModelListResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
+  TurnCompletedNotification,
   TurnStartParams,
   TurnStartResponse,
 } from "./protocol.js";
@@ -127,6 +129,88 @@ export class AppServerClient extends EventEmitter {
 
   turnInterrupt(threadId: string, turnId: string): Promise<unknown> {
     return this.rpc().request("turn/interrupt", { threadId, turnId });
+  }
+
+  /**
+   * Run a single prompt on a throwaway ephemeral thread and return the final
+   * agent message text. Used for side calls (belief-state generation and the
+   * per-turn evaluator) that must not touch the student's long-lived thread.
+   * Throws on turn failure, timeout, or an app-server crash mid-call.
+   */
+  async runOneShotTurn(opts: {
+    prompt: string;
+    model: string | null;
+    effort: string | null;
+    cwd?: string;
+    timeoutMs?: number;
+  }): Promise<string> {
+    const timeoutMs = opts.timeoutMs ?? 90_000;
+    const started = await this.threadStart({
+      ephemeral: true,
+      cwd: opts.cwd ?? null,
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      personality: "none",
+      model: opts.model,
+    });
+    const threadId = started.thread.id;
+
+    let resolveDone!: (text: string) => void;
+    let rejectDone!: (err: Error) => void;
+    const done = new Promise<string>((resolve, reject) => {
+      resolveDone = resolve;
+      rejectDone = reject;
+    });
+
+    const timer = setTimeout(() => rejectDone(new RpcError(-32000, `one-shot turn timed out after ${timeoutMs}ms`)), timeoutMs);
+    // failAllPending only rejects in-flight RPCs — the wait for the
+    // turn/completed notification needs its own crash handler.
+    const onCrash = () => rejectDone(new AppServerCrashedError());
+    this.once("crashed", onCrash);
+
+    // A fresh ephemeral thread carries exactly one turn, so no turnId
+    // filtering is needed (which also sidesteps any response/notification
+    // ordering race with turn/start).
+    const texts: string[] = [];
+    const unsubscribe = this.subscribeThread(threadId, (method, params) => {
+      if (method === "item/completed") {
+        const p = params as ItemNotification;
+        if (p.item.type === "agentMessage" && typeof p.item.text === "string") texts.push(p.item.text);
+      } else if (method === "turn/completed") {
+        const p = params as TurnCompletedNotification;
+        if (p.turn.status !== "completed") {
+          rejectDone(new Error(p.turn.error?.message ?? `one-shot turn ${p.turn.status}`));
+          return;
+        }
+        let text = texts.join("\n").trim();
+        if (!text) {
+          // Whether the notification's turn.items is populated is
+          // version-dependent — fall back to it only when streaming
+          // item/completed events produced nothing.
+          text = (p.turn.items ?? [])
+            .filter((i) => i.type === "agentMessage" && typeof i.text === "string")
+            .map((i) => i.text as string)
+            .join("\n")
+            .trim();
+        }
+        if (text) resolveDone(text);
+        else rejectDone(new Error("one-shot turn produced no agent message"));
+      }
+    });
+
+    try {
+      this.turnStart({
+        threadId,
+        input: [{ type: "text", text: opts.prompt, text_elements: [] }],
+        model: opts.model,
+        effort: opts.effort,
+      }).catch(rejectDone);
+      return await done;
+    } finally {
+      clearTimeout(timer);
+      unsubscribe();
+      this.off("crashed", onCrash);
+    }
   }
 
   // ---------- notification routing ----------

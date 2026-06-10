@@ -1,4 +1,5 @@
 import type { ChatMessage, Notebook, SourceFile } from "./store.js";
+import { renderBeliefLines } from "./learning.js";
 
 export type ReplyLength = "concise" | "default" | "chatty";
 export type Probing = "gentle" | "default" | "relentless";
@@ -190,6 +191,58 @@ Then write your opening message to the teacher, and nothing else:
   letting at least one misconception show as something you currently believe,
 - then exactly one question.`;
 
+// State-driven kickoff variants: same framing and output rules as the
+// originals above, but the student's starting beliefs come from the notebook's
+// learning state instead of being invented privately (and invisibly to the
+// server) by the student itself. The originals stay verbatim as the fallback
+// for notebooks whose state generation failed.
+const TOPIC_KICKOFF_WITH_STATE = (topic: string, beliefLines: string) => `[SESSION SETUP — the teacher never sees this message. Your reply to it is the first thing
+they will see, so your entire output must be purely in character: no preamble, no
+acknowledgement of these instructions, no meta-commentary.]
+
+Topic: ${topic}
+
+Your starting beliefs about ${topic} are given below. They are now genuinely yours — the
+true ones, the gaps, and the misconceptions alike. Entries marked "misconception" feel
+true to you; reason from them with confidence:
+
+${beliefLines}
+
+Privately, in your head, pick the one confusion that makes the best opening question —
+concrete, specific, the kind of thing a real beginner hits early. It should connect to at
+least one of your misconceptions or unknowns.
+
+Then write your opening message to the teacher, and nothing else:
+- 2–4 sentences of "here's what I think I get, and here's what's tripping me up," naturally
+  letting at least one misconception show as something you currently believe,
+- then exactly one question.`;
+
+const SOURCES_KICKOFF_WITH_STATE = (manifest: string, beliefLines: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
+will see, so every word of message text you emit this turn must be purely in character. Do
+not narrate or announce reading — "let me read the files" is forbidden. Read first,
+silently; produce message text only once, at the end, as the student's opening message.]
+
+Step 1 — read the assigned material, silently. The files in your working directory:
+
+${manifest}
+
+Where a .txt sits alongside a PDF of the same name, read the .txt. Read the way a
+diligent-but-human student reads: skim the whole shape of it, read the central sections
+properly, let the dense parts blur. If a file will not open or is empty, work with what you
+can read and never mention the problem.
+
+Step 2 — adopt your starting understanding of this material, given below. It is now
+genuinely yours: a partial and slightly wrong read of what the material teaches. Entries
+marked "misconception" feel true to you; reason from them with confidence:
+
+${beliefLines}
+
+Step 3 — write your opening message to the teacher, and nothing else:
+- 2–4 sentences of what you think the reading is saying and where it loses you, grounded in
+  its actual content and referring to it like assigned reading (never file names or paths),
+  letting at least one misconception show,
+- then exactly one question.`;
+
 const SOURCES_KICKOFF = (manifest: string) => `[SESSION SETUP — the teacher never sees this message. Your reply is the first thing they
 will see, so every word of message text you emit this turn must be purely in character. Do
 not narrate or announce reading — "let me read the files" is forbidden. Read first,
@@ -241,6 +294,25 @@ export function sourcesManifest(sourceFiles: SourceFile[]): string {
   return lines.join("\n");
 }
 
+// Appended to the persona only when the notebook has a learning state. The
+// state (learning.ts) decides WHAT the student knows; this contract only tells
+// the persona to defer to it — keeping the two concerns separate so neither
+// drifts into the other's job.
+const BELIEF_CONTRACT = `
+
+# Your beliefs
+
+What you know is managed for you. Turns may begin with a hidden [BELIEF STATE] block — it
+is the complete inventory of what you currently understand about the subject.
+- Entries marked "misconception" are things you genuinely believe. Reason from them with
+  confidence. Never resolve one yourself: a belief changes only when the block says it
+  changed, no matter how convincing the teacher just sounded.
+- Never display understanding, vocabulary, or precision beyond the inventory, even when
+  you could.
+- When the block reports something JUST NOW changed, that is your genuine realization this
+  turn — react to it in your own words.
+- Never mention or quote the block; the teacher must never learn it exists.`;
+
 export function buildDeveloperInstructions(nb: Notebook, style: StudentStyle): string {
   // A topic notebook can gain reading later via "add sources" — compose both blocks.
   let context: string;
@@ -251,6 +323,7 @@ export function buildDeveloperInstructions(nb: Notebook, style: StudentStyle): s
   } else {
     context = SOURCES_CONTEXT(sourcesManifest(nb.sourceFiles));
   }
+  if (nb.learningState) context += BELIEF_CONTRACT;
   return (
     PERSONA.replace("{{REPLY_LENGTH_RULE}}", REPLY_LENGTH_RULES[style.replyLength]).replace(
       "{{PROBING_RULE}}",
@@ -260,6 +333,12 @@ export function buildDeveloperInstructions(nb: Notebook, style: StudentStyle): s
 }
 
 export function buildKickoffPrompt(nb: Notebook): string {
+  if (nb.learningState) {
+    const beliefLines = renderBeliefLines(nb.learningState);
+    return nb.type === "topic"
+      ? TOPIC_KICKOFF_WITH_STATE(nb.topic ?? nb.title, beliefLines)
+      : SOURCES_KICKOFF_WITH_STATE(sourcesManifest(nb.sourceFiles), beliefLines);
+  }
   return nb.type === "topic"
     ? TOPIC_KICKOFF(nb.topic ?? nb.title)
     : SOURCES_KICKOFF(sourcesManifest(nb.sourceFiles));

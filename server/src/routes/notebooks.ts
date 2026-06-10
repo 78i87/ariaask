@@ -169,6 +169,7 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       notebook: toSummary(nb),
       messages: nb.messages,
       turnActive: sessions.getState(nb.id).turnActive,
+      learningState: nb.learningState ?? null,
     });
   });
 

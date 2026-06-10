@@ -34,6 +34,7 @@ Composition root is `server/src/index.ts`; `app.ts` wires routes and a gate midd
 - `store.ts` — `NotebookStore`: in-memory map, persisted per notebook as JSON via atomic writes chained per-notebook so saves apply in order.
 - `settings.ts` — global settings (`model`, `effort`, `replyLength`, `probing`). `ARIA_MODEL`/`ARIA_EFFORT` env vars only *seed* the file on first boot; afterwards the file (Settings UI) wins.
 - `persona.ts` — the student persona, developer instructions, kickoff prompt, and transcript catch-up block. The `"default"` reply-length/probing rule strings are the original prompt text verbatim, kept so default settings produce a byte-identical persona — don't reword them casually.
+- `learning.ts` — the **learning state**: a server-owned belief inventory (`learningState` on the notebook, statuses `unknown | misconception | partial | understood`) deciding WHAT the student knows, kept strictly separate from the persona (HOW it speaks). Generated at kickoff by a one-shot side call (`AppServerClient.runOneShotTurn`, ephemeral thread), injected into every student turn as a hidden `[BELIEF STATE]` block, and updated only by a strict per-turn evaluator pass that runs before the student replies — a vague explanation must not resolve a misconception (at most `challenged`). Everything fails open: parse/RPC failures leave beliefs unchanged and never block the turn; a notebook without state behaves exactly pre-feature. Knobs: `ARIA_EVALUATOR_EFFORT` (default `low`), `ARIA_NO_LEARNING_STATE=1` kill switch. No UI yet — state ships on `GET /api/notebooks/:id` and the `learning-state` SSE event.
 - `session.ts` — `SessionManager`, the heart of the app. One `NotebookSession` per notebook: turn state machine (`idle → starting → streaming`), SSE fan-out to attached browsers, a 5-minute inactivity watchdog that interrupts and then force-resets a wedged turn, and overload retry on `turn/start`.
 
 Key invariants in the session layer:
@@ -42,7 +43,7 @@ Key invariants in the session layer:
 - Teacher messages are persisted optimistically before `turn/start` and rolled back if it fails; partial student text is persisted with `interrupted: true` when a turn is interrupted/failed.
 - Thread notifications are filtered by `turnId` to guard against late/duplicate events.
 
-SSE protocol (one channel per notebook, `routes/notebooks.ts` → `lib/sse.ts`): events `state` (snapshot on attach), `turn-started`, `delta`, `message`, `activity` (`reading-sources` | `thinking`), `error`, `turn-completed`, each with an incrementing per-session `id`.
+SSE protocol (one channel per notebook, `routes/notebooks.ts` → `lib/sse.ts`): events `state` (snapshot on attach), `turn-started`, `delta`, `message`, `activity` (`reading-sources` | `thinking`), `learning-state`, `error`, `turn-completed`, each with an incrementing per-session `id`.
 
 ## Web architecture
 

@@ -43,6 +43,58 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface CyraMessage {
+  id: string;
+  /**
+   * "user" = the human asking; "cyra" = the AI expert. Deliberately NOT
+   * teacher/student — the Aria thread uses those with the human↔AI mapping
+   * inverted (there the human is the teacher), so reusing them here would
+   * silently flip every consumer that keys rendering off the role.
+   */
+  role: "user" | "cyra";
+  text: string;
+  turnId: string | null;
+  interrupted?: true;
+  createdAt: string;
+}
+
+/**
+ * One "Ask Cyra" conversation: a separate codex thread where the human asks an
+ * expert teacher. Fresh thread per forwarded question; follow-ups stay inside.
+ */
+export interface CyraThread {
+  id: string;
+  /** Codex thread id; null until the first turn starts. */
+  threadId: string | null;
+  /** Derived from the seed question; shown in the thread switcher. */
+  title: string;
+  /** The Aria student message the question was lifted from, if any. */
+  sourceMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: CyraMessage[];
+}
+
+export interface CyraThreadSummary {
+  id: string;
+  title: string;
+  sourceMessageId: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function toCyraThreadSummary(ct: CyraThread): CyraThreadSummary {
+  return {
+    id: ct.id,
+    title: ct.title,
+    sourceMessageId: ct.sourceMessageId,
+    messageCount: ct.messages.length,
+    createdAt: ct.createdAt,
+    updatedAt: ct.updatedAt,
+  };
+}
+
 export interface Notebook {
   schemaVersion: 1;
   id: string;
@@ -76,6 +128,8 @@ export interface Notebook {
    * notebooks and when ARIA_NO_INTAKE=1 — absence means auto-kickoff as before.
    */
   intake?: Intake;
+  /** "Ask Cyra" expert conversations (see cyra-session.ts). Absent = none yet. */
+  cyraThreads?: CyraThread[];
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;

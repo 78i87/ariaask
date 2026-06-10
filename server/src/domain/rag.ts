@@ -490,7 +490,7 @@ function joinAdjacent(a: string, b: string): string {
   return `${a}\n${b}`;
 }
 
-interface Excerpt {
+export interface Excerpt {
   heading: string | null;
   text: string;
   score: number;
@@ -519,23 +519,32 @@ The teacher's message follows.]
 `;
 }
 
-async function retrieve(store: NotebookStore, settings: SettingsStore, nb: Notebook, query: string): Promise<string> {
+/** Excerpt selection shared by every persona; the rendered wrapper is the caller's. */
+async function selectExcerpts(
+  store: NotebookStore,
+  settings: SettingsStore,
+  nb: Notebook,
+  query: string,
+  excludePendingSources: boolean,
+): Promise<Excerpt[]> {
   await ensureRagIndex(store, settings, nb);
   const idx = loaded.get(nb.id);
   // The model guard matters even with equal dims: scoring a new model's query
   // against an old model's vectors (possible if a rebuild's disk write failed)
   // is noise, not fail-open.
-  if (!idx || idx.chunks.length === 0 || idx.model !== config.ragModel) return "";
+  if (!idx || idx.chunks.length === 0 || idx.model !== config.ragModel) return [];
 
   const prefix = QUERY_PREFIXES[config.ragModel] ?? "";
   const { dims, vectors: qv } = await embedBatched([prefix + query]);
-  if (dims !== idx.dims) return ""; // model changed mid-flight; the rebuild will catch up
+  if (dims !== idx.dims) return []; // model changed mid-flight; the rebuild will catch up
 
-  // Deleted sources vanish immediately (before the rebuild lands); sources the
-  // student hasn't been told about yet (pendingNewSources) must not be
-  // "remembered" either — they become retrievable one turn after their note.
+  // Deleted sources vanish immediately (before the rebuild lands) for every
+  // persona. The pendingNewSources gate is Aria-only fiction: the STUDENT
+  // can't "remember reading" a file she hasn't been told about yet, so those
+  // become retrievable one turn after their note — but an expert persona
+  // (Cyra) has no such fiction and opts out via excludePendingSources=false.
   const present = new Set(nb.sourceFiles.map((f) => f.storedName));
-  const pending = new Set(nb.pendingNewSources ?? []);
+  const pending = excludePendingSources ? new Set(nb.pendingNewSources ?? []) : new Set<string>();
 
   const scored: { i: number; score: number }[] = [];
   for (let i = 0; i < idx.chunks.length; i++) {
@@ -546,7 +555,7 @@ async function retrieve(store: NotebookStore, settings: SettingsStore, nb: Noteb
     for (let d = 0; d < dims; d++) dot += idx.vec[base + d]! * qv[d]!;
     scored.push({ i, score: dot });
   }
-  if (scored.length === 0) return "";
+  if (scored.length === 0) return [];
 
   scored.sort((a, b) => b.score - a.score);
   const top = scored[0]!.score;
@@ -563,7 +572,7 @@ async function retrieve(store: NotebookStore, settings: SettingsStore, nb: Noteb
   }
   if (kept.length === 0) {
     console.log(`[aria] rag: no excerpts above floor (top score ${top.toFixed(2)}) for notebook ${nb.id}`);
-    return "";
+    return [];
   }
 
   // Merge adjacent chunks of the same file into one continuous excerpt.
@@ -607,12 +616,12 @@ async function retrieve(store: NotebookStore, settings: SettingsStore, nb: Noteb
     budget -= e.text.length;
     final.push(e);
   }
-  if (final.length === 0) return "";
+  if (final.length === 0) return [];
 
   console.log(
     `[aria] rag: ${final.length} excerpt(s) (scores ${final[0]!.score.toFixed(2)}–${final[final.length - 1]!.score.toFixed(2)}) for notebook ${nb.id}`,
   );
-  return renderRetrievalBlock(final);
+  return final;
 }
 
 /**
@@ -620,20 +629,26 @@ async function retrieve(store: NotebookStore, settings: SettingsStore, nb: Noteb
  * threshold, missing index, cold model, slow query, any error — says no.
  * The whole path (model load + index + embed + search) races a hard cap;
  * a lost race keeps working in the background so the next turn is warm.
+ * `render` wraps the selected excerpts in a persona-appropriate block —
+ * the selection is shared, the framing is the caller's.
  */
-export async function buildRetrievalBlock(
+export async function buildRetrievalBlockWith(
   store: NotebookStore,
   settings: SettingsStore,
   nb: Notebook,
   query: string,
+  render: (excerpts: Excerpt[]) => string,
+  opts: { excludePendingSources?: boolean } = {},
 ): Promise<string> {
   if (!ragEligible(nb, settings.get()) || !query.trim()) return "";
   try {
     return await Promise.race([
-      retrieve(store, settings, nb, query).catch((err) => {
-        console.error(`[aria] rag: retrieval failed for notebook ${nb.id}; turn proceeds without excerpts:`, err);
-        return "";
-      }),
+      selectExcerpts(store, settings, nb, query, opts.excludePendingSources ?? true)
+        .then((excerpts) => (excerpts.length > 0 ? render(excerpts) : ""))
+        .catch((err) => {
+          console.error(`[aria] rag: retrieval failed for notebook ${nb.id}; turn proceeds without excerpts:`, err);
+          return "";
+        }),
       new Promise<string>((resolve) => {
         const t = setTimeout(() => resolve(""), config.ragQueryTimeoutMs);
         t.unref();
@@ -642,4 +657,14 @@ export async function buildRetrievalBlock(
   } catch {
     return "";
   }
+}
+
+/** The student's retrieval block (rendered with the Aria recall framing). */
+export function buildRetrievalBlock(
+  store: NotebookStore,
+  settings: SettingsStore,
+  nb: Notebook,
+  query: string,
+): Promise<string> {
+  return buildRetrievalBlockWith(store, settings, nb, query, renderRetrievalBlock);
 }

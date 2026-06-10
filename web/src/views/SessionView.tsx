@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
@@ -8,16 +8,20 @@ import { IconButton } from "../components/IconButton";
 import { TopAppBar } from "../components/TopAppBar";
 import { useSnackbar } from "../components/Snackbar";
 import { api } from "../lib/api";
+import { extractTrailingQuestion } from "../lib/extractQuestion";
 import { useTheme } from "../lib/theme";
+import { useCyraThreads } from "../lib/useCyraThread";
 import { useTeachingSession } from "../lib/useTeachingSession";
-import type { SourceFile } from "../lib/types";
+import type { ChatMessage, SourceFile, ThreadSelection } from "../lib/types";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { Composer } from "./session/Composer";
+import { CyraThreadView } from "./session/CyraThreadView";
 import { IntakeForm } from "./session/IntakeForm";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
 import { ThinkingIndicator } from "./session/ThinkingIndicator";
+import { ThreadBar } from "./session/ThreadBar";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
 
@@ -56,6 +60,31 @@ export function SessionView() {
   const [deleting, setDeleting] = useState(false);
   const snackbar = useSnackbar();
 
+  // ---- "Ask Cyra" expert threads ----
+  const [activeThread, setActiveThread] = useState<ThreadSelection>({ kind: "aria" });
+  /** Unsent new-question draft; non-null while the provisional chip exists. */
+  const [newDraft, setNewDraft] = useState<string | null>(null);
+  const [seedSourceMessageId, setSeedSourceMessageId] = useState<string | null>(null);
+  const { threads: cyraThreads, refresh: refreshCyraThreads } = useCyraThreads(id!);
+
+  // The snackbar context value isn't referentially stable; route through a ref
+  // so the bubble action callbacks below stay deps-[] (MessageBubble is memo'd).
+  const snackbarRef = useRef(snackbar);
+  snackbarRef.current = snackbar;
+
+  const onCopyMessage = useCallback((m: ChatMessage) => {
+    navigator.clipboard.writeText(m.text).then(
+      () => snackbarRef.current.show("Copied"),
+      () => snackbarRef.current.show("Couldn't copy"),
+    );
+  }, []);
+
+  const onAskCyra = useCallback((m: ChatMessage) => {
+    setNewDraft(extractTrailingQuestion(m.text));
+    setSeedSourceMessageId(m.id);
+    setActiveThread({ kind: "cyra", threadId: null });
+  }, []);
+
   const confirmDeleteSource = async () => {
     const target = deleteTarget;
     if (!target || !notebook || deleting) return;
@@ -75,7 +104,18 @@ export function SessionView() {
   useEffect(() => {
     didInitialScroll.current = false;
     pinnedRef.current = true;
+    setActiveThread({ kind: "aria" });
+    setNewDraft(null);
+    setSeedSourceMessageId(null);
   }, [id]);
+
+  // Returning to the teaching pane remounts its scroller — re-pin instantly.
+  useEffect(() => {
+    if (activeThread.kind === "aria") {
+      didInitialScroll.current = false;
+      pinnedRef.current = true;
+    }
+  }, [activeThread]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -93,7 +133,7 @@ export function SessionView() {
     const instant = status === "streaming" || !didInitialScroll.current;
     el.scrollTo({ top: el.scrollHeight, behavior: instant ? "auto" : "smooth" });
     if (messages.length > 0) didInitialScroll.current = true;
-  }, [messages, status]);
+  }, [messages, status, activeThread]);
 
   useEffect(() => {
     if (status !== "streaming" && status !== "waiting") setShowJump(false);
@@ -146,6 +186,13 @@ export function SessionView() {
         scrollContainer={scrollerRef.current}
       />
 
+      <ThreadBar
+        active={activeThread}
+        threads={cyraThreads}
+        showDraft={newDraft !== null}
+        onSelect={setActiveThread}
+      />
+
       {notebook && notebook.sourceFiles.length > 0 && (
         <div className="session__chips">
           {notebook.sourceFiles.map((f) => (
@@ -155,50 +202,66 @@ export function SessionView() {
       )}
 
       <div className="session__body">
-        <div className="session__main">
-          <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
-            <div className="session__thread">
-              {intakePending && status !== "loading" && (
-                <IntakeForm
-                  questions={intake.questions}
-                  submitting={false}
-                  onSubmit={(answers) => submitIntake({ answers })}
-                  onSkip={() => submitIntake({ skip: true })}
-                />
-              )}
+        {activeThread.kind === "aria" ? (
+          <div className="session__main">
+            <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
+              <div className="session__thread">
+                {intakePending && status !== "loading" && (
+                  <IntakeForm
+                    questions={intake.questions}
+                    submitting={false}
+                    onSubmit={(answers) => submitIntake({ answers })}
+                    onSkip={() => submitIntake({ skip: true })}
+                  />
+                )}
 
-              {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
-              ))}
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} onCopy={onCopyMessage} onAskCyra={onAskCyra} />
+                ))}
 
-              {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
+                {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
 
-              {status === "error" && (
-                <div className="session__error">
-                  <Icon name="error" size={18} className="session__error-icon" />
-                  <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
-                  <Button variant="text" onClick={retry}>
-                    Retry
-                  </Button>
-                </div>
+                {status === "error" && (
+                  <div className="session__error">
+                    <Icon name="error" size={18} className="session__error-icon" />
+                    <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
+                    <Button variant="text" onClick={retry}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {showJump && (
+                <button type="button" className="session__jump label-large" onClick={jumpToLatest}>
+                  <Icon name="arrow_downward" size={18} />
+                  Jump to latest
+                </button>
               )}
             </div>
 
-            {showJump && (
-              <button type="button" className="session__jump label-large" onClick={jumpToLatest}>
-                <Icon name="arrow_downward" size={18} />
-                Jump to latest
-              </button>
-            )}
+            <Composer
+              disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
+              busy={busy}
+              onSend={send}
+              onStop={interrupt}
+            />
           </div>
-
-          <Composer
-            disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
-            busy={busy}
-            onSend={send}
-            onStop={interrupt}
+        ) : (
+          <CyraThreadView
+            notebookId={id!}
+            threadId={activeThread.threadId}
+            draft={newDraft ?? ""}
+            onDraftChange={setNewDraft}
+            sourceMessageId={seedSourceMessageId}
+            onThreadCreated={(t) => {
+              setNewDraft(null);
+              setSeedSourceMessageId(null);
+              void refreshCyraThreads();
+              setActiveThread({ kind: "cyra", threadId: t.id });
+            }}
           />
-        </div>
+        )}
 
         {notebook && <SourcesPanel notebook={notebook} onOpenFile={setPreview} onDeleteFile={setDeleteTarget} />}
       </div>

@@ -72,6 +72,27 @@ export interface AppSettings {
   ragRecall: RagRecall;
 }
 
+export interface CyraThreadSummary {
+  id: string;
+  title: string;
+  sourceMessageId: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CyraChatMessage {
+  id: string;
+  /** "user" = you asking; "cyra" = the expert teacher. */
+  role: "user" | "cyra";
+  text: string;
+  status: "complete" | "streaming";
+  interrupted?: boolean;
+}
+
+/** Which conversation the session view is showing. */
+export type ThreadSelection = { kind: "aria" } | { kind: "cyra"; threadId: string | null };
+
 export interface EffortInfo {
   effort: string;
   description: string | null;

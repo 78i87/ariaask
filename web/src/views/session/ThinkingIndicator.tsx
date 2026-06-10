@@ -1,10 +1,11 @@
+import type { ReactNode } from "react";
 import { StudentAvatar } from "./MessageBubble";
 import "./ThinkingIndicator.css";
 
-export function ThinkingIndicator({ label }: { label?: string }) {
+export function ThinkingIndicator({ label, avatar }: { label?: string; avatar?: ReactNode }) {
   return (
     <div className="thinking">
-      <StudentAvatar pulsing />
+      {avatar ?? <StudentAvatar pulsing />}
       <div className="thinking__bubble">
         {label ? (
           <span className="thinking__label body-medium">{label}</span>

@@ -3,6 +3,7 @@ import type { AppServerClient } from "./appserver/client.js";
 import type { Config } from "./config.js";
 import type { NotebookStore } from "./domain/store.js";
 import type { SessionManager } from "./domain/session.js";
+import type { CyraSessionManager } from "./domain/cyra-session.js";
 import type { SettingsStore } from "./domain/settings.js";
 import { errorHandler, HttpError } from "./lib/errors.js";
 import { authRoutes, LoginTracker } from "./routes/auth.js";
@@ -15,6 +16,7 @@ export interface AppDeps {
   client: AppServerClient;
   store: NotebookStore;
   sessions: SessionManager;
+  cyra: CyraSessionManager;
   logins: LoginTracker;
   settings: SettingsStore;
 }
@@ -37,7 +39,7 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   app.use("/api/auth", authRoutes(deps.client, deps.logins));
-  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings));
+  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra));
   app.use("/api/settings", settingsRoutes(deps.settings, deps.client));
 
   app.use("/api", (_req, _res, next) => next(new HttpError(404, "not_found")));

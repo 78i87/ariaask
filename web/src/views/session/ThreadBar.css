@@ -1,0 +1,45 @@
+.threadbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--aria-chat-max);
+  margin: 0 auto;
+  padding: 8px 24px 0;
+  width: 100%;
+}
+
+.threadbar__divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 0;
+  background: var(--md-sys-color-outline-variant);
+  flex-shrink: 0;
+}
+
+.threadbar__scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+.threadbar__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.threadbar__chip {
+  flex-shrink: 0;
+}
+
+/* Cyra chips select in the tertiary family — the Cyra signature color. */
+.threadbar__chip--cyra.m3-chip--selected {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  border-color: transparent;
+}
+
+@media (max-width: 720px) {
+  .threadbar {
+    padding: 8px 12px 0;
+  }
+}

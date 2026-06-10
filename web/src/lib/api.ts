@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AuthStatus,
   ChatMessage,
+  CyraThreadSummary,
   Intake,
   IntakeAnswerPayload,
   Notebook,
@@ -76,6 +77,22 @@ export const api = {
       json(retry ? { retry: true } : text !== undefined ? { text, clientMessageId } : {}),
     ),
   interrupt: (id: string) => request<unknown>(`/api/notebooks/${id}/interrupt`, { method: "POST" }),
+
+  listCyraThreads: (id: string) => request<{ threads: CyraThreadSummary[] }>(`/api/notebooks/${id}/cyra`),
+  createCyraThread: (id: string, body: { text: string; clientMessageId?: string; sourceMessageId?: string }) =>
+    request<{ thread: CyraThreadSummary; turnId: string | null }>(`/api/notebooks/${id}/cyra`, json(body)),
+  getCyraThread: (id: string, tid: string) =>
+    request<{
+      thread: CyraThreadSummary;
+      messages: { id: string; role: "user" | "cyra"; text: string; interrupted?: boolean }[];
+      turnActive: boolean;
+    }>(`/api/notebooks/${id}/cyra/${tid}`),
+  sendCyraMessage: (id: string, tid: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/cyra/${tid}/messages`, json(body)),
+  interruptCyra: (id: string, tid: string) =>
+    request<unknown>(`/api/notebooks/${id}/cyra/${tid}/interrupt`, { method: "POST" }),
+  /** Raw URL for the per-thread EventSource. */
+  cyraEventsUrl: (id: string, tid: string) => `/api/notebooks/${id}/cyra/${tid}/events`,
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,

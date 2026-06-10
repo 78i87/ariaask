@@ -1,0 +1,54 @@
+/* Cyra is the expert teacher — everything here speaks the tertiary color
+   family so the user can never mistake who they're talking to. */
+
+.cyra-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-tertiary);
+  color: var(--md-sys-color-on-tertiary);
+  flex-shrink: 0;
+}
+
+.cyra-avatar--pulsing .m3-icon {
+  animation: avatar-fill-pulse 1.6s var(--md-sys-motion-easing-emphasized) infinite;
+}
+
+.cyra-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+.cyra-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cyra-banner__headline {
+  font-weight: 600;
+}
+
+/* The user's own messages — asking, not teaching. */
+.msg__bubble--cyra-user {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  border-radius: 20px 4px 20px 20px;
+  white-space: pre-wrap;
+}
+
+/* Cyra's answers reuse the student-bubble markdown styles with tertiary accents. */
+.msg__bubble--cyra .msg__cursor {
+  background: var(--md-sys-color-tertiary);
+}
+.msg__bubble--cyra blockquote {
+  border-left-color: var(--md-sys-color-tertiary);
+}

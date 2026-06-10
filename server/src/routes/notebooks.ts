@@ -5,8 +5,9 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
 import type { NotebookStore, SourceFile } from "../domain/store.js";
-import { sanitizeName, toSummary } from "../domain/store.js";
+import { sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
 import type { SessionManager } from "../domain/session.js";
+import type { CyraSessionManager } from "../domain/cyra-session.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
@@ -67,7 +68,12 @@ async function processUploads(
   return { sourceFiles, warnings };
 }
 
-export function notebookRoutes(store: NotebookStore, sessions: SessionManager, settings: SettingsStore): Router {
+export function notebookRoutes(
+  store: NotebookStore,
+  sessions: SessionManager,
+  settings: SettingsStore,
+  cyra: CyraSessionManager,
+): Router {
   const router = Router();
 
   const upload = multer({
@@ -357,9 +363,69 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager, s
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     await sessions.dispose(nb.id);
+    await cyra.disposeNotebook(nb.id);
     dropRagIndex(nb.id);
     await store.delete(nb.id);
     res.status(204).end();
+  });
+
+  // ---------- "Ask Cyra" expert threads ----------
+
+  const validClientMessageId = (v: unknown): string | undefined =>
+    typeof v === "string" && v.length > 0 && v.length <= 64 ? v : undefined;
+
+  router.get("/:id/cyra", (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    res.json({ threads: (nb.cyraThreads ?? []).map(toCyraThreadSummary) });
+  });
+
+  // Create-on-first-send: thread record + seed message + first turn, atomically.
+  router.post("/:id/cyra", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const body = (req.body ?? {}) as { text?: string; clientMessageId?: string; sourceMessageId?: string };
+    const result = await cyra.startTurn(nb.id, {
+      cyraThreadId: null,
+      text: body.text,
+      clientMessageId: validClientMessageId(body.clientMessageId),
+      sourceMessageId: typeof body.sourceMessageId === "string" ? body.sourceMessageId : null,
+    });
+    res.status(201).json(result);
+  });
+
+  router.get("/:id/cyra/:tid", (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const ct = nb.cyraThreads?.find((t) => t.id === req.params.tid);
+    if (!ct) throw new HttpError(404, "cyra_thread_not_found");
+    res.json({
+      thread: toCyraThreadSummary(ct),
+      messages: ct.messages,
+      turnActive: cyra.getState(ct.id).turnActive,
+    });
+  });
+
+  router.post("/:id/cyra/:tid/messages", async (req, res) => {
+    const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    const result = await cyra.startTurn(req.params.id, {
+      cyraThreadId: req.params.tid,
+      text: body.text,
+      retry: body.retry === true,
+      clientMessageId: validClientMessageId(body.clientMessageId),
+    });
+    res.status(202).json({ turnId: result.turnId });
+  });
+
+  router.post("/:id/cyra/:tid/interrupt", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    await cyra.interrupt(nb.id, req.params.tid);
+    res.status(202).json({});
+  });
+
+  router.get("/:id/cyra/:tid/events", (req, res) => {
+    cyra.attach(req.params.id, req.params.tid, res);
   });
 
   router.post("/:id/messages", async (req, res) => {

@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { AppServerClient, CodexNotFoundError } from "./appserver/client.js";
 import { NotebookStore } from "./domain/store.js";
 import { SessionManager } from "./domain/session.js";
+import { CyraSessionManager } from "./domain/cyra-session.js";
 import { SettingsStore } from "./domain/settings.js";
 import { LoginTracker } from "./routes/auth.js";
 import { createApp } from "./app.js";
@@ -29,8 +30,9 @@ async function main(): Promise<void> {
   await settings.init();
 
   const sessions = new SessionManager(client, store, settings, config);
+  const cyra = new CyraSessionManager(client, store, settings);
   const logins = new LoginTracker(client);
-  const app = createApp({ config, client, store, sessions, logins, settings });
+  const app = createApp({ config, client, store, sessions, cyra, logins, settings });
 
   const server = app.listen(config.port, () => {
     console.log(`[aria] server listening on http://localhost:${config.port}`);

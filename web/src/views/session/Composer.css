@@ -79,6 +79,15 @@
   color: var(--md-sys-color-on-error-container);
 }
 
+/* Cyra (expert teacher) accent. */
+.composer__pill--tertiary {
+  background: color-mix(in srgb, var(--md-sys-color-tertiary-container) 35%, var(--md-sys-color-surface-container-high));
+}
+.composer__btn--send-tertiary:not(:disabled) {
+  background: var(--md-sys-color-tertiary);
+  color: var(--md-sys-color-on-tertiary);
+}
+
 @media (max-width: 720px) {
   .composer {
     padding: 0 12px 12px;

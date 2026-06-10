@@ -8,6 +8,7 @@ import { TopAppBar } from "../components/TopAppBar";
 import { useTheme } from "../lib/theme";
 import { useTeachingSession } from "../lib/useTeachingSession";
 import type { SourceFile } from "../lib/types";
+import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { Composer } from "./session/Composer";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
@@ -23,13 +24,15 @@ export function SessionView() {
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
   const session = useTeachingSession(id!);
-  const { notebook, messages, status, kickoffRunning, activity, error, send, interrupt, retry } = session;
+  const { notebook, messages, status, kickoffRunning, activity, error, send, interrupt, retry, updateNotebook } =
+    session;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const didInitialScroll = useRef(false);
   const [showJump, setShowJump] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [preview, setPreview] = useState<SourceFile | null>(null);
 
   useEffect(() => {
@@ -81,6 +84,12 @@ export function SessionView() {
         headline={<span className="title-large">{notebook?.title ?? ""}</span>}
         trailing={
           <>
+            <IconButton
+              icon="add"
+              ariaLabel="Add sources"
+              disabled={status === "loading"}
+              onClick={() => setAddOpen(true)}
+            />
             <IconButton icon={theme === "dark" ? "light_mode" : "dark_mode"} ariaLabel="Toggle theme" onClick={toggle} />
             <IconButton icon="settings" ariaLabel="Settings" onClick={() => setSettingsOpen(true)} />
           </>
@@ -88,15 +97,11 @@ export function SessionView() {
         scrollContainer={scrollerRef.current}
       />
 
-      {notebook && (
+      {notebook && notebook.sourceFiles.length > 0 && (
         <div className="session__chips">
-          {notebook.type === "topic" ? (
-            <Chip icon="menu_book" label={notebook.topic ?? notebook.title} />
-          ) : (
-            notebook.sourceFiles.map((f) => (
-              <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
-            ))
-          )}
+          {notebook.sourceFiles.map((f) => (
+            <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
+          ))}
         </div>
       )}
 
@@ -142,6 +147,15 @@ export function SessionView() {
 
       {preview && notebook && (
         <SourcePreviewDialog notebookId={notebook.id} file={preview} onClose={() => setPreview(null)} />
+      )}
+
+      {notebook && (
+        <AddSourcesDialog
+          open={addOpen}
+          notebookId={notebook.id}
+          onClose={() => setAddOpen(false)}
+          onAdded={updateNotebook}
+        />
       )}
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />

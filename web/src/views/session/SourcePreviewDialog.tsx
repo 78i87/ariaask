@@ -37,9 +37,13 @@ export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreview
   const [load, setLoad] = useState<"loading" | "ready" | "error">(kind === "pdf" ? "ready" : "loading");
   const [attempt, setAttempt] = useState(0);
 
-  // Conditionally mounted by the caller, so open once on mount.
+  // Conditionally mounted by the caller, so open once on mount. The !open
+  // guard and close-on-cleanup keep StrictMode's simulated remount (and
+  // pre-2023 browsers, where a double showModal throws) well-behaved.
   useEffect(() => {
-    ref.current?.showModal();
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => dialog?.close();
   }, []);
 
   useEffect(() => {

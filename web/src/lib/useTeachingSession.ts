@@ -15,6 +15,8 @@ export interface TeachingSession {
   send: (text: string) => void;
   interrupt: () => void;
   retry: () => void;
+  /** Replace the notebook summary (e.g. after adding sources). */
+  updateNotebook: (nb: Notebook) => void;
 }
 
 const STREAMING_ID_PREFIX = "streaming:";
@@ -280,5 +282,5 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     void startTurn(undefined, true);
   }, [startTurn]);
 
-  return { notebook, messages, status, kickoffRunning, activity, error, send, interrupt, retry };
+  return { notebook, messages, status, kickoffRunning, activity, error, send, interrupt, retry, updateNotebook: setNotebook };
 }

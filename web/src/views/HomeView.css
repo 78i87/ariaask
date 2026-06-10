@@ -7,10 +7,11 @@
   overflow: hidden;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 40px;
   height: 40px;
-  padding: 4px 12px 4px 4px;
-  border: 1px solid var(--md-sys-color-outline-variant);
+  padding: 0;
+  border: none;
   border-radius: var(--md-sys-shape-corner-full);
   background: transparent;
   color: var(--md-sys-color-on-surface);
@@ -32,12 +33,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
   flex-shrink: 0;
+}
+
+.home__account-id {
+  display: flex;
+  flex-direction: column;
+}
+
+.home__account-plan {
+  color: var(--md-sys-color-on-surface-variant);
+  text-transform: capitalize;
 }
 
 .home__content {
@@ -80,9 +91,6 @@
   }
   .home__hero {
     padding: 24px 0 16px;
-  }
-  .home__email {
-    display: none;
   }
   .home__fab {
     position: fixed;

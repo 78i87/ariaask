@@ -7,7 +7,7 @@ import { RpcError } from "../appserver/rpc.js";
 import type { Config } from "../config.js";
 import type { ChatMessage, Notebook, NotebookStore } from "./store.js";
 import type { SettingsStore } from "./settings.js";
-import { buildCatchUpBlock, buildDeveloperInstructions, buildKickoffPrompt } from "./persona.js";
+import { buildCatchUpBlock, buildDeveloperInstructions, buildKickoffPrompt, buildNewSourcesNote } from "./persona.js";
 import type {
   AgentMessageDeltaNotification,
   ErrorNotification,
@@ -134,6 +134,23 @@ export class SessionManager {
         catchUp = buildCatchUpBlock(history);
       }
 
+      // Reading added after the thread was created: deliver it as a hidden
+      // note (instructions are pinned). Kickoff turns skip this — their own
+      // prompt already carries the full manifest.
+      let sourcesNote = "";
+      const notifiedNames = new Set<string>();
+      if (!kickoff && nb.pendingNewSources && nb.pendingNewSources.length > 0) {
+        const pending = new Set(nb.pendingNewSources);
+        const newFiles = nb.sourceFiles.filter((f) => pending.has(f.storedName));
+        if (newFiles.length > 0) sourcesNote = buildNewSourcesNote(newFiles);
+        // Pending names without a matching source file are stale — drop those too.
+        for (const name of pending) {
+          if (newFiles.some((f) => f.storedName === name) || !nb.sourceFiles.some((f) => f.storedName === name)) {
+            notifiedNames.add(name);
+          }
+        }
+      }
+
       if (!kickoff && !retry) {
         teacherMessageId = clientMessageId ?? randomUUID();
         nb.messages.push({
@@ -150,10 +167,16 @@ export class SessionManager {
 
       const s = this.settings.get();
       const effort = kickoff ? this.kickoffEffort(s.effort) : s.effort;
-      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + input, s.model, effort);
+      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + input, s.model, effort);
       // Only clear once the turn actually started — a failed turn/start must
-      // not cost the fresh thread its transcript catch-up.
+      // not cost the fresh thread its transcript catch-up or the new-reading note.
       session.catchUpNeeded = false;
+      if (notifiedNames.size > 0) {
+        // Remove only what this turn's note covered — files added while the
+        // turn was starting stay pending for the next one.
+        nb.pendingNewSources = (nb.pendingNewSources ?? []).filter((s) => !notifiedNames.has(s));
+        await this.store.save(nb);
+      }
       session.turnId = turn.id;
       session.state = "streaming";
       this.resetWatchdog(session);

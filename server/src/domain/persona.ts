@@ -137,7 +137,14 @@ persona.
 
 `;
 
-const TOPIC_CONTEXT = (topic: string) => `The subject you are learning: ${topic}.
+// The no-reading sentence must vanish once sources are added, or it would
+// contradict the SOURCES_CONTEXT block appended after it.
+const TOPIC_CONTEXT = (topic: string, hasReading: boolean) =>
+  hasReading
+    ? `The subject you are learning: ${topic}.
+Your scattered starting knowledge and your misconceptions are about this topic; they get
+established in the first instruction you receive.`
+    : `The subject you are learning: ${topic}.
 There is no assigned reading in this session. Your scattered starting knowledge and your
 misconceptions are about this topic; they get established in the first instruction you
 receive.`;
@@ -235,8 +242,15 @@ export function sourcesManifest(sourceFiles: SourceFile[]): string {
 }
 
 export function buildDeveloperInstructions(nb: Notebook, style: StudentStyle): string {
-  const context =
-    nb.type === "topic" ? TOPIC_CONTEXT(nb.topic ?? nb.title) : SOURCES_CONTEXT(sourcesManifest(nb.sourceFiles));
+  // A topic notebook can gain reading later via "add sources" — compose both blocks.
+  let context: string;
+  if (nb.type === "topic") {
+    const hasReading = nb.sourceFiles.length > 0;
+    context = TOPIC_CONTEXT(nb.topic ?? nb.title, hasReading);
+    if (hasReading) context += "\n\n" + SOURCES_CONTEXT(sourcesManifest(nb.sourceFiles));
+  } else {
+    context = SOURCES_CONTEXT(sourcesManifest(nb.sourceFiles));
+  }
   return (
     PERSONA.replace("{{REPLY_LENGTH_RULE}}", REPLY_LENGTH_RULES[style.replyLength]).replace(
       "{{PROBING_RULE}}",
@@ -249,6 +263,21 @@ export function buildKickoffPrompt(nb: Notebook): string {
   return nb.type === "topic"
     ? TOPIC_KICKOFF(nb.topic ?? nb.title)
     : SOURCES_KICKOFF(sourcesManifest(nb.sourceFiles));
+}
+
+/** Hidden preamble telling the student about reading added mid-session. */
+export function buildNewSourcesNote(files: SourceFile[]): string {
+  return `[The teacher just added new assigned reading for this session. It is available in your
+working directory:
+
+${sourcesManifest(files)}
+
+Before replying, silently read it — never narrate or announce doing so. From now on it is
+part of the assigned reading: ground claims about it in what it actually says, and refer to
+it the way a student would ("the new reading", "the part you just gave me"). The teacher's
+message follows.]
+
+`;
 }
 
 /**

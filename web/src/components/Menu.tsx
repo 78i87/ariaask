@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import "./Menu.css";
@@ -15,9 +15,11 @@ interface MenuProps {
   onClose: () => void;
   anchorRef: RefObject<HTMLElement | null>;
   items: MenuItem[];
+  /** Non-interactive content shown above the items (e.g. account identity). */
+  header?: ReactNode;
 }
 
-export function Menu({ open, onClose, anchorRef, items }: MenuProps) {
+export function Menu({ open, onClose, anchorRef, items, header }: MenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -58,6 +60,7 @@ export function Menu({ open, onClose, anchorRef, items }: MenuProps) {
 
   return createPortal(
     <div ref={menuRef} className="m3-menu" role="menu" style={{ top: pos.top, left: pos.left }}>
+      {header && <div className="m3-menu__header">{header}</div>}
       {items.map((item) => (
         <button
           key={item.label}

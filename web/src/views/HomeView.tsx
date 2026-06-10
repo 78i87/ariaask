@@ -62,14 +62,24 @@ export function HomeView() {
               className="home__account"
               onClick={() => setAccountOpen(true)}
               aria-label="Account"
+              title={email}
             >
               <span className="home__avatar label-large">{(email?.[0] ?? "?").toUpperCase()}</span>
-              {email && <span className="home__email body-medium">{email}</span>}
             </button>
             <Menu
               open={accountOpen}
               onClose={() => setAccountOpen(false)}
               anchorRef={accountAnchor}
+              header={
+                email && (
+                  <div className="home__account-id">
+                    <span className="body-medium">{email}</span>
+                    {state.phase === "signed-in" && state.planType && (
+                      <span className="home__account-plan body-medium">{state.planType} plan</span>
+                    )}
+                  </div>
+                )
+              }
               items={[{ icon: "logout", label: "Sign out", onSelect: () => void logout() }]}
             />
           </>

@@ -18,31 +18,21 @@ interface SourcesPanelProps {
 }
 
 export function SourcesPanel({ notebook, onOpenFile }: SourcesPanelProps) {
+  // The notebook's topic already titles the app bar — the panel is files-only.
+  if (notebook.sourceFiles.length === 0) return null;
   return (
     <aside className="session__sources" aria-label="Source materials">
-      <h2 className="session__sources-heading label-large">{notebook.type === "topic" ? "Topic" : "Sources"}</h2>
-      {notebook.type === "topic" ? (
-        <div className="session__source-topic">
-          <Icon name="menu_book" size={20} className="session__source-icon" />
-          <span className="session__source-name body-medium">{notebook.topic ?? notebook.title}</span>
-        </div>
-      ) : (
-        <ul className="session__sources-list">
-          {notebook.sourceFiles.map((f) => (
-            <li key={f.storedName}>
-              <button
-                type="button"
-                className="session__source-row"
-                title={f.originalName}
-                onClick={() => onOpenFile(f)}
-              >
-                <Icon name={sourceIcon(f)} size={20} className="session__source-icon" />
-                <span className="session__source-name body-medium">{truncateMiddle(f.originalName)}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <h2 className="session__sources-heading label-large">Sources</h2>
+      <ul className="session__sources-list">
+        {notebook.sourceFiles.map((f) => (
+          <li key={f.storedName}>
+            <button type="button" className="session__source-row" title={f.originalName} onClick={() => onOpenFile(f)}>
+              <Icon name={sourceIcon(f)} size={20} className="session__source-icon" />
+              <span className="session__source-name body-medium">{truncateMiddle(f.originalName)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </aside>
   );
 }

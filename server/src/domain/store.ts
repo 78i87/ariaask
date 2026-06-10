@@ -38,6 +38,8 @@ export interface Notebook {
    * thread). Absent on pre-settings notebooks = default/default.
    */
   appliedStyle?: { replyLength: string; probing: string };
+  /** storedNames added after thread creation that the student hasn't been told about yet. */
+  pendingNewSources?: string[];
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;

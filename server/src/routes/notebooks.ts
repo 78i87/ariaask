@@ -18,6 +18,51 @@ interface UploadRequest extends Request {
   usedNames?: Set<string>;
 }
 
+/** Per-file processing shared by notebook creation and add-sources: PDF extraction + word counts. */
+async function processUploads(
+  store: NotebookStore,
+  id: string,
+  files: Express.Multer.File[],
+  usedNames: Set<string>,
+): Promise<{ sourceFiles: SourceFile[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  const sourceFiles: SourceFile[] = [];
+  for (const f of files) {
+    const ext = path.extname(f.filename).toLowerCase();
+    let extractedName: string | null = null;
+    let approxWords: number | null = null;
+    if (ext === ".pdf") {
+      const text = await extractPdfText(f.path);
+      if (text) {
+        // Reserve the extracted name against uploads too — an uploaded
+        // "lecture.extracted.txt" must not be overwritten by extraction.
+        const stem = path.basename(f.filename, ext);
+        let name = `${stem}.extracted.txt`;
+        let n = 1;
+        while (usedNames.has(name)) name = `${stem}.extracted-${n++}.txt`;
+        usedNames.add(name);
+        extractedName = name;
+        await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
+        approxWords = approxWordCount(text);
+      } else {
+        warnings.push(`"${f.originalname}" appears to be a scanned or unreadable PDF; the student may not be able to read it.`);
+      }
+    } else {
+      const text = await fs.readFile(f.path, "utf8").catch(() => "");
+      approxWords = approxWordCount(text);
+    }
+    sourceFiles.push({
+      originalName: f.originalname,
+      storedName: f.filename,
+      extractedName,
+      mimeType: f.mimetype,
+      size: f.size,
+      approxWords,
+    });
+  }
+  return { sourceFiles, warnings };
+}
+
 function sanitizeName(original: string, used: Set<string>): string {
   const ext = path.extname(original).toLowerCase();
   const stem =
@@ -103,41 +148,7 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       if (type === "topic" && !topic) await fail(400, "missing_topic", "A topic is required");
       if (type === "files" && files.length === 0) await fail(400, "missing_files", "At least one source file is required");
 
-      const warnings: string[] = [];
-      const sourceFiles: SourceFile[] = [];
-      for (const f of files) {
-        const ext = path.extname(f.filename).toLowerCase();
-        let extractedName: string | null = null;
-        let approxWords: number | null = null;
-        if (ext === ".pdf") {
-          const text = await extractPdfText(f.path);
-          if (text) {
-            // Reserve the extracted name against uploads too — an uploaded
-            // "lecture.extracted.txt" must not be overwritten by extraction.
-            const stem = path.basename(f.filename, ext);
-            let name = `${stem}.extracted.txt`;
-            let n = 1;
-            while (req.usedNames!.has(name)) name = `${stem}.extracted-${n++}.txt`;
-            req.usedNames!.add(name);
-            extractedName = name;
-            await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
-            approxWords = approxWordCount(text);
-          } else {
-            warnings.push(`"${f.originalname}" appears to be a scanned or unreadable PDF; the student may not be able to read it.`);
-          }
-        } else {
-          const text = await fs.readFile(f.path, "utf8").catch(() => "");
-          approxWords = approxWordCount(text);
-        }
-        sourceFiles.push({
-          originalName: f.originalname,
-          storedName: f.filename,
-          extractedName,
-          mimeType: f.mimetype,
-          size: f.size,
-          approxWords,
-        });
-      }
+      const { sourceFiles, warnings } = await processUploads(store, id, files, req.usedNames!);
 
       const title =
         body.title?.trim() ||
@@ -160,6 +171,57 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
       turnActive: sessions.getState(nb.id).turnActive,
     });
   });
+
+  router.post(
+    "/:id/sources",
+    (req: UploadRequest, _res, next) => {
+      const nb = store.get(req.params.id as string);
+      if (!nb) {
+        next(new HttpError(404, "notebook_not_found"));
+        return;
+      }
+      req.notebookId = nb.id;
+      // Dedupe new uploads against everything already in the sources dir.
+      req.usedNames = new Set(
+        nb.sourceFiles.flatMap((f) => (f.extractedName ? [f.storedName, f.extractedName] : [f.storedName])),
+      );
+      next();
+    },
+    // Unlike creation, the notebook dir must survive a failed upload — only
+    // remove the partially-written new files.
+    (req: UploadRequest, res, next) => {
+      uploadFiles(req, res, (err: unknown) => {
+        if (!err) return next();
+        const written = (req.files as Express.Multer.File[] | undefined) ?? [];
+        for (const f of written) void fs.rm(f.path, { force: true }).catch(() => {});
+        if (err instanceof multer.MulterError) {
+          const message =
+            err.code === "LIMIT_FILE_SIZE"
+              ? "Each file must be under 25MB"
+              : err.code === "LIMIT_FILE_COUNT"
+                ? "You can upload at most 10 files at once"
+                : err.message;
+          next(new HttpError(400, "upload_rejected", message));
+        } else {
+          next(err);
+        }
+      });
+    },
+    async (req: UploadRequest, res) => {
+      const nb = store.get(req.notebookId!)!;
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      if (files.length === 0) throw new HttpError(400, "missing_files", "At least one file is required");
+
+      const { sourceFiles, warnings } = await processUploads(store, nb.id, files, req.usedNames!);
+      nb.sourceFiles.push(...sourceFiles);
+      // The live thread's instructions can't change — the student learns about
+      // these on the next turn via a hidden note (see session.ts).
+      nb.pendingNewSources = [...(nb.pendingNewSources ?? []), ...sourceFiles.map((f) => f.storedName)];
+      await store.save(nb);
+
+      res.status(201).json({ notebook: toSummary(nb), added: sourceFiles, warnings });
+    },
+  );
 
   router.get("/:id/sources/:name", (req, res, next) => {
     const nb = store.get(req.params.id);

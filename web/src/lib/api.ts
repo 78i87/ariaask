@@ -1,4 +1,4 @@
-import type { AppSettings, AuthStatus, ChatMessage, Notebook, SettingsResponse } from "./types";
+import type { AppSettings, AuthStatus, ChatMessage, Notebook, SettingsResponse, SourceFile } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -67,6 +67,11 @@ export const api = {
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,
+  addSources: (id: string, form: FormData) =>
+    request<{ notebook: Notebook; added: SourceFile[]; warnings: string[] }>(`/api/notebooks/${id}/sources`, {
+      method: "POST",
+      body: form,
+    }),
 
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>

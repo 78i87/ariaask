@@ -66,14 +66,3 @@
 .session__source-name {
   white-space: nowrap;
 }
-
-.session__source-topic {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 8px 12px;
-  color: var(--md-sys-color-on-surface);
-}
-.session__source-topic .session__source-name {
-  white-space: normal;
-}

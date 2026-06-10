@@ -32,6 +32,8 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const kickoffTriggered = useRef(false);
   const persistedCount = useRef(0);
   const initialLoaded = useRef(false);
+  /** Ids of messages already in local state — dedupes SSE echoes of our own sends. */
+  const knownIds = useRef(new Set<string>());
 
   const flushDeltas = useCallback(() => {
     rafPending.current = false;
@@ -73,6 +75,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     const res = await api.getNotebook(notebookId);
     setNotebook(res.notebook);
     persistedCount.current = res.messages.length;
+    knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(
       res.messages.map((m) => ({
         id: m.id,
@@ -86,11 +89,11 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   }, [notebookId]);
 
   const startTurn = useCallback(
-    async (text?: string, retry?: boolean): Promise<boolean> => {
+    async (text?: string, retry?: boolean, clientMessageId?: string): Promise<boolean> => {
       setError(null);
       setStatus("waiting");
       try {
-        await api.sendMessage(notebookId, text, retry);
+        await api.sendMessage(notebookId, text, retry, clientMessageId);
         return true;
       } catch (err) {
         if (err instanceof ApiError && err.code === "turn_active") return true; // already running; SSE will drive UI
@@ -183,13 +186,29 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     });
 
     es.addEventListener("message", (e) => {
-      const data = JSON.parse((e as MessageEvent).data) as { id: string; text: string };
+      const data = JSON.parse((e as MessageEvent).data) as {
+        id: string;
+        role?: "teacher" | "student";
+        text: string;
+        interrupted?: boolean;
+      };
+      // Echo of a message this tab already has (e.g. its own optimistic send).
+      if (knownIds.current.has(data.id)) return;
+      knownIds.current.add(data.id);
       persistedCount.current += 1;
-      deltaBuffers.current.clear();
-      setMessages((prev) => {
-        const withoutStreaming = prev.filter((m) => m.status !== "streaming");
-        return [...withoutStreaming, { id: data.id, role: "student", text: data.text, status: "complete" }];
-      });
+      const role = data.role ?? "student";
+      if (role === "student") {
+        deltaBuffers.current.clear();
+        setMessages((prev) => {
+          const withoutStreaming = prev.filter((m) => m.status !== "streaming");
+          return [
+            ...withoutStreaming,
+            { id: data.id, role: "student", text: data.text, status: "complete", interrupted: data.interrupted },
+          ];
+        });
+      } else {
+        setMessages((prev) => [...prev, { id: data.id, role: "teacher", text: data.text, status: "complete" }]);
+      }
     });
 
     es.addEventListener("turn-completed", (e) => {
@@ -235,13 +254,17 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // The server persists under this same id, so the SSE broadcast of this
+      // message dedupes against the optimistic copy in this tab.
       const optimisticId = crypto.randomUUID();
+      knownIds.current.add(optimisticId);
       setMessages((prev) => [...prev, { id: optimisticId, role: "teacher", text: trimmed, status: "complete" }]);
       persistedCount.current += 1;
-      void startTurn(trimmed).then((ok) => {
+      void startTurn(trimmed, false, optimisticId).then((ok) => {
         if (!ok) {
           // Turn never started (the server rolled back its copy too): remove the orphan bubble.
           setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+          knownIds.current.delete(optimisticId);
           persistedCount.current -= 1;
         }
       });

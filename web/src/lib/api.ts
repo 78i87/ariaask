@@ -58,8 +58,11 @@ export const api = {
     }>(`/api/notebooks/${id}`),
   deleteNotebook: (id: string) => request<void>(`/api/notebooks/${id}`, { method: "DELETE" }),
 
-  sendMessage: (id: string, text?: string, retry?: boolean) =>
-    request<{ turnId: string | null }>(`/api/notebooks/${id}/messages`, json(retry ? { retry: true } : text !== undefined ? { text } : {})),
+  sendMessage: (id: string, text?: string, retry?: boolean, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(
+      `/api/notebooks/${id}/messages`,
+      json(retry ? { retry: true } : text !== undefined ? { text, clientMessageId } : {}),
+    ),
   interrupt: (id: string) => request<unknown>(`/api/notebooks/${id}/interrupt`, { method: "POST" }),
 
   getSettings: () => request<SettingsResponse>("/api/settings"),

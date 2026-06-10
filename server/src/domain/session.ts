@@ -85,7 +85,12 @@ export class SessionManager {
 
   // ---------- turns ----------
 
-  async startTurn(notebookId: string, text: string | undefined, retry = false): Promise<{ turnId: string | null }> {
+  async startTurn(
+    notebookId: string,
+    text: string | undefined,
+    retry = false,
+    clientMessageId?: string,
+  ): Promise<{ turnId: string | null }> {
     const nb = this.store.get(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
@@ -93,6 +98,7 @@ export class SessionManager {
 
     let input: string;
     let kickoff = false;
+    let retryTeacher: ChatMessage | null = null;
     if (!nb.kickoffDone) {
       // First turn of the notebook: the hidden kickoff. An accompanying user
       // text should not occur (the UI disables the composer until the opener
@@ -100,9 +106,9 @@ export class SessionManager {
       kickoff = true;
       input = buildKickoffPrompt(nb);
     } else if (retry) {
-      const lastTeacher = [...nb.messages].reverse().find((m) => m.role === "teacher");
-      if (!lastTeacher) throw new HttpError(400, "nothing_to_retry");
-      input = lastTeacher.text;
+      retryTeacher = [...nb.messages].reverse().find((m) => m.role === "teacher") ?? null;
+      if (!retryTeacher) throw new HttpError(400, "nothing_to_retry");
+      input = retryTeacher.text;
     } else {
       if (!text || !text.trim()) throw new HttpError(400, "empty_message");
       input = text.trim();
@@ -119,8 +125,17 @@ export class SessionManager {
     try {
       await this.ensureThread(nb, session);
 
+      // Snapshot the catch-up transcript BEFORE persisting the new teacher
+      // message (and excluding a retried one), so the live prompt can't also
+      // appear inside the transcript block on a recreated thread.
+      let catchUp = "";
+      if (session.catchUpNeeded) {
+        const history = retryTeacher ? nb.messages.filter((m) => m.id !== retryTeacher.id) : nb.messages;
+        catchUp = buildCatchUpBlock(history);
+      }
+
       if (!kickoff && !retry) {
-        teacherMessageId = randomUUID();
+        teacherMessageId = clientMessageId ?? randomUUID();
         nb.messages.push({
           id: teacherMessageId,
           role: "teacher",
@@ -129,16 +144,16 @@ export class SessionManager {
           createdAt: new Date().toISOString(),
         });
         await this.store.save(nb);
-      }
-
-      if (session.catchUpNeeded) {
-        input = buildCatchUpBlock(nb) + input;
-        session.catchUpNeeded = false;
+        // Keep other attached tabs coherent; the sender dedupes by id.
+        this.broadcast(session, "message", { id: teacherMessageId, role: "teacher", text: input, turnId: null });
       }
 
       const s = this.settings.get();
       const effort = kickoff ? this.kickoffEffort(s.effort) : s.effort;
-      const turn = await this.turnStartWithRetry(nb.threadId!, input, s.model, effort);
+      const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + input, s.model, effort);
+      // Only clear once the turn actually started — a failed turn/start must
+      // not cost the fresh thread its transcript catch-up.
+      session.catchUpNeeded = false;
       session.turnId = turn.id;
       session.state = "streaming";
       this.resetWatchdog(session);
@@ -378,7 +393,13 @@ export class SessionManager {
     if (msg.interrupted) record.interrupted = true;
     nb.messages.push(record);
     await this.store.save(nb);
-    this.broadcast(session, "message", { id: record.id, text: record.text, turnId: record.turnId });
+    this.broadcast(session, "message", {
+      id: record.id,
+      role: "student",
+      text: record.text,
+      turnId: record.turnId,
+      interrupted: record.interrupted ?? false,
+    });
   }
 
   private async onTurnCompleted(session: NotebookSession, p: TurnCompletedNotification): Promise<void> {
@@ -467,16 +488,29 @@ export class SessionManager {
       // only if it's still the same turn we armed for.
       session.forceResetTimer = setTimeout(() => {
         session.forceResetTimer = null;
-        if (session.state !== "idle" && session.turnId === armedTurnId) {
-          session.state = "idle";
-          session.kickoffTurn = false;
-          session.turnId = null;
-          session.partials.clear();
-          session.finalizedItems.clear();
-          session.kickoffMessages = [];
+        if (session.state === "idle" || session.turnId !== armedTurnId) return;
+        const partials = [...session.partials.entries()];
+        const finalized = new Set(session.finalizedItems);
+        const wasKickoff = session.kickoffTurn;
+        session.state = "idle";
+        session.kickoffTurn = false;
+        session.turnId = null;
+        session.partials.clear();
+        session.finalizedItems.clear();
+        session.kickoffMessages = [];
+        void (async () => {
+          // Like every other failure path: streamed-but-unfinalized text is
+          // the student's answer so far — keep it.
+          if (!wasKickoff) {
+            for (const [itemId, text] of partials) {
+              if (!finalized.has(itemId) && text.trim()) {
+                await this.persistStudentMessage(session, { id: itemId, text, turnId: armedTurnId, interrupted: true });
+              }
+            }
+          }
           this.broadcast(session, "error", { message: "The student stopped responding.", retryable: true });
           this.broadcast(session, "turn-completed", { turnId: null, status: "failed", error: { message: "timeout" } });
-        }
+        })().catch((err) => console.error("[aria] watchdog force-reset failed:", err));
       }, 15_000);
     }, TURN_INACTIVITY_MS);
   }

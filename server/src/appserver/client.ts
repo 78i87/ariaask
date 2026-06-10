@@ -211,6 +211,9 @@ export class AppServerClient extends EventEmitter {
         .catch((err) => {
           if (!settled) {
             settled = true;
+            // Don't leave a half-initialized child alive and unusable; killing
+            // it fires onChildClose, which retries with backoff or gives up.
+            child.kill("SIGKILL");
             reject(err);
           }
         });
@@ -259,7 +262,8 @@ export class AppServerClient extends EventEmitter {
 
   private onChildClose(code: number | null): void {
     this.conn?.failAllPending(new AppServerCrashedError());
-    if (this.stopping || this.stateValue === "stopped") return;
+    // codex-not-found: restarting would respawn the same missing binary forever.
+    if (this.stopping || this.stateValue === "stopped" || this.stateValue === "codex-not-found") return;
 
     console.error(`[aria] codex app-server exited (code ${code})`);
     this.emit("crashed");

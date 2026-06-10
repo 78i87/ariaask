@@ -55,8 +55,14 @@ export function settingsRoutes(settings: SettingsStore, client: AppServerClient)
   const router = Router();
 
   // Cached per app-server generation — the list only changes with a codex
-  // upgrade or account change, which coincide with a respawn.
+  // upgrade or account change. Account changes within a process (login/logout)
+  // clear it explicitly since plans can gate model availability.
   let cache: { generation: number; models: ModelInfo[] } | null = null;
+  const clearCache = () => {
+    cache = null;
+  };
+  client.on("account-updated", clearCache);
+  client.on("login-completed", clearCache);
 
   async function loadModels(): Promise<ModelInfo[]> {
     if (cache && cache.generation === client.generation) return cache.models;

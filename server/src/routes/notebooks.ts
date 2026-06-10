@@ -112,7 +112,14 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
         if (ext === ".pdf") {
           const text = await extractPdfText(f.path);
           if (text) {
-            extractedName = `${path.basename(f.filename, ext)}.extracted.txt`;
+            // Reserve the extracted name against uploads too — an uploaded
+            // "lecture.extracted.txt" must not be overwritten by extraction.
+            const stem = path.basename(f.filename, ext);
+            let name = `${stem}.extracted.txt`;
+            let n = 1;
+            while (req.usedNames!.has(name)) name = `${stem}.extracted-${n++}.txt`;
+            req.usedNames!.add(name);
+            extractedName = name;
             await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
             approxWords = approxWordCount(text);
           } else {
@@ -163,8 +170,12 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
   });
 
   router.post("/:id/messages", async (req, res) => {
-    const body = (req.body ?? {}) as { text?: string; retry?: boolean };
-    const result = await sessions.startTurn(req.params.id, body.text, body.retry === true);
+    const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    const clientMessageId =
+      typeof body.clientMessageId === "string" && body.clientMessageId.length > 0 && body.clientMessageId.length <= 64
+        ? body.clientMessageId
+        : undefined;
+    const result = await sessions.startTurn(req.params.id, body.text, body.retry === true, clientMessageId);
     res.status(202).json(result);
   });
 

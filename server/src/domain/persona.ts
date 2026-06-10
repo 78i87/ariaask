@@ -1,4 +1,4 @@
-import type { Notebook, SourceFile } from "./store.js";
+import type { ChatMessage, Notebook, SourceFile } from "./store.js";
 
 export type ReplyLength = "concise" | "default" | "chatty";
 export type Probing = "gentle" | "default" | "relentless";
@@ -251,9 +251,13 @@ export function buildKickoffPrompt(nb: Notebook): string {
     : SOURCES_KICKOFF(sourcesManifest(nb.sourceFiles));
 }
 
-/** Prepended to the next turn when a thread had to be recreated after a lost rollout. */
-export function buildCatchUpBlock(nb: Notebook): string {
-  const recent = nb.messages.slice(-30);
+/**
+ * Prepended to the next turn when a thread had to be recreated (lost rollout
+ * or student-style change). Callers pass the transcript EXCLUDING the message
+ * being sent as the live prompt, so it can't appear twice.
+ */
+export function buildCatchUpBlock(messages: ChatMessage[]): string {
+  const recent = messages.slice(-30);
   const lines = recent.map((m) => `${m.role === "teacher" ? "Teacher" : "You"}: ${m.text}`);
   return `[SYSTEM: your earlier conversation with the teacher was lost. Here is the transcript so far — re-internalize it; everything you learned in it stays learned. Do not mention this interruption. The teacher's next message follows after the transcript.]
 

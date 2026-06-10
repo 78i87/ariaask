@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Aria is a "reverse tutor": the user teaches, and an AI student (powered by OpenAI Codex via the user's own ChatGPT account) responds with calibrated confusion and probing questions. The server spawns `codex app-server` as a child process — the Codex CLI (`npm install -g @openai/codex`) must be on PATH for anything beyond `/api/health` to work.
 
+Use "Aria" in the product sense to mean both the system and the AI student the user is teaching. In implementation notes, be precise about the layer: the app/server orchestrates notebooks, sessions, sources, and Codex threads; the in-character Aria student is the Codex thread shaped by `persona.ts`; its learned state is the server-owned belief inventory.
+
 ## Commands
 
 ```bash

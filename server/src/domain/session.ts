@@ -7,7 +7,14 @@ import { RpcError } from "../appserver/rpc.js";
 import type { Config } from "../config.js";
 import type { ChatMessage, Notebook, NotebookStore } from "./store.js";
 import type { SettingsStore } from "./settings.js";
-import { buildCatchUpBlock, buildDeveloperInstructions, buildKickoffPrompt, buildNewSourcesNote, sourcesManifest } from "./persona.js";
+import {
+  buildCatchUpBlock,
+  buildDeveloperInstructions,
+  buildKickoffPrompt,
+  buildNewSourcesNote,
+  buildRemovedSourcesNote,
+  sourcesManifest,
+} from "./persona.js";
 import {
   applyEvaluatorOutput,
   buildBeliefBlock,
@@ -157,19 +164,27 @@ export class SessionManager {
         catchUp = buildCatchUpBlock(history);
       }
 
-      // Reading added after the thread was created: deliver it as a hidden
-      // note (instructions are pinned). Kickoff turns skip this — their own
-      // prompt already carries the full manifest.
+      // Reading added/removed after the thread was created is delivered as
+      // hidden notes (instructions are pinned). Kickoff turns carry a fresh
+      // manifest in their own prompt, so they just absorb the pendings.
+      // `addedCovered`/`removedCovered` snapshot what THIS turn accounts for —
+      // pendings appended while the turn is starting stay queued.
       let sourcesNote = "";
-      const notifiedNames = new Set<string>();
-      if (!kickoff && nb.pendingNewSources && nb.pendingNewSources.length > 0) {
-        const pending = new Set(nb.pendingNewSources);
-        const newFiles = nb.sourceFiles.filter((f) => pending.has(f.storedName));
-        if (newFiles.length > 0) sourcesNote = buildNewSourcesNote(newFiles);
-        // Pending names without a matching source file are stale — drop those too.
-        for (const name of pending) {
-          if (newFiles.some((f) => f.storedName === name) || !nb.sourceFiles.some((f) => f.storedName === name)) {
-            notifiedNames.add(name);
+      const addedCovered = new Set<string>();
+      const removedCovered = new Set<string>(nb.pendingRemovedSources ?? []);
+      if (kickoff) {
+        for (const name of nb.pendingNewSources ?? []) addedCovered.add(name);
+      } else {
+        if (removedCovered.size > 0) sourcesNote += buildRemovedSourcesNote([...removedCovered]);
+        if (nb.pendingNewSources && nb.pendingNewSources.length > 0) {
+          const pending = new Set(nb.pendingNewSources);
+          const newFiles = nb.sourceFiles.filter((f) => pending.has(f.storedName));
+          if (newFiles.length > 0) sourcesNote += buildNewSourcesNote(newFiles);
+          // Pending names without a matching source file are stale — drop those too.
+          for (const name of pending) {
+            if (newFiles.some((f) => f.storedName === name) || !nb.sourceFiles.some((f) => f.storedName === name)) {
+              addedCovered.add(name);
+            }
           }
         }
       }
@@ -216,10 +231,11 @@ export class SessionManager {
         nb.learningState.lastChanges = [];
         await this.store.save(nb);
       }
-      if (notifiedNames.size > 0) {
-        // Remove only what this turn's note covered — files added while the
-        // turn was starting stay pending for the next one.
-        nb.pendingNewSources = (nb.pendingNewSources ?? []).filter((s) => !notifiedNames.has(s));
+      if (addedCovered.size > 0 || removedCovered.size > 0) {
+        // Remove only what this turn covered — pendings appended while the
+        // turn was starting stay queued for the next one.
+        nb.pendingNewSources = (nb.pendingNewSources ?? []).filter((s) => !addedCovered.has(s));
+        nb.pendingRemovedSources = (nb.pendingRemovedSources ?? []).filter((s) => !removedCovered.has(s));
         await this.store.save(nb);
       }
       session.turnId = turn.id;

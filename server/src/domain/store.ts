@@ -41,6 +41,8 @@ export interface Notebook {
   appliedStyle?: { replyLength: string; probing: string };
   /** storedNames added after thread creation that the student hasn't been told about yet. */
   pendingNewSources?: string[];
+  /** originalNames of deleted sources the student still believes are assigned reading. */
+  pendingRemovedSources?: string[];
   /**
    * The student's belief inventory (see learning.ts) — what it currently
    * knows, including prescribed misconceptions. Server-owned: injected into

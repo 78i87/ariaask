@@ -359,6 +359,20 @@ message follows.]
 `;
 }
 
+/** Hidden preamble telling the student that reading was removed mid-session. */
+export function buildRemovedSourcesNote(originalNames: string[]): string {
+  return `[The teacher removed some of the assigned reading for this session:
+
+${originalNames.map((n) => `- ${n}`).join("\n")}
+
+It is no longer part of the reading and the files are gone from your working directory —
+don't refer to it as something you can check, and don't attribute new claims to it.
+Anything the teacher already taught you in conversation still stands. The teacher's
+message follows.]
+
+`;
+}
+
 /**
  * Prepended to the next turn when a thread had to be recreated (lost rollout
  * or student-style change). Callers pass the transcript EXCLUDING the message

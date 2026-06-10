@@ -2,9 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
+import { Dialog } from "../components/Dialog";
 import { Icon } from "../components/Icon";
 import { IconButton } from "../components/IconButton";
 import { TopAppBar } from "../components/TopAppBar";
+import { useSnackbar } from "../components/Snackbar";
+import { api } from "../lib/api";
 import { useTheme } from "../lib/theme";
 import { useTeachingSession } from "../lib/useTeachingSession";
 import type { SourceFile } from "../lib/types";
@@ -34,6 +37,25 @@ export function SessionView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [preview, setPreview] = useState<SourceFile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const snackbar = useSnackbar();
+
+  const confirmDeleteSource = async () => {
+    const target = deleteTarget;
+    if (!target || !notebook || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await api.deleteSource(notebook.id, target.storedName);
+      updateNotebook(res.notebook);
+      setDeleteTarget(null);
+      snackbar.show(`Removed "${target.originalName}"`);
+    } catch (err) {
+      snackbar.show(err instanceof Error ? err.message : "Couldn't remove the file");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     didInitialScroll.current = false;
@@ -142,7 +164,7 @@ export function SessionView() {
           />
         </div>
 
-        {notebook && <SourcesPanel notebook={notebook} onOpenFile={setPreview} />}
+        {notebook && <SourcesPanel notebook={notebook} onOpenFile={setPreview} onDeleteFile={setDeleteTarget} />}
       </div>
 
       {preview && notebook && (
@@ -157,6 +179,30 @@ export function SessionView() {
           onAdded={updateNotebook}
         />
       )}
+
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={() => {
+          if (!deleting) setDeleteTarget(null);
+        }}
+        icon="delete"
+        headline="Remove this source?"
+        actions={
+          <>
+            <Button variant="text" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button destructive onClick={() => void confirmDeleteSource()} disabled={deleting}>
+              Remove
+            </Button>
+          </>
+        }
+      >
+        <span className="body-medium">
+          <strong>{deleteTarget?.originalName}</strong> will be deleted from this notebook and the student won't be
+          able to read it anymore.
+        </span>
+      </Dialog>
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

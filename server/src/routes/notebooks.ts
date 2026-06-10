@@ -224,6 +224,33 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
     },
   );
 
+  router.delete("/:id/sources/:name", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const file = nb.sourceFiles.find((f) => f.storedName === req.params.name);
+    if (!file) throw new HttpError(404, "source_not_found");
+
+    await fs.rm(path.join(store.sourcesDir(nb.id), file.storedName), { force: true });
+    if (file.extractedName) {
+      await fs.rm(path.join(store.sourcesDir(nb.id), file.extractedName), { force: true });
+    }
+    nb.sourceFiles = nb.sourceFiles.filter((f) => f.storedName !== file.storedName);
+    // If the student was never told about this file (added and deleted between
+    // turns), drop the announcement and say nothing. Otherwise the pinned
+    // instructions still list it as reading — queue a removal note so the
+    // student stops treating it as assigned (see session.ts).
+    const neverAnnounced = (nb.pendingNewSources ?? []).includes(file.storedName);
+    if (nb.pendingNewSources?.length) {
+      nb.pendingNewSources = nb.pendingNewSources.filter((s) => s !== file.storedName);
+    }
+    if (!neverAnnounced) {
+      nb.pendingRemovedSources = [...(nb.pendingRemovedSources ?? []), file.originalName];
+    }
+    await store.save(nb);
+
+    res.json({ notebook: toSummary(nb) });
+  });
+
   router.get("/:id/sources/:name", (req, res, next) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");

@@ -72,6 +72,10 @@ export const api = {
       method: "POST",
       body: form,
     }),
+  deleteSource: (id: string, storedName: string) =>
+    request<{ notebook: Notebook }>(`/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`, {
+      method: "DELETE",
+    }),
 
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>

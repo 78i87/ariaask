@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
+import { IconButton } from "../../components/IconButton";
 import type { Notebook, SourceFile } from "../../lib/types";
 import "./SourcesPanel.css";
 
@@ -15,21 +17,54 @@ export function truncateMiddle(name: string, max = 30): string {
 interface SourcesPanelProps {
   notebook: Notebook;
   onOpenFile: (f: SourceFile) => void;
+  onDeleteFile: (f: SourceFile) => void;
 }
 
-export function SourcesPanel({ notebook, onOpenFile }: SourcesPanelProps) {
+export function SourcesPanel({ notebook, onOpenFile, onDeleteFile }: SourcesPanelProps) {
+  const [deleteMode, setDeleteMode] = useState(false);
+
+  // Exit delete mode when switching notebooks (the component instance is
+  // reused across /notebook/:id routes)...
+  useEffect(() => {
+    setDeleteMode(false);
+  }, [notebook.id]);
+  // ...and when the last file disappears — the panel renders null then, and
+  // must not reappear in delete mode after files are added again.
+  useEffect(() => {
+    if (notebook.sourceFiles.length === 0) setDeleteMode(false);
+  }, [notebook.sourceFiles.length]);
+
   // The notebook's topic already titles the app bar — the panel is files-only.
   if (notebook.sourceFiles.length === 0) return null;
+
   return (
     <aside className="session__sources" aria-label="Source materials">
-      <h2 className="session__sources-heading label-large">Sources</h2>
+      <div className="session__sources-header">
+        <h2 className="session__sources-heading label-large">Sources</h2>
+        <IconButton
+          icon={deleteMode ? "close" : "delete"}
+          ariaLabel={deleteMode ? "Done removing sources" : "Remove sources"}
+          onClick={() => setDeleteMode((m) => !m)}
+        />
+      </div>
       <ul className="session__sources-list">
         {notebook.sourceFiles.map((f) => (
-          <li key={f.storedName}>
+          <li key={f.storedName} className="session__source-li">
             <button type="button" className="session__source-row" title={f.originalName} onClick={() => onOpenFile(f)}>
               <Icon name={sourceIcon(f)} size={20} className="session__source-icon" />
               <span className="session__source-name body-medium">{truncateMiddle(f.originalName)}</span>
             </button>
+            {deleteMode && (
+              <button
+                type="button"
+                className="session__source-delete"
+                aria-label={`Remove ${f.originalName}`}
+                title={`Remove ${f.originalName}`}
+                onClick={() => onDeleteFile(f)}
+              >
+                <Icon name="close" size={18} />
+              </button>
+            )}
           </li>
         ))}
       </ul>

@@ -161,6 +161,22 @@ export function notebookRoutes(store: NotebookStore, sessions: SessionManager): 
     });
   });
 
+  router.get("/:id/sources/:name", (req, res, next) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const file = nb.sourceFiles.find((f) => f.storedName === req.params.name);
+    if (!file) throw new HttpError(404, "source_not_found");
+
+    // Traversal is impossible: the name must exactly equal a storedName
+    // produced by sanitizeName ([a-z0-9._-] only); root is belt-and-braces.
+    const ext = path.extname(file.storedName).toLowerCase();
+    res.type(ext === ".pdf" ? "application/pdf" : "text/plain; charset=utf-8");
+    res.set("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.originalName)}`);
+    res.sendFile(file.storedName, { root: store.sourcesDir(nb.id) }, (err) => {
+      if (err && !res.headersSent) next(new HttpError(404, "source_file_missing"));
+    });
+  });
+
   router.delete("/:id", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");

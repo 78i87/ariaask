@@ -1,0 +1,170 @@
+.preview-dialog {
+  border: none;
+  padding: 0;
+  width: min(900px, calc(100vw - 32px));
+  height: min(calc(100dvh - 96px), 860px);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  box-shadow: var(--md-sys-elevation-2);
+}
+
+/* Only style display under [open] — the UA hides closed dialogs via display:none. */
+.preview-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: preview-dialog-in var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+
+.preview-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.preview-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 8px 24px;
+  flex-shrink: 0;
+}
+
+.preview-dialog__file-icon {
+  color: var(--md-sys-color-on-surface-variant);
+  flex-shrink: 0;
+}
+
+.preview-dialog__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-dialog__content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 16px;
+}
+
+.preview-dialog__pdf {
+  flex: 1;
+  width: 100%;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-lowest);
+}
+
+.preview-dialog__status {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.preview-dialog__error-icon {
+  color: var(--md-sys-color-error);
+}
+
+.preview-doc {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.preview-doc__pre {
+  margin: 0;
+  font-family: var(--aria-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.preview-doc__truncated {
+  color: var(--md-sys-color-on-surface-variant);
+  font-style: italic;
+}
+
+/* Markdown styles — scoped to the previewer (bubble styles would leak background/radius). */
+.preview-doc__md p {
+  margin: 0 0 12px;
+}
+.preview-doc__md ul,
+.preview-doc__md ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+.preview-doc__md h1,
+.preview-doc__md h2,
+.preview-doc__md h3,
+.preview-doc__md h4 {
+  margin: 20px 0 8px;
+}
+.preview-doc__md h1:first-child,
+.preview-doc__md h2:first-child,
+.preview-doc__md h3:first-child {
+  margin-top: 0;
+}
+.preview-doc__md code {
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--aria-font-mono);
+  font-size: 13px;
+}
+.preview-doc__md pre {
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: var(--md-sys-shape-corner-small);
+  padding: 12px;
+  overflow-x: auto;
+}
+.preview-doc__md pre code {
+  background: none;
+  padding: 0;
+}
+.preview-doc__md blockquote {
+  border-left: 3px solid var(--md-sys-color-primary);
+  margin: 0 0 12px;
+  padding-left: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.preview-doc__md table {
+  border-collapse: collapse;
+  margin: 0 0 12px;
+}
+.preview-doc__md th,
+.preview-doc__md td {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  padding: 6px 12px;
+}
+
+@keyframes preview-dialog-in {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .preview-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 32px);
+  }
+  .preview-dialog__header {
+    padding: 8px 8px 4px 16px;
+  }
+  .preview-dialog__content {
+    padding: 0 8px 8px;
+  }
+}

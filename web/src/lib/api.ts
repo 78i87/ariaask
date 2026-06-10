@@ -65,6 +65,9 @@ export const api = {
     ),
   interrupt: (id: string) => request<unknown>(`/api/notebooks/${id}/interrupt`, { method: "POST" }),
 
+  /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
+  sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,
+
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>
     request<{ settings: AppSettings }>("/api/settings", { ...json(patch), method: "PUT" }),

@@ -5,7 +5,7 @@
 }
 
 .session__chips {
-  display: flex;
+  display: none; /* wide layouts: the sources panel replaces the chips row */
   gap: 8px;
   padding: 4px 24px 12px;
   overflow-x: auto;
@@ -13,6 +13,19 @@
 }
 .session__chips::-webkit-scrollbar {
   display: none;
+}
+
+.session__body {
+  flex: 1;
+  min-height: 0; /* required: lets the row shrink inside the 100dvh column */
+  display: flex;
+}
+
+.session__main {
+  flex: 1;
+  min-width: 0; /* required: lets the chat column shrink below content width */
+  display: flex;
+  flex-direction: column;
 }
 
 .session__scroller {
@@ -58,6 +71,16 @@
   color: var(--md-sys-color-on-secondary-container);
   box-shadow: var(--md-sys-elevation-2);
   cursor: pointer;
+}
+
+/* Not enough room for chat column + panel: fall back to the chips row. */
+@media (max-width: 1140px) {
+  .session__chips {
+    display: flex;
+  }
+  .session__sources {
+    display: none;
+  }
 }
 
 @media (max-width: 720px) {

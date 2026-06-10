@@ -7,8 +7,11 @@ import { IconButton } from "../components/IconButton";
 import { TopAppBar } from "../components/TopAppBar";
 import { useTheme } from "../lib/theme";
 import { useTeachingSession } from "../lib/useTeachingSession";
+import type { SourceFile } from "../lib/types";
 import { Composer } from "./session/Composer";
 import { MessageBubble } from "./session/MessageBubble";
+import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
+import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
 import { ThinkingIndicator } from "./session/ThinkingIndicator";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
@@ -24,8 +27,15 @@ export function SessionView() {
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  const didInitialScroll = useRef(false);
   const [showJump, setShowJump] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [preview, setPreview] = useState<SourceFile | null>(null);
+
+  useEffect(() => {
+    didInitialScroll.current = false;
+    pinnedRef.current = true;
+  }, [id]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -37,7 +47,12 @@ export function SessionView() {
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el || !pinnedRef.current) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: status === "streaming" ? "auto" : "smooth" });
+    // Jump instantly on the first render of the transcript — a smooth scroll
+    // here gets cancelled by late layout shifts (font loads) and strands the
+    // view at the top. Smooth is only for follow-up messages.
+    const instant = status === "streaming" || !didInitialScroll.current;
+    el.scrollTo({ top: el.scrollHeight, behavior: instant ? "auto" : "smooth" });
+    if (messages.length > 0) didInitialScroll.current = true;
   }, [messages, status]);
 
   useEffect(() => {
@@ -79,45 +94,55 @@ export function SessionView() {
             <Chip icon="menu_book" label={notebook.topic ?? notebook.title} />
           ) : (
             notebook.sourceFiles.map((f) => (
-              <Chip key={f.storedName} icon="description" label={f.originalName} />
+              <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
             ))
           )}
         </div>
       )}
 
-      <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
-        <div className="session__thread">
-          {messages.map((m) => (
-            <MessageBubble key={m.id} message={m} />
-          ))}
+      <div className="session__body">
+        <div className="session__main">
+          <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
+            <div className="session__thread">
+              {messages.map((m) => (
+                <MessageBubble key={m.id} message={m} />
+              ))}
 
-          {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
+              {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
 
-          {status === "error" && (
-            <div className="session__error">
-              <Icon name="error" size={18} className="session__error-icon" />
-              <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
-              <Button variant="text" onClick={retry}>
-                Retry
-              </Button>
+              {status === "error" && (
+                <div className="session__error">
+                  <Icon name="error" size={18} className="session__error-icon" />
+                  <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
+                  <Button variant="text" onClick={retry}>
+                    Retry
+                  </Button>
+                </div>
+              )}
             </div>
-          )}
+
+            {showJump && (
+              <button type="button" className="session__jump label-large" onClick={jumpToLatest}>
+                <Icon name="arrow_downward" size={18} />
+                Jump to latest
+              </button>
+            )}
+          </div>
+
+          <Composer
+            disabled={status === "loading" || status === "error" || kickoffRunning}
+            busy={busy}
+            onSend={send}
+            onStop={interrupt}
+          />
         </div>
 
-        {showJump && (
-          <button type="button" className="session__jump label-large" onClick={jumpToLatest}>
-            <Icon name="arrow_downward" size={18} />
-            Jump to latest
-          </button>
-        )}
+        {notebook && <SourcesPanel notebook={notebook} onOpenFile={setPreview} />}
       </div>
 
-      <Composer
-        disabled={status === "loading" || status === "error" || kickoffRunning}
-        busy={busy}
-        onSend={send}
-        onStop={interrupt}
-      />
+      {preview && notebook && (
+        <SourcePreviewDialog notebookId={notebook.id} file={preview} onClose={() => setPreview(null)} />
+      )}
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

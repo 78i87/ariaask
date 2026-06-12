@@ -13,8 +13,10 @@ export interface SourceFile {
   mimeType: string;
   size: number;
   approxWords: number | null;
-  /** "research" = server-generated online-research digest; absent = user upload. */
+  /** "research" = server-discovered online source; absent = user upload. */
   origin?: "research";
+  /** Original public URL for server-discovered online sources. */
+  originUrl?: string;
 }
 
 /** Collision-free, sandbox-safe file name within a notebook's sources dir. */

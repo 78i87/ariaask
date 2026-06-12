@@ -5,8 +5,15 @@ export interface SourceFile {
   mimeType: string;
   size: number;
   approxWords: number | null;
-  /** "research" = server-generated online-research digest; absent = user upload. */
+  /** "research" = server-discovered online source; absent = user upload. */
   origin?: "research";
+  /** Original public URL for server-discovered online sources. */
+  originUrl?: string;
+}
+
+export interface DiscoverFailure {
+  url: string;
+  reason: string;
 }
 
 export interface IntakeOption {
@@ -153,8 +160,14 @@ export interface SessionStateEvent {
   turnActive: boolean;
   turnId: string | null;
   kickoffRunning: boolean;
-  /** True while the pre-kickoff online research is running. */
+  /** True while the pre-kickoff online source discovery is running. */
   intakeRunning: boolean;
+  /** True while mid-session online source discovery is running. */
+  discoveryRunning?: boolean;
+  /** True while the reading-recall index is being (re)built. */
+  ragBuilding?: boolean;
+  /** True when the most recent index build failed (recall not actually ready). */
+  ragBuildFailed?: boolean;
   /** In-flight streamed text keyed by agentMessage itemId. */
   partials: Record<string, string>;
   messageCount: number;

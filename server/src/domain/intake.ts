@@ -5,7 +5,7 @@ import { extractJsonObject } from "./learning.js";
  * The pre-session setup form ("tune Aria"): a handful of MCQ questions —
  * always phrased as configuring the student, never as assessing the teacher —
  * answered once before the kickoff. Answers calibrate the learning-state
- * generation (level), gate the online-research step, and focus the session.
+ * generation (level), gate the online-source discovery step, and focus the session.
  */
 
 export type IntakeLevel = "fundamental" | "standard" | "challenge";
@@ -60,9 +60,9 @@ export const LEVEL_QUESTION: IntakeQuestion = {
 
 export const RESEARCH_QUESTION: IntakeQuestion = {
   id: "research",
-  question: "May Aria read up online before class?",
+  question: "May Aria gather readings online before class?",
   options: [
-    { value: "yes", label: "Yes — let Aria skim the web for background" },
+    { value: "yes", label: "Yes — let Aria find and save a few sources from the web" },
     { value: "no", label: "No — stick to the materials I uploaded" },
   ],
   allowsCustom: true,
@@ -97,7 +97,7 @@ the reading, never by guessing):\n${heads}`
 
 The form already asks two fixed questions — do not duplicate them:
 1. Aria's starting point (how fundamental vs. advanced Aria's confusions should be).
-2. Whether Aria may read up online beforehand.
+2. Whether Aria may gather readings online beforehand.
 
 Your job:
 - Judge whether the topic is too broad or vague to start teaching directly ("music theory"

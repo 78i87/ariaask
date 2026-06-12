@@ -41,6 +41,18 @@
   white-space: nowrap;
 }
 
+.preview-dialog__origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--md-sys-color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.preview-dialog__origin:hover {
+  text-decoration: underline;
+}
+
 .preview-dialog__content {
   flex: 1;
   min-height: 0;

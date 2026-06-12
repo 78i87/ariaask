@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { ChatMessage, Intake, IntakeAnswerPayload, LearningState, Notebook, SessionStateEvent } from "./types";
+import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, LearningState, Notebook, SessionStateEvent, SourceFile } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
 export type SessionActivity = "reading-sources" | "thinking" | "researching" | null;
@@ -19,8 +19,15 @@ export interface TeachingSession {
   learningState: LearningState | null;
   /** One-shot non-fatal message from the server (e.g. research failed). */
   notice: string | null;
+  /** True while Aria is finding and downloading online sources. */
+  discovering: boolean;
+  /** True while the reading-recall index is being (re)built. */
+  ragBuilding: boolean;
+  /** True when the most recent index build failed — "ready" must not show. */
+  ragBuildFailed: boolean;
   clearNotice: () => void;
   submitIntake: (payload: { skip?: boolean; answers?: IntakeAnswerPayload }) => void;
+  discoverSources: (query: string) => void;
   send: (text: string) => void;
   /** Rewind-and-resend: replaces the message and deletes everything after it. */
   editMessage: (messageId: string, text: string) => void;
@@ -42,6 +49,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const [intake, setIntake] = useState<Intake | null>(null);
   const [learningState, setLearningState] = useState<LearningState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [ragBuilding, setRagBuilding] = useState(false);
+  const [ragBuildFailed, setRagBuildFailed] = useState(false);
 
   const deltaBuffers = useRef(new Map<string, string>());
   const rafPending = useRef(false);
@@ -129,6 +139,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     kickoffTriggered.current = false;
     initialLoaded.current = false;
     setStatus("loading");
+    setDiscovering(false);
+    setRagBuilding(false);
+    setRagBuildFailed(false);
     void (async () => {
       try {
         const res = await loadNotebook();
@@ -186,6 +199,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
           setStatus((s) => (s === "loading" || s === "idle" ? "waiting" : s));
         }
       }
+      setDiscovering(data.discoveryRunning === true);
+      setRagBuilding(data.ragBuilding === true);
+      setRagBuildFailed(data.ragBuildFailed === true);
     });
 
     es.addEventListener("turn-started", (e) => {
@@ -211,6 +227,31 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     es.addEventListener("sources-updated", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as { notebook: Notebook };
       setNotebook(data.notebook);
+    });
+
+    es.addEventListener("discover-completed", (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as {
+        notebook: Notebook;
+        added: SourceFile[];
+        failures: DiscoverFailure[];
+      };
+      setNotebook(data.notebook);
+      setDiscovering(false);
+      if (data.added.length > 0 && data.failures.length > 0) {
+        const total = data.added.length + data.failures.length;
+        setNotice(`Added ${data.added.length} of ${total} sources — ${data.failures.length} pages couldn't be fetched.`);
+      } else if (data.added.length > 0) {
+        setNotice(`Added ${data.added.length} source${data.added.length === 1 ? "" : "s"} from the web.`);
+      } else {
+        // Distinguish "the search found nothing" from "all downloads failed" —
+        // the latter is the sites' fault, not the query's.
+        const reason = data.failures[0]?.reason;
+        setNotice(
+          reason
+            ? `Aria couldn't add sources — ${reason}${data.failures.length > 1 ? ` (${data.failures.length} pages failed)` : ""}.`
+            : "Aria couldn't find usable sources — try a more specific search.",
+        );
+      }
     });
 
     es.addEventListener("notice", (e) => {
@@ -376,6 +417,24 @@ export function useTeachingSession(notebookId: string): TeachingSession {
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
+  const discoverSources = useCallback(
+    (query: string) => {
+      const trimmed = query.trim();
+      if (!trimmed || discovering) return;
+      setDiscovering(true);
+      void api.discoverSources(notebookId, { query: trimmed }).catch((err) => {
+        if (err instanceof ApiError && err.code === "discover_active") {
+          setNotice("Aria is already looking for sources.");
+          setDiscovering(true);
+          return;
+        }
+        setDiscovering(false);
+        setNotice(err instanceof Error ? err.message : "Couldn't start source discovery.");
+      });
+    },
+    [discovering, notebookId],
+  );
+
   return {
     notebook,
     messages,
@@ -386,8 +445,12 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     intake,
     learningState,
     notice,
+    discovering,
+    ragBuilding,
+    ragBuildFailed,
     clearNotice,
     submitIntake,
+    discoverSources,
     send,
     editMessage,
     interrupt,

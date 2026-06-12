@@ -86,6 +86,17 @@ export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreview
         <span className="preview-dialog__name title-medium" title={file.originalName}>
           {file.originalName}
         </span>
+        {file.originUrl && (
+          <a
+            className="preview-dialog__origin label-large"
+            href={file.originUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Icon name="open_in_new" size={18} />
+            View original
+          </a>
+        )}
         <IconButton icon="close" ariaLabel="Close preview" onClick={onClose} />
       </header>
       <div className="preview-dialog__content">

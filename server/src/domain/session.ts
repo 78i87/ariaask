@@ -7,7 +7,7 @@ import { HttpError } from "../lib/errors.js";
 import { AppServerClient } from "../appserver/client.js";
 import { RpcError } from "../appserver/rpc.js";
 import type { Config } from "../config.js";
-import type { ChatMessage, Notebook, NotebookStore } from "./store.js";
+import type { ChatMessage, Notebook, NotebookStore, SourceFile } from "./store.js";
 import type { SettingsStore } from "./settings.js";
 import {
   buildCatchUpBlock,
@@ -28,8 +28,20 @@ import {
   type LearningState,
 } from "./learning.js";
 import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntakeQuestions } from "./intake.js";
-import { buildRagQuery, buildRetrievalBlock, ensureRagIndex } from "./rag.js";
-import { buildResearchPrompt, stripWrappingFence, writeResearchDigest } from "./research.js";
+import {
+  buildRagQuery,
+  buildRetrievalBlock,
+  didLastRagBuildFail,
+  ensureRagIndex,
+  isRagIndexBuilding,
+  setRagBuildListener,
+} from "./rag.js";
+import {
+  buildDiscoverPrompt,
+  downloadDiscoveredSources,
+  parseDiscoveredSources,
+  type DiscoverFailure,
+} from "./discover.js";
 import { toSummary } from "./store.js";
 import type {
   AgentMessageDeltaNotification,
@@ -67,7 +79,7 @@ interface NotebookSession {
   learningBootstrapAttempted: boolean;
   /** Set by interrupt() while a turn is still "starting" (belief evaluator running); aborts before turn/start. */
   cancelRequested: boolean;
-  /** True while the pre-kickoff online-research one-shot is running. */
+  /** True while the pre-kickoff online source discovery is running. */
   intakeResearch: boolean;
   /** Aborts the in-flight research one-shot when the user presses Stop. */
   researchAbort: AbortController | null;
@@ -79,6 +91,7 @@ interface NotebookSession {
 
 export class SessionManager {
   private sessions = new Map<string, NotebookSession>();
+  private discoveries = new Map<string, AbortController>();
 
   constructor(
     private client: AppServerClient,
@@ -87,6 +100,11 @@ export class SessionManager {
     private config: Config,
   ) {
     client.on("crashed", () => this.failAllActiveTurns("The student's connection dropped."));
+    // Index builds surface as a status line; nobody attached → nobody to tell.
+    setRagBuildListener((notebookId) => {
+      const session = this.sessions.get(notebookId);
+      if (session) this.broadcastState(session);
+    });
   }
 
   // ---------- SSE ----------
@@ -106,6 +124,9 @@ export class SessionManager {
         turnId: session.turnId,
         kickoffRunning: session.state !== "idle" && session.kickoffTurn,
         intakeRunning: session.intakeResearch,
+        discoveryRunning: this.discoveries.has(notebookId),
+        ragBuilding: isRagIndexBuilding(notebookId),
+        ragBuildFailed: didLastRagBuildFail(notebookId),
         partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
         messageCount: nb?.messages.length ?? 0,
       },
@@ -402,6 +423,106 @@ export class SessionManager {
     }
   }
 
+  async startDiscovery(notebookId: string, query: string | null): Promise<{ accepted: true }> {
+    const nb = this.store.get(notebookId);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (!nb.kickoffDone && nb.intake?.status === "pending") {
+      throw new HttpError(409, "intake_pending", "Finish the setup form before finding sources.");
+    }
+    const session = this.ensureSession(notebookId);
+    if (this.discoveries.has(notebookId) || session.intakeResearch) {
+      throw new HttpError(409, "discover_active", "Aria is already looking for sources.");
+    }
+
+    const controller = new AbortController();
+    this.discoveries.set(notebookId, controller);
+    void this.runDiscoveryBackground(notebookId, query, session, controller).catch((err) => {
+      console.error(`[aria] source discovery background failed for notebook ${notebookId}:`, err);
+    });
+    return { accepted: true };
+  }
+
+  private async runDiscoveryBackground(
+    notebookId: string,
+    query: string | null,
+    session: NotebookSession,
+    controller: AbortController,
+  ): Promise<void> {
+    const initial = this.store.get(notebookId);
+    const addedNames: string[] = [];
+    let added: SourceFile[] = [];
+    let failures: DiscoverFailure[] = [];
+
+    this.broadcastState(session);
+    try {
+      if (!initial) return;
+      const s = this.settings.get();
+      const knownUrls = initial.sourceFiles
+        .map((f) => f.originUrl)
+        .filter((u): u is string => typeof u === "string" && u.length > 0);
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildDiscoverPrompt({
+          topic: initial.topic ?? initial.title,
+          focus: initial.intake?.answers ? intakeFocus(initial.intake.answers) : null,
+          note: null,
+          query,
+          manifest: initial.sourceFiles.length > 0 ? sourcesManifest(initial.sourceFiles) : null,
+          knownUrls,
+          max: this.config.discoverMax,
+        }),
+        model: s.model,
+        effort: this.config.researchEffort,
+        timeoutMs: 120_000,
+        config: { web_search: "live" },
+        cwd: initial.sourceFiles.length > 0 ? this.store.sourcesDir(initial.id) : undefined,
+        signal: controller.signal,
+      });
+      const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
+      if (!discovered || discovered.length === 0) {
+        failures = [{ url: query ?? initial.topic ?? initial.title, reason: "the web search found no usable pages" }];
+      } else {
+        const result = await downloadDiscoveredSources(this.store, notebookId, discovered, {
+          signal: controller.signal,
+          onSource: (fresh, file) => {
+            fresh.pendingNewSources = [...(fresh.pendingNewSources ?? []), file.storedName];
+            addedNames.push(file.storedName);
+            this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
+          },
+        });
+        added = result.added;
+        failures = result.failures;
+      }
+
+      const fresh = this.store.get(notebookId);
+      if (fresh && added.length > 0) {
+        // The downloader saves per source. This final save is a cheap
+        // persistence point for pendingNewSources mutations made above.
+        const pending = new Set(fresh.pendingNewSources ?? []);
+        for (const name of addedNames) pending.add(name);
+        fresh.pendingNewSources = [...pending];
+        await this.store.save(fresh);
+        void ensureRagIndex(this.store, this.settings, fresh, { retryNow: true });
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error(`[aria] source discovery failed for notebook ${notebookId}:`, err);
+        failures = [
+          {
+            url: query ?? initial?.topic ?? initial?.title ?? "online search",
+            reason: err instanceof Error ? err.message : "Discovery failed.",
+          },
+        ];
+      }
+    } finally {
+      this.discoveries.delete(notebookId);
+      const fresh = this.store.get(notebookId);
+      if (fresh) {
+        this.broadcast(session, "discover-completed", { notebook: toSummary(fresh), added, failures });
+      }
+      this.broadcastState(session);
+    }
+  }
+
   async interrupt(notebookId: string): Promise<boolean> {
     const session = this.sessions.get(notebookId);
     const nb = this.store.get(notebookId);
@@ -426,6 +547,8 @@ export class SessionManager {
   }
 
   async dispose(notebookId: string): Promise<void> {
+    this.discoveries.get(notebookId)?.abort();
+    this.discoveries.delete(notebookId);
     const session = this.sessions.get(notebookId);
     if (!session) return;
     if (session.state !== "idle") await this.interrupt(notebookId);
@@ -445,6 +568,9 @@ export class SessionManager {
       turnId: session.turnId,
       kickoffRunning: session.state !== "idle" && session.kickoffTurn,
       intakeRunning: session.intakeResearch,
+      discoveryRunning: this.discoveries.has(session.notebookId),
+      ragBuilding: isRagIndexBuilding(session.notebookId),
+      ragBuildFailed: didLastRagBuildFail(session.notebookId),
       partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
       messageCount: nb?.messages.length ?? 0,
     });
@@ -539,10 +665,9 @@ export class SessionManager {
   }
 
   /**
-   * Runs after the setup form is submitted: optional online research (a
-   * one-shot, web-search-enabled side call whose digest becomes a visible
-   * source file), then the kickoff. The synchronous prefix occupies the turn
-   * state machine, so callers must invoke this BEFORE responding.
+   * Runs after the setup form is submitted: optional online source discovery,
+   * then the kickoff. The synchronous prefix occupies the turn state machine,
+   * so callers must invoke this BEFORE responding.
    */
   async runIntakePipeline(notebookId: string): Promise<void> {
     const nb = this.store.get(notebookId);
@@ -565,7 +690,7 @@ export class SessionManager {
       if (session.cancelRequested) {
         session.cancelRequested = false;
         this.broadcast(session, "turn-completed", { turnId: null, status: "interrupted" });
-        return; // digest (if written) is kept; reopening auto-kickoffs since intake is done
+        return; // already-downloaded sources are kept; reopening auto-kickoffs since intake is done
       }
     }
     try {
@@ -577,38 +702,44 @@ export class SessionManager {
     }
   }
 
-  /** Fail-open: any failure marks intake.research "failed" and the session proceeds without the digest. */
+  /** Fail-open: any failure marks intake.research "failed" and the session proceeds without discovered sources. */
   private async runResearch(nb: Notebook, session: NotebookSession): Promise<void> {
     const s = this.settings.get();
     const answers = nb.intake!.answers!;
     try {
       const raw = await this.client.runOneShotTurn({
-        prompt: buildResearchPrompt({
+        prompt: buildDiscoverPrompt({
           topic: nb.topic ?? nb.title,
           focus: intakeFocus(answers),
           note: answers.researchNote,
+          query: null,
           manifest: nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null,
+          knownUrls: [],
+          max: this.config.discoverMax,
         }),
         model: s.model,
         effort: this.config.researchEffort,
-        timeoutMs: 240_000,
+        timeoutMs: 120_000,
         config: { web_search: "live" },
         cwd: nb.sourceFiles.length > 0 ? this.store.sourcesDir(nb.id) : undefined,
         signal: session.researchAbort?.signal,
       });
-      const text = stripWrappingFence(raw);
-      if (text.length < 200) throw new Error(`digest too short (${text.length} chars)`);
+      const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
+      if (!discovered || discovered.length === 0) throw new Error("no usable discovered URLs");
+      const result = await downloadDiscoveredSources(this.store, nb.id, discovered, {
+        signal: session.researchAbort?.signal,
+        onSource: (fresh) => this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) }),
+      });
+      if (result.added.length === 0) throw new Error("no discovered sources could be downloaded");
       const fresh = this.store.get(nb.id);
       if (!fresh) return; // notebook deleted mid-research
-      await writeResearchDigest(this.store, fresh, text);
       fresh.intake!.research = "done";
       await this.store.save(fresh);
-      this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
-      // Index the digest while the kickoff turn runs (kickoff never retrieves).
+      // Index the discovered sources while the kickoff turn runs (kickoff never retrieves).
       void ensureRagIndex(this.store, this.settings, fresh);
     } catch (err) {
       const aborted = session.researchAbort?.signal.aborted === true;
-      if (!aborted) console.error(`[aria] online research failed for notebook ${nb.id}; proceeding without it:`, err);
+      if (!aborted) console.error(`[aria] online source discovery failed for notebook ${nb.id}; proceeding without it:`, err);
       const fresh = this.store.get(nb.id);
       if (fresh?.intake) {
         fresh.intake.research = "failed";

@@ -17,8 +17,13 @@ export const config = {
   evaluatorEffort: process.env.ARIA_EVALUATOR_EFFORT ?? "low",
   /** Kill switch for the learning-state layer: no state generation, no evaluator, no belief blocks. */
   learningStateDisabled: process.env.ARIA_NO_LEARNING_STATE === "1",
-  /** Reasoning effort for the pre-session online-research digest. */
+  /** Reasoning effort for the online source discovery turn. */
   researchEffort: process.env.ARIA_RESEARCH_EFFORT ?? "medium",
+  /** Maximum sources to auto-add from each online discovery run (clamped 1–10; malformed → 5). */
+  discoverMax: (() => {
+    const n = Math.floor(Number(process.env.ARIA_DISCOVER_MAX ?? 5));
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, 10) : 5;
+  })(),
   /** Kill switch for the setup form: new notebooks get no intake (auto-kickoff; research defaults silently). */
   intakeDisabled: process.env.ARIA_NO_INTAKE === "1",
   /** Kill switch for the retrieval layer (rag.ts): no index builds, no recall blocks. */

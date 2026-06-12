@@ -46,8 +46,12 @@ export function SessionView() {
     intake,
     learningState,
     notice,
+    discovering,
+    ragBuilding,
+    ragBuildFailed,
     clearNotice,
     submitIntake,
+    discoverSources,
     send,
     editMessage,
     interrupt,
@@ -270,7 +274,7 @@ export function SessionView() {
   const busy = status === "waiting" || status === "streaming";
   const waitingLabel =
     activity === "researching"
-      ? "Aria is reading up online…"
+      ? "Aria is finding readings online…"
       : kickoffRunning
         ? activity === "reading-sources"
           ? "Aria is doing the reading…"
@@ -298,7 +302,7 @@ export function SessionView() {
               onClick={() => setAddOpen(true)}
             />
             <IconButton icon={theme === "dark" ? "light_mode" : "dark_mode"} ariaLabel="Toggle theme" onClick={toggle} />
-            {notebook && notebook.sourceFiles.length > 0 && (
+            {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
               <span className="session__panel-toggle-slot">
                 <IconButton
                   icon={sourcesCollapsed ? "right_panel_open" : "right_panel_close"}
@@ -320,11 +324,12 @@ export function SessionView() {
             <ThreadBar active={activeThread} threads={cyraThreads} onSelect={onSelectThread} split={splitActive} />
           )}
 
-          {notebook && notebook.sourceFiles.length > 0 && (
+          {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
             <div className="session__chips">
               {notebook.sourceFiles.map((f) => (
                 <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
               ))}
+              {discovering && <Chip icon="travel_explore" label="Finding sources…" />}
             </div>
           )}
 
@@ -473,9 +478,16 @@ export function SessionView() {
           </div>
         )}
 
-        {notebook && notebook.sourceFiles.length > 0 && (
+        {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
           <div className={`session__sources-wrap${sourcesCollapsed ? " session__sources-wrap--closed" : ""}`}>
-            <SourcesPanel notebook={notebook} onOpenFile={setPreview} onDeleteFile={setDeleteTarget} />
+            <SourcesPanel
+              notebook={notebook}
+              discovering={discovering}
+              ragBuilding={ragBuilding}
+              ragBuildFailed={ragBuildFailed}
+              onOpenFile={setPreview}
+              onDeleteFile={setDeleteTarget}
+            />
           </div>
         )}
       </div>
@@ -488,8 +500,13 @@ export function SessionView() {
         <AddSourcesDialog
           open={addOpen}
           notebookId={notebook.id}
+          topicSuggestion={notebook.topic ?? notebook.title}
+          discovering={discovering}
+          kickoffRunning={kickoffRunning}
+          intakePending={intakePending}
           onClose={() => setAddOpen(false)}
           onAdded={updateNotebook}
+          onDiscover={discoverSources}
         />
       )}
 

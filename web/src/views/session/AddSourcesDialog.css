@@ -1,0 +1,9 @@
+.add-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.add-sources .m3-segmented {
+  align-self: flex-start;
+}

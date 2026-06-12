@@ -87,7 +87,7 @@ export function IntakeForm({ questions, submitting, onSubmit, onSkip }: IntakeFo
       {!questions.some((q) => q.id === "research") && (
         <div className="intake__note body-medium">
           <Icon name="travel_explore" size={18} />
-          <span>With no materials uploaded, Aria will read up online before class.</span>
+          <span>With no materials uploaded, Aria will find readings online before class — they'll show up in your sources.</span>
         </div>
       )}
 

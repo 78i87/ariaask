@@ -345,6 +345,13 @@ export function notebookRoutes(
     res.json({ notebook: toSummary(nb) });
   });
 
+  router.post("/:id/discover", async (req, res) => {
+    const body = (req.body ?? {}) as { query?: string };
+    const query = typeof body.query === "string" && body.query.trim() ? body.query.trim().slice(0, 300) : null;
+    const result = await sessions.startDiscovery(req.params.id, query);
+    res.status(202).json(result);
+  });
+
   router.get("/:id/sources/:name", (req, res, next) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");

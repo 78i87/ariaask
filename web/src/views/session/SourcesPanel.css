@@ -33,6 +33,19 @@
   min-height: 0;
 }
 
+.session__sources-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px 4px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.session__sources-progress-check {
+  color: var(--md-sys-color-primary);
+}
+
 .session__source-li {
   display: flex;
   align-items: center;

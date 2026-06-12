@@ -94,6 +94,26 @@ const loadTried = new Set<string>();
 /** Per-notebook promise chain so builds serialize and concurrent triggers coalesce. */
 const buildChains = new Map<string, Promise<void>>();
 
+// Real rebuilds (not no-op freshness checks) are surfaced to the UI as a
+// "preparing reading recall" status line; the session layer subscribes.
+const buildingNow = new Set<string>();
+const lastBuildFailed = new Set<string>();
+let buildListener: ((notebookId: string) => void) | null = null;
+
+/** Called on every build start AND end (success or failure) with the notebook id. */
+export function setRagBuildListener(cb: (notebookId: string) => void): void {
+  buildListener = cb;
+}
+
+export function isRagIndexBuilding(notebookId: string): boolean {
+  return buildingNow.has(notebookId);
+}
+
+/** True when the most recent build attempt failed — the UI must not claim "ready". */
+export function didLastRagBuildFail(notebookId: string): boolean {
+  return lastBuildFailed.has(notebookId);
+}
+
 // ---------- eligibility ----------
 
 /** ARIA_NO_RAG=1 is the operator kill switch; the user-facing choice lives in settings. */
@@ -167,7 +187,7 @@ const CAPTION_NOISE_RE = /^(Credit:|Illustration purposes)/;
  * labels: trailing whitespace marks a wrapped sentence fragment, colons and
  * dates mark list items / slide footers, and a 21+-letter "word" marks the
  * fused-word extraction artifact — those fall back to an unlabeled
- * "From the reading:". Markdown headings (the research digest is .md) are
+ * "From the reading:". Markdown headings (discovered web sources are .md) are
  * explicit author intent and only need the fused-word/length checks.
  */
 function headingInfo(line: string): { isHeading: boolean; label: string | null } {
@@ -380,47 +400,59 @@ async function syncIndex(store: NotebookStore, settings: SettingsStore, id: stri
     return; // fresh
   }
 
-  const t0 = Date.now();
-  let chunks: RagChunk[] = [];
-  for (const f of nb.sourceFiles) {
-    const name = indexableName(f);
-    if (!name) continue; // failed-extraction PDF — the student can't read it either
-    try {
-      const text = await fs.readFile(path.join(store.sourcesDir(id), name), "utf8");
-      chunks.push(...chunkFile(name, f.storedName, text));
-    } catch (err) {
-      // A file missing mid-add/delete is fine: the follow-up trigger's
-      // fingerprint mismatch re-runs the build. Any other read error must
-      // FAIL the build — persisting a fingerprint-fresh index that silently
-      // lacks this file's chunks would never self-heal.
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  // Past this point a real rebuild runs — show the status line for its duration.
+  buildingNow.add(id);
+  lastBuildFailed.delete(id);
+  buildListener?.(id);
+  try {
+    const t0 = Date.now();
+    let chunks: RagChunk[] = [];
+    for (const f of nb.sourceFiles) {
+      const name = indexableName(f);
+      if (!name) continue; // failed-extraction PDF — the student can't read it either
+      try {
+        const text = await fs.readFile(path.join(store.sourcesDir(id), name), "utf8");
+        chunks.push(...chunkFile(name, f.storedName, text));
+      } catch (err) {
+        // A file missing mid-add/delete is fine: the follow-up trigger's
+        // fingerprint mismatch re-runs the build. Any other read error must
+        // FAIL the build — persisting a fingerprint-fresh index that silently
+        // lacks this file's chunks would never self-heal.
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
     }
+    if (chunks.length > MAX_CHUNKS_PER_NOTEBOOK) {
+      console.error(`[aria] rag: notebook ${id} corpus too large; indexing first ${MAX_CHUNKS_PER_NOTEBOOK} of ${chunks.length} chunks`);
+      chunks = chunks.slice(0, MAX_CHUNKS_PER_NOTEBOOK);
+    }
+
+    const { dims, vectors } = chunks.length > 0 ? await embedBatched(chunks.map((c) => c.text)) : { dims: 0, vectors: new Float32Array(0) };
+
+    if (!store.get(id)) return; // notebook deleted while embedding — don't resurrect its dir
+
+    const file: RagIndexFile = {
+      version: 1,
+      model: config.ragModel,
+      dims,
+      pooling: "mean",
+      chunkerVersion: CHUNKER_VERSION,
+      corpus,
+      builtAt: new Date().toISOString(),
+      chunks,
+      vectors: encodeVectors(vectors),
+    };
+    // Memory first: a failed disk write must not strand a fresh embed — the
+    // stale file just rebuilds after the next restart.
+    loaded.set(id, { model: file.model, dims, chunkerVersion: CHUNKER_VERSION, corpus, chunks, vec: vectors });
+    await writeFileAtomic(indexPath(store, id), JSON.stringify(file));
+    console.log(`[aria] rag: indexed ${chunks.length} chunks from ${nb.sourceFiles.length} sources for notebook ${id} in ${Date.now() - t0}ms`);
+  } catch (err) {
+    lastBuildFailed.add(id);
+    throw err; // ensureRagIndex's catch logs it; the flag keeps the UI honest
+  } finally {
+    buildingNow.delete(id);
+    buildListener?.(id);
   }
-  if (chunks.length > MAX_CHUNKS_PER_NOTEBOOK) {
-    console.error(`[aria] rag: notebook ${id} corpus too large; indexing first ${MAX_CHUNKS_PER_NOTEBOOK} of ${chunks.length} chunks`);
-    chunks = chunks.slice(0, MAX_CHUNKS_PER_NOTEBOOK);
-  }
-
-  const { dims, vectors } = chunks.length > 0 ? await embedBatched(chunks.map((c) => c.text)) : { dims: 0, vectors: new Float32Array(0) };
-
-  if (!store.get(id)) return; // notebook deleted while embedding — don't resurrect its dir
-
-  const file: RagIndexFile = {
-    version: 1,
-    model: config.ragModel,
-    dims,
-    pooling: "mean",
-    chunkerVersion: CHUNKER_VERSION,
-    corpus,
-    builtAt: new Date().toISOString(),
-    chunks,
-    vectors: encodeVectors(vectors),
-  };
-  // Memory first: a failed disk write must not strand a fresh embed — the
-  // stale file just rebuilds after the next restart.
-  loaded.set(id, { model: file.model, dims, chunkerVersion: CHUNKER_VERSION, corpus, chunks, vec: vectors });
-  await writeFileAtomic(indexPath(store, id), JSON.stringify(file));
-  console.log(`[aria] rag: indexed ${chunks.length} chunks from ${nb.sourceFiles.length} sources for notebook ${id} in ${Date.now() - t0}ms`);
 }
 
 /**
@@ -458,6 +490,7 @@ export function dropRagIndex(notebookId: string): void {
   loaded.delete(notebookId);
   loadTried.delete(notebookId);
   buildChains.delete(notebookId);
+  lastBuildFailed.delete(notebookId);
 }
 
 // ---------- retrieval ----------

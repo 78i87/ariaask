@@ -112,6 +112,8 @@ export const api = {
       method: "POST",
       body: form,
     }),
+  discoverSources: (id: string, body: { query?: string }) =>
+    request<{ accepted: true }>(`/api/notebooks/${id}/discover`, json(body)),
   deleteSource: (id: string, storedName: string) =>
     request<{ notebook: Notebook }>(`/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`, {
       method: "DELETE",

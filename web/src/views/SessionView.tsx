@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
 import { Dialog } from "../components/Dialog";
+import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { IconButton } from "../components/IconButton";
 import { TopAppBar } from "../components/TopAppBar";
@@ -17,6 +18,7 @@ import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { Composer } from "./session/Composer";
 import { CyraThreadView } from "./session/CyraThreadView";
 import { IntakeForm } from "./session/IntakeForm";
+import { KnowledgeMapView } from "./session/KnowledgeMapView";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
@@ -40,6 +42,7 @@ export function SessionView() {
     activity,
     error,
     intake,
+    learningState,
     notice,
     clearNotice,
     submitIntake,
@@ -118,7 +121,11 @@ export function SessionView() {
   }, [id]);
 
   // Returning to the teaching pane remounts its scroller — re-pin instantly.
-  useEffect(() => {
+  // Must be a LAYOUT effect declared before the scroll effect below: layout
+  // effects run in declaration order, while a passive effect would run after
+  // it and leave it reading the flags from before the pane switch (stranding
+  // the view at the top, or smooth-scrolling the whole transcript).
+  useLayoutEffect(() => {
     if (activeThread.kind === "aria") {
       didInitialScroll.current = false;
       pinnedRef.current = true;
@@ -194,12 +201,7 @@ export function SessionView() {
         scrollContainer={scrollerRef.current}
       />
 
-      <ThreadBar
-        active={activeThread}
-        threads={cyraThreads}
-        showDraft={newDraft !== null}
-        onSelect={setActiveThread}
-      />
+      <ThreadBar active={activeThread} threads={cyraThreads} onSelect={setActiveThread} />
 
       {notebook && notebook.sourceFiles.length > 0 && (
         <div className="session__chips">
@@ -285,6 +287,18 @@ export function SessionView() {
                 : {})}
             />
           </div>
+        ) : activeThread.kind === "map" ? (
+          learningState ? (
+            <KnowledgeMapView state={learningState} />
+          ) : (
+            <div className="session__main">
+              <EmptyState
+                icon="hub"
+                headline="No map yet"
+                body="Aria's map of the topic appears here once she has her starting picture — right after the session gets going."
+              />
+            </div>
+          )
         ) : (
           <CyraThreadView
             notebookId={id!}

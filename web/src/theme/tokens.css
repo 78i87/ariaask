@@ -199,3 +199,37 @@
   --aria-content-max: 1200px;
   --aria-chat-max: 760px;
 }
+
+/* Knowledge-map belief statuses — palette-independent, mode-dependent.
+   M3 has no success/warning roles, so these are app tokens: M3-tone pairs
+   (container ≈ tone 90 light / 30 dark, on-container ≈ tone 10 light / 90 dark).
+   Misconception reuses the error family's tones. Light lives on :root (0,1,0);
+   the dark block (0,2,0) wins on specificity, order-independent. */
+:root {
+  --aria-status-unknown: #72777f;
+  --aria-status-unknown-container: #e4e7ec;
+  --aria-status-on-unknown-container: #42474e;
+  --aria-status-misconception: #ba1a1a;
+  --aria-status-misconception-container: #ffdad6;
+  --aria-status-on-misconception-container: #93000a;
+  --aria-status-partial: #7a5900;
+  --aria-status-partial-container: #ffdf9e;
+  --aria-status-on-partial-container: #5c4300;
+  --aria-status-understood: #2c6a31;
+  --aria-status-understood-container: #b0f1ae;
+  --aria-status-on-understood-container: #0b3d12;
+}
+:root[data-theme="dark"] {
+  --aria-status-unknown: #8c9199;
+  --aria-status-unknown-container: #3a3f46;
+  --aria-status-on-unknown-container: #c2c7cf;
+  --aria-status-misconception: #ffb4ab;
+  --aria-status-misconception-container: #6e211c;
+  --aria-status-on-misconception-container: #ffdad6;
+  --aria-status-partial: #f0c048;
+  --aria-status-partial-container: #5c4300;
+  --aria-status-on-partial-container: #ffdf9e;
+  --aria-status-understood: #95d894;
+  --aria-status-understood-container: #1d4a23;
+  --aria-status-on-understood-container: #b0f1ae;
+}

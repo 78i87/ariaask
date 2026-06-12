@@ -90,8 +90,8 @@ export interface CyraChatMessage {
   interrupted?: boolean;
 }
 
-/** Which conversation the session view is showing. */
-export type ThreadSelection = { kind: "aria" } | { kind: "cyra"; threadId: string | null };
+/** Which pane the session view is showing. */
+export type ThreadSelection = { kind: "aria" } | { kind: "map" } | { kind: "cyra"; threadId: string | null };
 
 export interface EffortInfo {
   effort: string;
@@ -112,9 +112,9 @@ export interface SettingsResponse {
   models: ModelInfo[];
 }
 
-// Mirrors server/src/domain/learning.ts. No UI consumes this yet — the state
-// is server-driven; it arrives on GET /api/notebooks/:id (`learningState`) and
-// via the "learning-state" SSE event for a future panel.
+// Mirrors server/src/domain/learning.ts. Server-driven: arrives on
+// GET /api/notebooks/:id (`learningState`) and via the "learning-state" SSE
+// event; rendered by the knowledge map pane (KnowledgeMapView).
 export type BeliefStatus = "unknown" | "misconception" | "partial" | "understood";
 
 export interface Belief {
@@ -124,6 +124,12 @@ export interface Belief {
   belief: string;
   challenged?: true;
   note?: string;
+  /** Cluster label for the knowledge map; absent on pre-feature beliefs ("General"). */
+  area?: string;
+  /** Ids of prerequisite beliefs — the map's edges. */
+  deps?: string[];
+  /** When the evaluator last touched this belief. */
+  touchedAt?: string;
 }
 
 export interface BeliefChange {

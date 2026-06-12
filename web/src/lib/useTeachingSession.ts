@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { ChatMessage, Intake, IntakeAnswerPayload, Notebook, SessionStateEvent } from "./types";
+import type { ChatMessage, Intake, IntakeAnswerPayload, LearningState, Notebook, SessionStateEvent } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
 export type SessionActivity = "reading-sources" | "thinking" | "researching" | null;
@@ -15,6 +15,8 @@ export interface TeachingSession {
   error: string | null;
   /** The setup form; null on pre-feature notebooks. */
   intake: Intake | null;
+  /** The student's belief inventory (knowledge map data); null when absent or disabled. */
+  learningState: LearningState | null;
   /** One-shot non-fatal message from the server (e.g. research failed). */
   notice: string | null;
   clearNotice: () => void;
@@ -38,6 +40,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const [activity, setActivity] = useState<SessionActivity>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const deltaBuffers = useRef(new Map<string, string>());
@@ -88,6 +91,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     const res = await api.getNotebook(notebookId);
     setNotebook(res.notebook);
     setIntake(res.intake);
+    setLearningState(res.learningState);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(
@@ -212,6 +216,16 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     es.addEventListener("notice", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as { message: string };
       setNotice(data.message);
+    });
+
+    // Belief inventory updates (evaluator pass, bootstrap, rewind re-derivation).
+    // Safe mid-stream: touches no delta buffers, just swaps the map's data. A
+    // drop spanning evaluator-broadcast → student-reply-persist can leave the
+    // map one pass stale until the next teacher message forces a refetch via
+    // messageCount drift — acceptable for a passive visualization.
+    es.addEventListener("learning-state", (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as { state: LearningState };
+      setLearningState(data.state);
     });
 
     es.addEventListener("message", (e) => {
@@ -370,6 +384,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     activity,
     error,
     intake,
+    learningState,
     notice,
     clearNotice,
     submitIntake,

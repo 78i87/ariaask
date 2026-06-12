@@ -9,18 +9,15 @@ function truncate(s: string, max: number): string {
 interface ThreadBarProps {
   active: ThreadSelection;
   threads: CyraThreadSummary[];
-  /** True while an unsent "Ask Cyra" draft exists (renders the provisional chip). */
-  showDraft: boolean;
   onSelect: (sel: ThreadSelection) => void;
 }
 
 /**
- * Switcher between the teaching thread (student Aria) and the notebook's
- * "Ask Cyra" expert conversations. Hidden entirely until the first Cyra
- * interaction so plain teaching sessions look exactly as before.
+ * Switcher between the teaching thread (student Aria), the knowledge map, and
+ * the notebook's "Ask Cyra" expert conversations. Aria, the map, and "Ask
+ * question" are permanent entry points; thread chips accumulate after them.
  */
-export function ThreadBar({ active, threads, showDraft, onSelect }: ThreadBarProps) {
-  if (threads.length === 0 && !showDraft) return null;
+export function ThreadBar({ active, threads, onSelect }: ThreadBarProps) {
   return (
     <div className="threadbar">
       <Chip
@@ -30,17 +27,22 @@ export function ThreadBar({ active, threads, showDraft, onSelect }: ThreadBarPro
         onClick={() => onSelect({ kind: "aria" })}
         className="threadbar__chip"
       />
+      <Chip
+        icon="hub"
+        label="Knowledge map"
+        selected={active.kind === "map"}
+        onClick={() => onSelect({ kind: "map" })}
+        className="threadbar__chip"
+      />
       <div className="threadbar__divider" />
       <div className="threadbar__scroll">
-        {showDraft && (
-          <Chip
-            icon="history_edu"
-            label="New question"
-            selected={active.kind === "cyra" && active.threadId === null}
-            onClick={() => onSelect({ kind: "cyra", threadId: null })}
-            className="threadbar__chip threadbar__chip--cyra"
-          />
-        )}
+        <Chip
+          icon="history_edu"
+          label="Ask question"
+          selected={active.kind === "cyra" && active.threadId === null}
+          onClick={() => onSelect({ kind: "cyra", threadId: null })}
+          className="threadbar__chip threadbar__chip--cyra"
+        />
         {threads.map((t) => (
           <Chip
             key={t.id}

@@ -5,6 +5,7 @@ import type {
   CyraThreadSummary,
   Intake,
   IntakeAnswerPayload,
+  LearningState,
   Notebook,
   SettingsResponse,
   SourceFile,
@@ -65,6 +66,7 @@ export const api = {
       notebook: Notebook;
       messages: { id: string; role: "teacher" | "student"; text: string; interrupted?: boolean }[];
       turnActive: boolean;
+      learningState: LearningState | null;
       intake: Intake | null;
     }>(`/api/notebooks/${id}`),
   submitIntake: (id: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>

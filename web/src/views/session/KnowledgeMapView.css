@@ -1,0 +1,252 @@
+.kmap-view {
+  background: var(--md-sys-color-surface);
+}
+
+/* position:relative canvas — the edge overlay's coordinate space. */
+.kmap {
+  position: relative;
+  max-width: var(--aria-content-max);
+  margin: 0 auto;
+  padding: 16px 24px 32px;
+}
+
+.kmap__edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2; /* above the cards; kept readable via opacity */
+}
+
+.kmap__edge {
+  fill: none;
+  stroke: var(--md-sys-color-outline-variant);
+  stroke-width: 1.5;
+  opacity: 0.6;
+}
+
+.kmap__edge--active {
+  stroke: var(--md-sys-color-primary);
+  stroke-width: 2.5;
+  opacity: 1;
+}
+
+.kmap__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 4px 16px;
+}
+
+.kmap__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kmap__progress-sub {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.kmap__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.kmap__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.kmap__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  flex-shrink: 0;
+}
+.kmap__dot--understood {
+  background: var(--aria-status-understood);
+}
+.kmap__dot--partial {
+  background: var(--aria-status-partial);
+}
+.kmap__dot--misconception {
+  background: var(--aria-status-misconception);
+}
+.kmap__dot--unknown {
+  background: var(--aria-status-unknown);
+}
+
+.kmap__groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.kmap__group {
+  flex: 1 1 300px;
+  max-width: 440px;
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  padding: 14px 16px 16px;
+}
+
+.kmap__group-title {
+  margin: 0 0 10px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.kmap__nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kmap__node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  padding: 6px 14px;
+  border-radius: var(--md-sys-shape-corner-full);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: filter var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.kmap__node:hover {
+  filter: brightness(1.06);
+}
+
+.kmap__node--understood {
+  background: var(--aria-status-understood-container);
+  color: var(--aria-status-on-understood-container);
+}
+.kmap__node--partial {
+  background: var(--aria-status-partial-container);
+  color: var(--aria-status-on-partial-container);
+}
+.kmap__node--misconception {
+  background: var(--aria-status-misconception-container);
+  color: var(--aria-status-on-misconception-container);
+}
+.kmap__node--unknown {
+  background: var(--aria-status-unknown-container);
+  color: var(--aria-status-on-unknown-container);
+}
+
+.kmap__node--selected.kmap__node--understood {
+  outline: 2px solid var(--aria-status-understood);
+}
+.kmap__node--selected.kmap__node--partial {
+  outline: 2px solid var(--aria-status-partial);
+}
+.kmap__node--selected.kmap__node--misconception {
+  outline: 2px solid var(--aria-status-misconception);
+}
+.kmap__node--selected.kmap__node--unknown {
+  outline: 2px solid var(--aria-status-unknown);
+}
+
+/* Bottom detail strip — outside the scroller, docked above the pane's edge. */
+.kmap__detail {
+  flex-shrink: 0;
+  max-width: var(--aria-content-max);
+  margin: 0 auto 16px;
+  width: calc(100% - 48px);
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-sys-shape-corner-large);
+  padding: 12px 8px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kmap__detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kmap__detail-concept {
+  min-width: 0;
+}
+
+.kmap__detail-head .m3-icon-button {
+  margin-left: auto;
+}
+
+.kmap__status-chip {
+  padding: 2px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+.kmap__status-chip--understood {
+  background: var(--aria-status-understood-container);
+  color: var(--aria-status-on-understood-container);
+}
+.kmap__status-chip--partial {
+  background: var(--aria-status-partial-container);
+  color: var(--aria-status-on-partial-container);
+}
+.kmap__status-chip--misconception {
+  background: var(--aria-status-misconception-container);
+  color: var(--aria-status-on-misconception-container);
+}
+.kmap__status-chip--unknown {
+  background: var(--aria-status-unknown-container);
+  color: var(--aria-status-on-unknown-container);
+}
+
+.kmap__challenged {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--aria-status-misconception);
+}
+
+.kmap__detail-belief {
+  margin: 0;
+  padding-right: 8px;
+}
+
+.kmap__detail-note {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.kmap__detail-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.kmap__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--md-sys-color-primary);
+  cursor: pointer;
+}
+.kmap__link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  .kmap {
+    padding: 12px 16px 24px;
+  }
+  .kmap__detail {
+    width: calc(100% - 32px);
+  }
+}

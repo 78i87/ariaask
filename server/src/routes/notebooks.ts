@@ -186,7 +186,9 @@ export function notebookRoutes(
       notebook: toSummary(nb),
       messages: nb.messages,
       turnActive: sessions.getState(nb.id).turnActive,
-      learningState: nb.learningState ?? null,
+      // Gated so the kill switch hides the map UI too — otherwise a previously
+      // generated state would ship frozen, with the evaluator off.
+      learningState: config.learningStateDisabled ? null : (nb.learningState ?? null),
       intake: nb.intake
         ? { status: nb.intake.status, questions: composeIntakeQuestions(nb), research: nb.intake.research }
         : null,

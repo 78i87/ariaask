@@ -25,6 +25,7 @@ import {
   buildInitialStatePromptSources,
   buildInitialStatePromptTopic,
   parseInitialState,
+  type LearningState,
 } from "./learning.js";
 import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntakeQuestions } from "./intake.js";
 import { buildRagQuery, buildRetrievalBlock, ensureRagIndex } from "./rag.js";
@@ -168,6 +169,7 @@ export class SessionManager {
     session.cancelRequested = false;
 
     let teacherMessageId: string | null = null;
+    let stateBeforeEval: LearningState | undefined;
     try {
       if (kickoff && !nb.learningState && !this.config.learningStateDisabled) {
         // The belief inventory must exist before ensureThread pins the
@@ -176,6 +178,11 @@ export class SessionManager {
         // state the kickoff falls back to self-invented misconceptions.
         await this.generateInitialState(nb);
         input = buildKickoffPrompt(nb);
+        // The page is usually open and attached while the kickoff runs — push
+        // the fresh inventory so the knowledge map appears right away. Without
+        // this, GET only delivers it on the next full page load and the first
+        // SSE broadcast doesn't happen until the first evaluator pass.
+        if (nb.learningState) this.broadcast(session, "learning-state", { state: nb.learningState });
       }
 
       await this.ensureThread(nb, session);
@@ -231,7 +238,11 @@ export class SessionManager {
       // The strict gate: a separate evaluator pass decides whether the
       // teacher's message justifies updating the student's beliefs, BEFORE
       // the student replies — so the reply already reflects (only) the
-      // justified changes.
+      // justified changes. Snapshot the pre-evaluation state (the evaluator
+      // replaces the object, never mutates it) so a failed turn/start that
+      // rolls the teacher message back can withdraw the credit too — the map
+      // must not show beliefs earned by a message that no longer exists.
+      stateBeforeEval = nb.learningState;
       if (!kickoff && !this.config.learningStateDisabled) {
         await this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!);
       }
@@ -245,7 +256,10 @@ export class SessionManager {
       // turn gets it as a prepended block — after the catch-up transcript, so
       // on a recreated thread the inventory overrides anything the transcript
       // replay might suggest the student should know.
-      const beliefBlock = !kickoff && nb.learningState ? buildBeliefBlock(nb.learningState, { includeChanges: true }) : "";
+      const beliefBlock =
+        !kickoff && nb.learningState
+          ? buildBeliefBlock(nb.learningState, { includeChanges: true, teacherMessage: input })
+          : "";
       // Retrieved-passage grounding (rag.ts): hidden excerpts go after the
       // belief block so the inventory still bounds what the student
       // understands. Never on kickoff — its prompt directs a full agentic
@@ -285,11 +299,18 @@ export class SessionManager {
       session.kickoffTurn = false;
       this.clearWatchdog(session);
       // Roll back the optimistically-persisted teacher message so a failed
-      // turn/start doesn't leave a dangling, unanswered message.
+      // turn/start doesn't leave a dangling, unanswered message — and restore
+      // the pre-evaluation beliefs alongside it (skipped when the evaluator
+      // BOOTSTRAPPED a previously-stateless notebook: that state derives from
+      // the transcript, and the once-per-session flag would block a redo).
       if (teacherMessageId) {
         const idx = nb.messages.findIndex((m) => m.id === teacherMessageId);
         if (idx >= 0) {
           nb.messages.splice(idx, 1);
+          if (stateBeforeEval && nb.learningState !== stateBeforeEval) {
+            nb.learningState = stateBeforeEval;
+            this.broadcast(session, "learning-state", { state: stateBeforeEval });
+          }
           await this.store.save(nb).catch(() => {});
         }
       }
@@ -345,8 +366,11 @@ export class SessionManager {
             const raw = await this.client.runOneShotTurn({
               prompt: buildBootstrapPrompt(nb.messages, this.learningContext(nb)),
               model: s.model,
-              effort: this.config.evaluatorEffort,
-              timeoutMs: 90_000,
+              // Medium, unlike runEvaluator's bootstrap: the re-derived state
+              // REPLACES the inventory wholesale after a deliberate edit, so
+              // quality beats the extra seconds here.
+              effort: "medium",
+              timeoutMs: 120_000,
             });
             const state = parseInitialState(raw);
             if (state) {
@@ -661,8 +685,10 @@ export class SessionManager {
           : await this.client.runOneShotTurn({
               prompt: buildInitialStatePromptTopic(nb.topic ?? nb.title, tuning),
               model: s.model,
-              effort: this.config.evaluatorEffort,
-              timeoutMs: 90_000,
+              // Staking out 10–25 structured entries at low effort yields thin
+              // misconceptions — this one-time call earns medium.
+              effort: "medium",
+              timeoutMs: 120_000,
             });
       const state = parseInitialState(raw);
       if (!state) {
@@ -696,11 +722,14 @@ export class SessionManager {
         if (session.learningBootstrapAttempted || nb.messages.length === 0) return;
         session.learningBootstrapAttempted = true;
         this.broadcast(session, "activity", { kind: "thinking" });
+        // Stays at evaluator effort (default low), unlike the kickoff/edit
+        // generations: this runs inside a normal teaching turn the user is
+        // waiting on, and a thinner legacy map grows via the evaluator anyway.
         const raw = await this.client.runOneShotTurn({
           prompt: buildBootstrapPrompt(nb.messages, this.learningContext(nb)),
           model: s.model,
           effort: this.config.evaluatorEffort,
-          timeoutMs: 90_000,
+          timeoutMs: 120_000,
         });
         const state = parseInitialState(raw);
         if (!state) return;
@@ -719,7 +748,7 @@ export class SessionManager {
         effort: this.config.evaluatorEffort,
         timeoutMs: 60_000,
       });
-      const next = applyEvaluatorOutput(raw, state);
+      const next = applyEvaluatorOutput(raw, state, teacherText);
       if (!next) {
         state.lastChanges = [];
         console.error(`[aria] belief evaluator output for notebook ${nb.id} was unparseable; beliefs unchanged`);

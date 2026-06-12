@@ -16,13 +16,15 @@ npm run dev          # backend (Express, :5275) + frontend (Vite, :5173) togethe
 npm run dev:server   # backend only (tsx watch)
 npm run dev:web      # frontend only; Vite proxies /api → localhost:5275
 npm run typecheck    # tsc on both workspaces — the only check; there is no lint or test suite
+npm run build -w @aria/web   # frontend production build (also runs web typecheck)
+npm run start -w @aria/server # run the backend once without watch
 ```
 
 Regenerate a Material 3 palette block for `web/src/theme/tokens.css`: `node web/scripts/gen-m3-palette.mjs "#42A5F5"`.
 
 ## Layout
 
-npm workspaces monorepo: `server/` (`@aria/server`, Express 5 + TypeScript, ESM via tsx) and `web/` (`@aria/web`, React 19 + Vite). Runtime state lives in `data/` (gitignored content): `data/settings.json` plus one directory per notebook at `data/notebooks/<id>/` holding `notebook.json` (metadata + full chat transcript) and `sources/` (uploaded files).
+npm workspaces monorepo: `server/` (`@aria/server`, Express 5 + TypeScript, ESM via tsx) and `web/` (`@aria/web`, React 19 + Vite). Runtime state lives in `data/` (gitignored content): `data/settings.json` plus one directory per notebook at `data/notebooks/<id>/` holding `notebook.json` (metadata + full chat transcript), `sources/` (uploaded files and generated research digests), and optionally `rag-index.json` (server-only retrieval index). Local embedding models are cached under `data/models/`.
 
 The server is ESM with NodeNext resolution — relative imports must use `.js` suffixes (`import ... from "./config.js"`), even though sources are `.ts`.
 
@@ -34,22 +36,29 @@ Composition root is `server/src/index.ts`; `app.ts` wires routes and a gate midd
 
 **`domain/`** — the core logic:
 - `store.ts` — `NotebookStore`: in-memory map, persisted per notebook as JSON via atomic writes chained per-notebook so saves apply in order.
-- `settings.ts` — global settings (`model`, `effort`, `replyLength`, `probing`). `ARIA_MODEL`/`ARIA_EFFORT` env vars only *seed* the file on first boot; afterwards the file (Settings UI) wins.
+- `settings.ts` — global settings (`model`, `effort`, `replyLength`, `probing`, `ragMode`, `ragRecall`). `ARIA_MODEL`/`ARIA_EFFORT` env vars only *seed* the file on first boot; afterwards the file (Settings UI) wins.
 - `persona.ts` — the student persona, developer instructions, kickoff prompt, and transcript catch-up block. The `"default"` reply-length/probing rule strings are the original prompt text verbatim, kept so default settings produce a byte-identical persona — don't reword them casually.
+- `learning.ts` — the **learning state**: a server-owned belief inventory (`learningState` on the notebook, statuses `unknown | misconception | partial | understood`) deciding WHAT the student knows, kept strictly separate from the persona (HOW it speaks). Generated at kickoff by a one-shot side call (`AppServerClient.runOneShotTurn`, ephemeral thread), injected into every student turn as a hidden `[BELIEF STATE]` block, and updated only by a strict per-turn evaluator pass that runs before the student replies — a vague explanation must not resolve a misconception (at most `challenged`). Everything fails open: parse/RPC failures leave beliefs unchanged and never block the turn; a notebook without state behaves exactly pre-feature. Knobs: `ARIA_EVALUATOR_EFFORT` (default `low`), `ARIA_NO_LEARNING_STATE=1` kill switch. No UI yet — state ships on `GET /api/notebooks/:id` and the `learning-state` SSE event.
+- `intake.ts` — pre-session setup ("tune Aria"): deterministic level/research questions plus up to two generated focus questions. Answers calibrate learning-state generation, can request pre-kickoff online research, and are answered once before kickoff. `ARIA_NO_INTAKE=1` disables the form for new notebooks.
+- `research.ts` — pre-session online research digest. A one-shot, web-search-enabled Codex turn writes `online-research.md` into `sources/` as a normal source (`origin: "research"`). It runs during the intake pipeline, fails open with a non-fatal notice, and uses `ARIA_RESEARCH_EFFORT` (default `medium`).
+- `rag.ts` — server-side retrieval over source files. Large readings (or any reading when `ragMode: "always"`) are chunked and embedded with Transformers.js, saved to `rag-index.json`, and recalled as hidden excerpts before non-kickoff turns. It fails open and can be disabled with `ARIA_NO_RAG=1`; other knobs are `ARIA_RAG_MODEL`, `ARIA_RAG_MIN_WORDS`, and `ARIA_RAG_WAIT_MS`.
 - `session.ts` — `SessionManager`, the heart of the app. One `NotebookSession` per notebook: turn state machine (`idle → starting → streaming`), SSE fan-out to attached browsers, a 5-minute inactivity watchdog that interrupts and then force-resets a wedged turn, and overload retry on `turn/start`.
+- `cyra-session.ts` / `cyra.ts` — "Ask Cyra" expert-teacher threads. These are separate Codex threads stored under `notebook.cyraThreads`, run concurrently with the Aria student thread, use source retrieval with expert framing, and intentionally mirror only the generic session mechanics instead of sharing the dense Aria kickoff/evaluator code.
 
 Key invariants in the session layer:
 - **One Codex thread per notebook** (the student remembers what it was taught). `developerInstructions` are pinned at thread creation and NOT re-applied on resume — so changing student style starts a *fresh* thread and prepends a transcript catch-up block (`catchUpNeeded`) to the next turn. The applied style is recorded on the notebook (`appliedStyle`) to detect drift.
 - **The kickoff turn** (first turn of a notebook, `kickoffDone` flag) is hidden from the UI: deltas aren't broadcast, completed messages are buffered, and only the final agent message is rendered/persisted as the student's opener. Kickoff runs at `max(medium, chosen effort)` unless `ARIA_KICKOFF_EFFORT` pins it.
+- **The intake pipeline gates kickoff** for new notebooks when enabled: clients must submit `POST /api/notebooks/:id/intake` before any Aria turn can start. If research is requested, `SessionManager.runIntakePipeline` performs that one-shot digest first, then starts the hidden kickoff.
 - Teacher messages are persisted optimistically before `turn/start` and rolled back if it fails; partial student text is persisted with `interrupted: true` when a turn is interrupted/failed.
 - Thread notifications are filtered by `turnId` to guard against late/duplicate events.
 
-SSE protocol (one channel per notebook, `routes/notebooks.ts` → `lib/sse.ts`): events `state` (snapshot on attach), `turn-started`, `delta`, `message`, `activity` (`reading-sources` | `thinking`), `error`, `turn-completed`, each with an incrementing per-session `id`.
+SSE protocol (one channel per notebook, `routes/notebooks.ts` → `lib/sse.ts`): events `state` (snapshot on attach), `turn-started`, `delta`, `message`, `activity` (`reading-sources` | `thinking` | `researching`), `learning-state`, `error`, `turn-completed`, each with an incrementing per-session `id`. Cyra threads have their own `/cyra/:tid/events` channel with the same streaming events minus kickoff/intake fields.
 
 ## Web architecture
 
 Routing/auth shell in `App.tsx`: an auth gate (`lib/auth.tsx`) with phases `checking | backend-down | signed-out | waiting-oauth | signed-in` wraps two routes, `/` (HomeView) and `/notebook/:id` (SessionView).
 
-- `lib/useTeachingSession.ts` is the streaming chat hook: subscribes to the notebook's SSE channel, buffers deltas and flushes them on `requestAnimationFrame`, and reconciles streaming items (id prefix `streaming:`) with persisted messages.
+- `lib/useTeachingSession.ts` is the streaming chat hook: subscribes to the notebook's SSE channel, buffers deltas and flushes them on `requestAnimationFrame`, reconciles streaming items (id prefix `streaming:`) with persisted messages, and drives the intake/research/kickoff loading states.
+- `lib/useCyraThread.ts` is the parallel streaming hook for "Ask Cyra"; `SessionView` switches between the main Aria thread and Cyra expert threads via `ThreadBar`.
 - `components/` is a hand-rolled Material 3 (Expressive) component library — each component is a `.tsx` + `.css` pair styled exclusively with `--md-sys-*` CSS variables from `theme/tokens.css`. No component framework; match this pattern for new UI.
 - Theming is attribute-driven on `:root`: `data-palette` (`blue` default | `purple`) × `data-theme` (`dark` | light default), four token blocks at equal specificity. Blue is generated by `gen-m3-palette.mjs`; purple is material-web baseline kept verbatim.

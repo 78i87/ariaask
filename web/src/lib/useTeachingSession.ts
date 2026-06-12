@@ -20,6 +20,8 @@ export interface TeachingSession {
   clearNotice: () => void;
   submitIntake: (payload: { skip?: boolean; answers?: IntakeAnswerPayload }) => void;
   send: (text: string) => void;
+  /** Rewind-and-resend: replaces the message and deletes everything after it. */
+  editMessage: (messageId: string, text: string) => void;
   interrupt: () => void;
   retry: () => void;
   /** Replace the notebook summary (e.g. after adding sources). */
@@ -299,6 +301,34 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     [startTurn],
   );
 
+  const editMessage = useCallback(
+    (messageId: string, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const idx = messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return;
+      // Optimistic rewind: drop the tail locally and show the edited message;
+      // the server truncates, rebuilds the student's thread, and answers.
+      const kept = messages.slice(0, idx).filter((m) => m.status === "complete");
+      const optimisticId = crypto.randomUUID();
+      knownIds.current = new Set(kept.map((m) => m.id));
+      knownIds.current.add(optimisticId);
+      persistedCount.current = kept.length + 1;
+      deltaBuffers.current.clear();
+      setMessages([...kept, { id: optimisticId, role: "teacher", text: trimmed, status: "complete" }]);
+      setError(null);
+      setStatus("waiting");
+      void api.editMessage(notebookId, messageId, trimmed, optimisticId).catch((err) => {
+        // Unlike send(), a rejected edit (incl. turn_active) leaves this tab's
+        // optimistic truncation wrong — resync the real transcript, then surface it.
+        void loadNotebook().catch(() => {});
+        setStatus("error");
+        setError(err instanceof Error ? err.message : "Couldn't edit the message");
+      });
+    },
+    [messages, notebookId, loadNotebook],
+  );
+
   const interrupt = useCallback(() => {
     void api.interrupt(notebookId).catch(() => {});
   }, [notebookId]);
@@ -344,6 +374,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     clearNotice,
     submitIntake,
     send,
+    editMessage,
     interrupt,
     retry,
     updateNotebook: setNotebook,

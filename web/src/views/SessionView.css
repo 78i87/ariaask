@@ -55,6 +55,25 @@
   color: var(--md-sys-color-error);
 }
 
+/* Rewind-edit mode banner above the composer. */
+.session__editing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--aria-chat-max);
+  margin: 0 auto;
+  width: 100%;
+  padding: 4px 24px 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.session__editing .m3-icon {
+  flex-shrink: 0;
+}
+.session__editing span {
+  flex: 1;
+  min-width: 0;
+}
+
 .session__jump {
   position: sticky;
   bottom: 16px;

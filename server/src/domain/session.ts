@@ -300,6 +300,84 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Rewind-and-resend: replace a past teacher message with new text. The
+   * edited message and EVERYTHING after it are deleted, the codex thread is
+   * abandoned (a fresh one rebuilds from a catch-up of the surviving prefix),
+   * and the belief inventory is re-derived from that prefix — the old one
+   * reflects turns that no longer exist. Destructive by design: if the resend
+   * fails, the transcript stays truncated (consistent) and the user retries.
+   */
+  async editTurn(
+    notebookId: string,
+    messageId: string,
+    text: string | undefined,
+    clientMessageId?: string,
+  ): Promise<{ turnId: string | null }> {
+    const nb = this.store.get(notebookId);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const session = this.ensureSession(notebookId);
+    if (session.state !== "idle") throw new HttpError(409, "turn_active", "The student is already responding.");
+    if (!text || !text.trim()) throw new HttpError(400, "empty_message");
+    const idx = nb.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) throw new HttpError(404, "message_not_found");
+    if (nb.messages[idx]!.role !== "teacher") {
+      throw new HttpError(400, "not_editable", "Only your own messages can be edited.");
+    }
+
+    // Occupy the turn state machine while rewinding — a concurrent /messages
+    // POST must not start a turn against a half-truncated transcript.
+    session.state = "starting";
+    session.cancelRequested = false;
+    try {
+      nb.messages = nb.messages.slice(0, idx);
+      // Abandon the thread: the student must not remember the deleted turns.
+      // ensureThread starts fresh and prepends the surviving transcript.
+      nb.threadId = null;
+
+      if (nb.learningState && !this.config.learningStateDisabled) {
+        // Stale realizations from deleted turns must never replay.
+        nb.learningState.lastChanges = [];
+        if (nb.messages.length > 0) {
+          try {
+            const s = this.settings.get();
+            this.broadcast(session, "activity", { kind: "thinking" });
+            const raw = await this.client.runOneShotTurn({
+              prompt: buildBootstrapPrompt(nb.messages, this.learningContext(nb)),
+              model: s.model,
+              effort: this.config.evaluatorEffort,
+              timeoutMs: 90_000,
+            });
+            const state = parseInitialState(raw);
+            if (state) {
+              nb.learningState = state;
+              this.broadcast(session, "learning-state", { state });
+            }
+          } catch (err) {
+            // Fail-open: the old inventory may credit deleted turns, but a
+            // wrong-ish state beats no state; the evaluator corrects over time.
+            console.error(`[aria] belief re-derivation after edit failed for notebook ${nb.id}; keeping prior state:`, err);
+          }
+        }
+      }
+      await this.store.save(nb);
+      if (session.cancelRequested) {
+        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+      }
+    } finally {
+      // startTurn re-checks idle synchronously right after this — no interleave.
+      session.state = "idle";
+    }
+
+    try {
+      return await this.startTurn(notebookId, text, false, clientMessageId);
+    } finally {
+      // Other attached tabs still hold the deleted tail; a state snapshot
+      // with the new messageCount makes them refetch the transcript.
+      this.broadcastState(session);
+    }
+  }
+
   async interrupt(notebookId: string): Promise<boolean> {
     const session = this.sessions.get(notebookId);
     const nb = this.store.get(notebookId);
@@ -334,6 +412,19 @@ export class SessionManager {
   }
 
   // ---------- internals ----------
+
+  /** The attach() snapshot, pushed mid-session — clients refetch when messageCount drifts. */
+  private broadcastState(session: NotebookSession): void {
+    const nb = this.store.get(session.notebookId);
+    this.broadcast(session, "state", {
+      turnActive: session.state !== "idle",
+      turnId: session.turnId,
+      kickoffRunning: session.state !== "idle" && session.kickoffTurn,
+      intakeRunning: session.intakeResearch,
+      partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
+      messageCount: nb?.messages.length ?? 0,
+    });
+  }
 
   private ensureSession(notebookId: string): NotebookSession {
     let s = this.sessions.get(notebookId);

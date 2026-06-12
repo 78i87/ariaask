@@ -45,10 +45,26 @@
   max-width: 100%;
 }
 
+.msg__col--teacher {
+  align-items: flex-end;
+}
+
 .msg__actions {
   display: flex;
   gap: 2px;
   margin-left: 4px;
+}
+
+/* Reveal on hover only where hover exists; touch devices keep them visible. */
+@media (hover: hover) {
+  .msg__actions {
+    opacity: 0;
+    transition: opacity 150ms var(--md-sys-motion-easing-emphasized);
+  }
+  .msg:hover .msg__actions,
+  .msg__actions:focus-within {
+    opacity: 1;
+  }
 }
 
 .msg-action {

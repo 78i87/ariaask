@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "../../components/Button";
@@ -19,11 +19,37 @@ export function CyraAvatar({ pulsing }: { pulsing?: boolean }) {
   );
 }
 
-function CyraBubble({ message }: { message: CyraChatMessage }) {
+interface CyraBubbleProps {
+  message: CyraChatMessage;
+  onCopy?: (m: CyraChatMessage) => void;
+  /** Rewind-and-resend edit; user messages only. */
+  onEdit?: (m: CyraChatMessage) => void;
+}
+
+function CyraBubble({ message, onCopy, onEdit }: CyraBubbleProps) {
   if (message.role === "user") {
+    const showActions = onCopy !== undefined || onEdit !== undefined;
     return (
       <div className="msg msg--teacher">
-        <div className="msg__bubble msg__bubble--cyra-user body-large">{message.text}</div>
+        <div className="msg__col msg__col--teacher">
+          <div className="msg__bubble msg__bubble--cyra-user body-large">{message.text}</div>
+          {showActions && (
+            <div className="msg__actions">
+              {onCopy && (
+                <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+                  <Icon name="content_copy" size={16} />
+                  <span className="label-medium">Copy</span>
+                </button>
+              )}
+              {onEdit && (
+                <button type="button" className="msg-action" onClick={() => onEdit(message)}>
+                  <Icon name="edit" size={16} />
+                  <span className="label-medium">Edit</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -31,14 +57,24 @@ function CyraBubble({ message }: { message: CyraChatMessage }) {
   return (
     <div className="msg msg--student">
       <CyraAvatar pulsing={streaming} />
-      <div className={`msg__bubble msg__bubble--student msg__bubble--cyra body-large`}>
-        {streaming ? (
-          <span className="msg__streaming-text">{message.text}</span>
-        ) : (
-          <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+      <div className="msg__col">
+        <div className={`msg__bubble msg__bubble--student msg__bubble--cyra body-large`}>
+          {streaming ? (
+            <span className="msg__streaming-text">{message.text}</span>
+          ) : (
+            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+          )}
+          {streaming && <span className="msg__cursor" />}
+          {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}
+        </div>
+        {!streaming && onCopy && (
+          <div className="msg__actions">
+            <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+              <Icon name="content_copy" size={16} />
+              <span className="label-medium">Copy</span>
+            </button>
+          </div>
         )}
-        {streaming && <span className="msg__cursor" />}
-        {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}
       </div>
     </div>
   );
@@ -52,6 +88,8 @@ interface CyraThreadViewProps {
   onDraftChange: (text: string) => void;
   sourceMessageId: string | null;
   onThreadCreated: (thread: CyraThreadSummary) => void;
+  /** Called after a successful edit (the seed edit re-derives the thread title). */
+  onEdited?: () => void;
 }
 
 /**
@@ -66,15 +104,30 @@ export function CyraThreadView({
   onDraftChange,
   sourceMessageId,
   onThreadCreated,
+  onEdited,
 }: CyraThreadViewProps) {
-  const { messages, status, activity, error, send, interrupt, retry } = useCyraThread(notebookId, threadId);
+  const { messages, status, activity, error, send, editMessage, interrupt, retry } = useCyraThread(
+    notebookId,
+    threadId,
+  );
   /** The seed text while the create-on-first-send POST is in flight. */
   const [creating, setCreating] = useState<string | null>(null);
+  /** Rewind-and-resend edit: the message being edited + its draft text. */
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const snackbar = useSnackbar();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
   const isNew = threadId === null;
+
+  useEffect(() => setEditing(null), [threadId]);
+
+  const onCopy = (m: CyraChatMessage) => {
+    navigator.clipboard.writeText(m.text).then(
+      () => snackbar.show("Copied"),
+      () => snackbar.show("Couldn't copy"),
+    );
+  };
 
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -135,7 +188,7 @@ export function CyraThreadView({
           ) : (
             <>
               {messages.map((m) => (
-                <CyraBubble key={m.id} message={m} />
+                <CyraBubble key={m.id} message={m} onCopy={onCopy} onEdit={(msg) => setEditing({ id: msg.id, text: msg.text })} />
               ))}
 
               {status === "waiting" && <ThinkingIndicator avatar={<CyraAvatar pulsing />} label={waitingLabel} />}
@@ -154,15 +207,42 @@ export function CyraThreadView({
         </div>
       </div>
 
+      {editing && (
+        <div className="session__editing">
+          <Icon name="edit" size={16} />
+          <span className="body-medium">Editing — sending rewinds this conversation past this point</span>
+          <Button variant="text" onClick={() => setEditing(null)}>
+            Cancel
+          </Button>
+        </div>
+      )}
       <Composer
+        key={isNew ? "new" : editing ? `edit:${editing.id}` : "normal"}
         disabled={isNew ? creating !== null : status === "loading" || status === "error"}
         busy={busy}
-        onSend={isNew ? createThread : send}
+        onSend={
+          isNew
+            ? createThread
+            : editing
+              ? (text) => {
+                  editMessage(editing.id, text, onEdited);
+                  setEditing(null);
+                }
+              : send
+        }
         onStop={interrupt}
         placeholder="Ask Cyra, your expert teacher…"
         accent="tertiary"
         autoFocus={isNew}
-        {...(isNew ? { value: draft, onChange: onDraftChange } : {})}
+        {...(isNew
+          ? { value: draft, onChange: onDraftChange }
+          : editing
+            ? {
+                value: editing.text,
+                onChange: (t: string) => setEditing((p) => (p ? { ...p, text: t } : p)),
+                autoFocus: true,
+              }
+            : {})}
       />
     </div>
   );

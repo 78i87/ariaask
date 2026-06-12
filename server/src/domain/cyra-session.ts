@@ -228,6 +228,62 @@ export class CyraSessionManager {
     }
   }
 
+  /**
+   * Rewind-and-resend inside a Cyra conversation (mirrors session.ts
+   * editTurn, minus the belief machinery — Cyra has none): the edited user
+   * message and everything after it are deleted, and the codex thread is
+   * rebuilt from a catch-up of the surviving prefix. Editing the seed
+   * question also re-derives the thread title.
+   */
+  async editTurn(
+    notebookId: string,
+    cyraThreadId: string,
+    messageId: string,
+    text: string | undefined,
+    clientMessageId?: string,
+  ): Promise<{ thread: CyraThreadSummary; turnId: string | null }> {
+    const { nb, ct } = this.findThread(notebookId, cyraThreadId);
+    const session = this.ensureSession(notebookId, ct.id);
+    if (session.state !== "idle") throw new HttpError(409, "turn_active", "Cyra is already answering.");
+    if (!text || !text.trim()) throw new HttpError(400, "empty_message");
+    const idx = ct.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) throw new HttpError(404, "message_not_found");
+    if (ct.messages[idx]!.role !== "user") {
+      throw new HttpError(400, "not_editable", "Only your own messages can be edited.");
+    }
+
+    // Occupy the state machine while truncating — a concurrent send must not
+    // land on a half-rewound thread.
+    session.state = "starting";
+    try {
+      ct.messages = ct.messages.slice(0, idx);
+      ct.threadId = null; // Cyra must not remember the deleted turns
+      if (idx === 0) ct.title = deriveCyraTitle(text.trim());
+      ct.updatedAt = new Date().toISOString();
+      await this.store.save(nb);
+    } finally {
+      // startTurn re-checks idle synchronously right after this — no interleave.
+      session.state = "idle";
+    }
+
+    try {
+      return await this.startTurn(notebookId, { cyraThreadId: ct.id, text, clientMessageId });
+    } finally {
+      // Other attached tabs still hold the deleted tail — make them refetch.
+      this.broadcastState(session, ct);
+    }
+  }
+
+  /** The attach() snapshot, pushed mid-session — clients refetch when messageCount drifts. */
+  private broadcastState(session: CyraSession, ct: CyraThread): void {
+    this.broadcast(session, "state", {
+      turnActive: session.state !== "idle",
+      turnId: session.turnId,
+      partials: Object.fromEntries(session.partials),
+      messageCount: ct.messages.length,
+    });
+  }
+
   /** Mirrors session.ts:303-324. */
   async interrupt(notebookId: string, cyraThreadId: string): Promise<boolean> {
     const session = this.sessions.get(cyraThreadId);

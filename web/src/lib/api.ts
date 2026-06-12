@@ -77,6 +77,9 @@ export const api = {
       json(retry ? { retry: true } : text !== undefined ? { text, clientMessageId } : {}),
     ),
   interrupt: (id: string) => request<unknown>(`/api/notebooks/${id}/interrupt`, { method: "POST" }),
+  /** Rewind-and-resend: replaces the message and deletes everything after it. */
+  editMessage: (id: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/messages/${messageId}/edit`, json({ text, clientMessageId })),
 
   listCyraThreads: (id: string) => request<{ threads: CyraThreadSummary[] }>(`/api/notebooks/${id}/cyra`),
   createCyraThread: (id: string, body: { text: string; clientMessageId?: string; sourceMessageId?: string }) =>
@@ -89,6 +92,12 @@ export const api = {
     }>(`/api/notebooks/${id}/cyra/${tid}`),
   sendCyraMessage: (id: string, tid: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
     request<{ turnId: string | null }>(`/api/notebooks/${id}/cyra/${tid}/messages`, json(body)),
+  /** Rewind-and-resend within a Cyra conversation. */
+  editCyraMessage: (id: string, tid: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(
+      `/api/notebooks/${id}/cyra/${tid}/messages/${messageId}/edit`,
+      json({ text, clientMessageId }),
+    ),
   interruptCyra: (id: string, tid: string) =>
     request<unknown>(`/api/notebooks/${id}/cyra/${tid}/interrupt`, { method: "POST" }),
   /** Raw URL for the per-thread EventSource. */

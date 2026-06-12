@@ -417,6 +417,19 @@ export function notebookRoutes(
     res.status(202).json({ turnId: result.turnId });
   });
 
+  // Rewind-and-resend within a Cyra conversation.
+  router.post("/:id/cyra/:tid/messages/:mid/edit", async (req, res) => {
+    const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    const result = await cyra.editTurn(
+      req.params.id,
+      req.params.tid,
+      req.params.mid,
+      body.text,
+      validClientMessageId(body.clientMessageId),
+    );
+    res.status(202).json({ turnId: result.turnId });
+  });
+
   router.post("/:id/cyra/:tid/interrupt", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -430,11 +443,24 @@ export function notebookRoutes(
 
   router.post("/:id/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
-    const clientMessageId =
-      typeof body.clientMessageId === "string" && body.clientMessageId.length > 0 && body.clientMessageId.length <= 64
-        ? body.clientMessageId
-        : undefined;
-    const result = await sessions.startTurn(req.params.id, body.text, body.retry === true, clientMessageId);
+    const result = await sessions.startTurn(
+      req.params.id,
+      body.text,
+      body.retry === true,
+      validClientMessageId(body.clientMessageId),
+    );
+    res.status(202).json(result);
+  });
+
+  // Rewind-and-resend: replaces the message and deletes everything after it.
+  router.post("/:id/messages/:mid/edit", async (req, res) => {
+    const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    const result = await sessions.editTurn(
+      req.params.id,
+      req.params.mid,
+      body.text,
+      validClientMessageId(body.clientMessageId),
+    );
     res.status(202).json(result);
   });
 

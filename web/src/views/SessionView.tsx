@@ -44,6 +44,7 @@ export function SessionView() {
     clearNotice,
     submitIntake,
     send,
+    editMessage,
     interrupt,
     retry,
     updateNotebook,
@@ -85,6 +86,12 @@ export function SessionView() {
     setActiveThread({ kind: "cyra", threadId: null });
   }, []);
 
+  /** Rewind-and-resend edit: the message being edited + its draft text. */
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const onEditMessage = useCallback((m: ChatMessage) => {
+    setEditing({ id: m.id, text: m.text });
+  }, []);
+
   const confirmDeleteSource = async () => {
     const target = deleteTarget;
     if (!target || !notebook || deleting) return;
@@ -107,6 +114,7 @@ export function SessionView() {
     setActiveThread({ kind: "aria" });
     setNewDraft(null);
     setSeedSourceMessageId(null);
+    setEditing(null);
   }, [id]);
 
   // Returning to the teaching pane remounts its scroller — re-pin instantly.
@@ -216,7 +224,13 @@ export function SessionView() {
                 )}
 
                 {messages.map((m) => (
-                  <MessageBubble key={m.id} message={m} onCopy={onCopyMessage} onAskCyra={onAskCyra} />
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    onCopy={onCopyMessage}
+                    onAskCyra={onAskCyra}
+                    onEdit={onEditMessage}
+                  />
                 ))}
 
                 {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
@@ -240,11 +254,35 @@ export function SessionView() {
               )}
             </div>
 
+            {editing && (
+              <div className="session__editing">
+                <Icon name="edit" size={16} />
+                <span className="body-medium">Editing — sending rewinds the conversation past this point</span>
+                <Button variant="text" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </div>
+            )}
             <Composer
+              key={editing ? `edit:${editing.id}` : "normal"}
               disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
               busy={busy}
-              onSend={send}
+              onSend={(text) => {
+                if (editing) {
+                  editMessage(editing.id, text);
+                  setEditing(null);
+                } else {
+                  send(text);
+                }
+              }}
               onStop={interrupt}
+              {...(editing
+                ? {
+                    value: editing.text,
+                    onChange: (t: string) => setEditing((p) => (p ? { ...p, text: t } : p)),
+                    autoFocus: true,
+                  }
+                : {})}
             />
           </div>
         ) : (
@@ -260,6 +298,7 @@ export function SessionView() {
               void refreshCyraThreads();
               setActiveThread({ kind: "cyra", threadId: t.id });
             }}
+            onEdited={() => void refreshCyraThreads()}
           />
         )}
 

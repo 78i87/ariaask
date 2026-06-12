@@ -15,18 +15,39 @@ export function StudentAvatar({ pulsing }: { pulsing?: boolean }) {
 
 interface MessageBubbleProps {
   message: ChatMessage;
-  /** Both handlers must be deps-stable callbacks — this component is memo'd. */
+  /** All handlers must be deps-stable callbacks — this component is memo'd. */
   onCopy?: (m: ChatMessage) => void;
   onAskCyra?: (m: ChatMessage) => void;
+  /** Rewind-and-resend edit; teacher messages only. */
+  onEdit?: (m: ChatMessage) => void;
 }
 
 // Memoized so finalized bubbles (stable message reference) don't re-render on
 // every streaming flush; only the actively-streaming bubble updates.
-export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAskCyra }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAskCyra, onEdit }: MessageBubbleProps) {
   if (message.role === "teacher") {
+    const showTeacherActions = onCopy !== undefined || onEdit !== undefined;
     return (
       <div className="msg msg--teacher">
-        <div className="msg__bubble msg__bubble--teacher body-large">{message.text}</div>
+        <div className="msg__col msg__col--teacher">
+          <div className="msg__bubble msg__bubble--teacher body-large">{message.text}</div>
+          {showTeacherActions && (
+            <div className="msg__actions">
+              {onCopy && (
+                <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+                  <Icon name="content_copy" size={16} />
+                  <span className="label-medium">Copy</span>
+                </button>
+              )}
+              {onEdit && (
+                <button type="button" className="msg-action" onClick={() => onEdit(message)}>
+                  <Icon name="edit" size={16} />
+                  <span className="label-medium">Edit</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }

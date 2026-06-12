@@ -11,6 +11,8 @@ export interface CyraThreadSession {
   activity: CyraActivity;
   error: string | null;
   send: (text: string) => void;
+  /** Rewind-and-resend: replaces the message and deletes everything after it. */
+  editMessage: (messageId: string, text: string, onSuccess?: () => void) => void;
   interrupt: () => void;
   retry: () => void;
 }
@@ -256,6 +258,36 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
     [notebookId, threadId],
   );
 
+  const editMessage = useCallback(
+    (messageId: string, text: string, onSuccess?: () => void) => {
+      if (!threadId) return;
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const idx = messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return;
+      // Optimistic rewind, mirroring useTeachingSession.editMessage.
+      const kept = messages.slice(0, idx).filter((m) => m.status === "complete");
+      const optimisticId = crypto.randomUUID();
+      knownIds.current = new Set(kept.map((m) => m.id));
+      knownIds.current.add(optimisticId);
+      persistedCount.current = kept.length + 1;
+      deltaBuffers.current.clear();
+      setMessages([...kept, { id: optimisticId, role: "user", text: trimmed, status: "complete" }]);
+      setError(null);
+      setStatus("waiting");
+      void api.editCyraMessage(notebookId, threadId, messageId, trimmed, optimisticId).then(
+        () => onSuccess?.(),
+        (err) => {
+          // A rejected edit leaves this tab's optimistic truncation wrong — resync.
+          void loadThread().catch(() => {});
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Couldn't edit the message");
+        },
+      );
+    },
+    [notebookId, threadId, messages, loadThread],
+  );
+
   const interrupt = useCallback(() => {
     if (threadId) void api.interruptCyra(notebookId, threadId).catch(() => {});
   }, [notebookId, threadId]);
@@ -270,5 +302,5 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
     });
   }, [notebookId, threadId]);
 
-  return { messages, status, activity, error, send, interrupt, retry };
+  return { messages, status, activity, error, send, editMessage, interrupt, retry };
 }

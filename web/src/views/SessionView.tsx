@@ -10,8 +10,10 @@ import { TopAppBar } from "../components/TopAppBar";
 import { useSnackbar } from "../components/Snackbar";
 import { api } from "../lib/api";
 import { extractTrailingQuestion } from "../lib/extractQuestion";
+import { useSplitChat } from "../lib/splitChat";
 import { useTheme } from "../lib/theme";
 import { useCyraThreads } from "../lib/useCyraThread";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTeachingSession } from "../lib/useTeachingSession";
 import type { ChatMessage, SourceFile, ThreadSelection } from "../lib/types";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
@@ -23,7 +25,7 @@ import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
 import { ThinkingIndicator } from "./session/ThinkingIndicator";
-import { ThreadBar } from "./session/ThreadBar";
+import { CyraChips, ThreadBar } from "./session/ThreadBar";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
 
@@ -75,7 +77,37 @@ export function SessionView() {
   /** Unsent new-question draft; non-null while the provisional chip exists. */
   const [newDraft, setNewDraft] = useState<string | null>(null);
   const [seedSourceMessageId, setSeedSourceMessageId] = useState<string | null>(null);
-  const { threads: cyraThreads, refresh: refreshCyraThreads } = useCyraThreads(id!);
+  const { threads: cyraThreads, loaded: cyraLoaded, refresh: refreshCyraThreads } = useCyraThreads(id!);
+
+  // ---- split chat (Aria left, Cyra right) ----
+  const splitChat = useSplitChat();
+  // Below this the sources panel is gone too — not enough room for two chats.
+  const wideEnough = useMediaQuery("(min-width: 1141px)");
+  const splitActive = splitChat && wideEnough;
+  const splitActiveRef = useRef(splitActive);
+  splitActiveRef.current = splitActive;
+  /** Right-pane thread: undefined = follow the newest thread, null = new question. */
+  const [splitCyraId, setSplitCyraId] = useState<string | null | undefined>(undefined);
+  /**
+   * Pending "Ask Cyra" question bound for the right pane's EXISTING thread.
+   * Deliberately separate from newDraft (the new-question composer's text) so
+   * an unsent new question can never leak into another conversation.
+   */
+  const [askDraft, setAskDraft] = useState<string | null>(null);
+  /** Bumped per "Ask Cyra" so the split pane merges/focuses exactly once. */
+  const [askSeq, setAskSeq] = useState(0);
+  const splitThreadId = splitCyraId === undefined ? (cyraThreads[0]?.id ?? null) : splitCyraId;
+  const splitThreadIdRef = useRef(splitThreadId);
+  splitThreadIdRef.current = splitThreadId;
+
+  // Entering split mode while a Cyra tab is open: that conversation moves to
+  // the right pane and the left pane returns to Aria. A render-phase
+  // adjustment rather than an effect so the in-between state never commits —
+  // no right-pane fetch of the wrong thread, no unscrolled Aria frame.
+  if (splitActive && activeThread.kind === "cyra") {
+    setSplitCyraId(activeThread.threadId);
+    setActiveThread({ kind: "aria" });
+  }
 
   // The snackbar context value isn't referentially stable; route through a ref
   // so the bubble action callbacks below stay deps-[] (MessageBubble is memo'd).
@@ -90,7 +122,26 @@ export function SessionView() {
   }, []);
 
   const onAskCyra = useCallback((m: ChatMessage) => {
-    setNewDraft(extractTrailingQuestion(m.text));
+    const question = extractTrailingQuestion(m.text);
+    // Split mode: the question lands in the right-hand Cyra pane — merged into
+    // the open conversation's composer, or as the new-question draft when the
+    // notebook has no Cyra conversations yet.
+    if (splitActiveRef.current) {
+      if (splitThreadIdRef.current !== null) {
+        setAskDraft(question);
+      } else {
+        setNewDraft(question);
+        setSeedSourceMessageId(m.id);
+        // Pin the right pane to the new-question view. Before the thread list
+        // loads, splitThreadId reads null even when threads exist — without
+        // the pin the pane would switch to the newest thread once they arrive
+        // and hide this draft.
+        setSplitCyraId(null);
+      }
+      setAskSeq((s) => s + 1);
+      return;
+    }
+    setNewDraft(question);
     setSeedSourceMessageId(m.id);
     setActiveThread({ kind: "cyra", threadId: null });
   }, []);
@@ -124,7 +175,46 @@ export function SessionView() {
     setNewDraft(null);
     setSeedSourceMessageId(null);
     setEditing(null);
+    setSplitCyraId(undefined);
+    setAskDraft(null);
+    beforeMapRef.current = { kind: "aria" };
   }, [id]);
+
+  const onSelectThread = useCallback((sel: ThreadSelection) => {
+    // Split mode: Cyra chips switch the right pane, not the main view.
+    if (splitActiveRef.current && sel.kind === "cyra") {
+      setSplitCyraId(sel.threadId);
+      setAskDraft(null); // a pending ask must not follow to another conversation
+      return;
+    }
+    setActiveThread(sel);
+  }, []);
+
+  // The knowledge map is a full-panel overlay state: the app-bar chip toggles
+  // it, remembering the view underneath (Esc gets back out too).
+  const beforeMapRef = useRef<ThreadSelection>({ kind: "aria" });
+  const mapOpen = activeThread.kind === "map";
+  const toggleMap = () => {
+    if (mapOpen) {
+      // If the remembered view was a Cyra tab and split mode took over since,
+      // the render-phase adjustment above reroutes it to the right pane.
+      setActiveThread(beforeMapRef.current);
+    } else {
+      beforeMapRef.current = activeThread;
+      setActiveThread({ kind: "map" });
+    }
+  };
+  useEffect(() => {
+    if (!mapOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      // An open dialog owns Esc (the browser closes it on this same keydown).
+      if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
+        setActiveThread(beforeMapRef.current);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mapOpen]);
 
   // Returning to the teaching pane remounts its scroller — re-pin instantly.
   // Must be a LAYOUT effect declared before the scroll effect below: layout
@@ -194,6 +284,13 @@ export function SessionView() {
         headline={<span className="title-large">{notebook?.title ?? ""}</span>}
         trailing={
           <>
+            <Chip
+              icon="hub"
+              label="Knowledge map"
+              selected={mapOpen}
+              onClick={toggleMap}
+              className="session__map-chip"
+            />
             <IconButton
               icon="add"
               ariaLabel="Add sources"
@@ -218,7 +315,10 @@ export function SessionView() {
 
       <div className="session__body">
         <div className="session__content">
-          <ThreadBar active={activeThread} threads={cyraThreads} onSelect={setActiveThread} />
+          {/* Full-screen map: no thread switcher — the app-bar chip / Esc exit. */}
+          {!mapOpen && (
+            <ThreadBar active={activeThread} threads={cyraThreads} onSelect={onSelectThread} split={splitActive} />
+          )}
 
           {notebook && notebook.sourceFiles.length > 0 && (
             <div className="session__chips">
@@ -332,6 +432,46 @@ export function SessionView() {
           />
         )}
         </div>
+
+        {/* The knowledge map always gets the full panel — the Cyra pane steps
+            aside while the map is open and returns with the Aria pane. */}
+        {splitActive && activeThread.kind !== "map" && (
+          <div className="session__split">
+            {/* Until the thread list settles we can't know the default thread —
+                rendering the new-question view here would flash and refetch. */}
+            {cyraLoaded && (
+              <>
+                <div className="threadbar threadbar--split">
+                  <div className="threadbar__scroll">
+                    <CyraChips
+                      selected={{ threadId: splitThreadId }}
+                      threads={cyraThreads}
+                      onSelect={(threadId) => onSelectThread({ kind: "cyra", threadId })}
+                    />
+                  </div>
+                </div>
+                <CyraThreadView
+                  notebookId={id!}
+                  threadId={splitThreadId}
+                  draft={newDraft ?? ""}
+                  onDraftChange={setNewDraft}
+                  sourceMessageId={seedSourceMessageId}
+                  askDraft={askDraft}
+                  askSeq={askSeq}
+                  onAskDraftConsumed={() => setAskDraft(null)}
+                  autoFocusNew={false}
+                  onThreadCreated={(t) => {
+                    setNewDraft(null);
+                    setSeedSourceMessageId(null);
+                    void refreshCyraThreads();
+                    setSplitCyraId(t.id);
+                  }}
+                  onEdited={() => void refreshCyraThreads()}
+                />
+              </>
+            )}
+          </div>
+        )}
 
         {notebook && notebook.sourceFiles.length > 0 && (
           <div className={`session__sources-wrap${sourcesCollapsed ? " session__sources-wrap--closed" : ""}`}>

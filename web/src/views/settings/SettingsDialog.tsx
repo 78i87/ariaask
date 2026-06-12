@@ -7,6 +7,7 @@ import { Segmented } from "../../components/Segmented";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
+import { setSplitChat, useSplitChat } from "../../lib/splitChat";
 import { useTheme, type Palette } from "../../lib/theme";
 import type { AppSettings, ModelInfo } from "../../lib/types";
 import "./SettingsDialog.css";
@@ -28,6 +29,7 @@ interface SettingsDialogProps {
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const { state, logout } = useAuth();
   const { palette, setPalette } = useTheme();
+  const splitChat = useSplitChat();
   const snackbar = useSnackbar();
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -125,6 +127,24 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </section>
           )}
+
+          <section className="settings__section">
+            <h3 className="settings__heading label-large">Chat layout</h3>
+            <Segmented
+              ariaLabel="Chat layout"
+              options={[
+                { value: "tabs", label: "Tabbed" },
+                { value: "split", label: "Split" },
+              ]}
+              value={splitChat ? "split" : "tabs"}
+              onChange={(v) => setSplitChat(v === "split")}
+            />
+            <span className="settings__supporting body-medium">
+              {splitChat
+                ? "Aria on the left, Cyra on the right — “Ask Cyra” drops questions into the right-hand chat. On narrow windows the tabs come back."
+                : "One conversation at a time — switch between Aria, the map, and Cyra questions with the tabs."}
+            </span>
+          </section>
 
           {models.length === 0 ? (
             <section className="settings__section">

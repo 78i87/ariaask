@@ -47,7 +47,7 @@ export function HomeView() {
   return (
     <div className="home">
       <TopAppBar
-        headline={<span className="title-large">Aria</span>}
+        headline={<span className="title-large">AriaAsk</span>}
         trailing={
           <>
             <IconButton

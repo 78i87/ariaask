@@ -1,5 +1,8 @@
 .kmap-view {
   background: var(--md-sys-color-surface);
+  /* Size container: the sidebar hides on the COLUMN's width, not the
+     window's — in split chat the map gets roughly half the window. */
+  container-type: inline-size;
 }
 
 .kmap__body {
@@ -387,7 +390,7 @@
   text-decoration: underline;
 }
 
-@media (max-width: 900px) {
+@container (max-width: 900px) {
   .kmap__sidebar {
     display: none; /* the graph + detail strip carry the narrow layout */
   }

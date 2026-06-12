@@ -90,6 +90,17 @@ interface CyraThreadViewProps {
   onThreadCreated: (thread: CyraThreadSummary) => void;
   /** Called after a successful edit (the seed edit re-derives the thread title). */
   onEdited?: () => void;
+  /**
+   * Split-chat mode: each "Ask Cyra" click bumps askSeq; if askDraft is set,
+   * the question is merged into this thread's follow-up composer (appended,
+   * never replacing typed text) and consumed; either way the composer is
+   * focused. Tabbed mode never passes these.
+   */
+  askDraft?: string | null;
+  askSeq?: number;
+  onAskDraftConsumed?: () => void;
+  /** Off for the always-mounted split pane: mounting must not steal focus. */
+  autoFocusNew?: boolean;
 }
 
 /**
@@ -105,6 +116,10 @@ export function CyraThreadView({
   sourceMessageId,
   onThreadCreated,
   onEdited,
+  askDraft = null,
+  askSeq = 0,
+  onAskDraftConsumed,
+  autoFocusNew = true,
 }: CyraThreadViewProps) {
   const { messages, status, activity, error, send, editMessage, interrupt, retry } = useCyraThread(
     notebookId,
@@ -114,13 +129,36 @@ export function CyraThreadView({
   const [creating, setCreating] = useState<string | null>(null);
   /** Rewind-and-resend edit: the message being edited + its draft text. */
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  /** The follow-up composer's text — controlled so "Ask Cyra" can merge into it. */
+  const [followUp, setFollowUp] = useState("");
+  /** Composer focus requests (each "Ask Cyra" bumps it via the effect below). */
+  const [focusBump, setFocusBump] = useState(0);
   const snackbar = useSnackbar();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
   const isNew = threadId === null;
 
-  useEffect(() => setEditing(null), [threadId]);
+  useEffect(() => {
+    setEditing(null);
+    setFollowUp(""); // a follow-up typed for one conversation must not leak into another
+  }, [threadId]);
+
+  // An "Ask Cyra" click landed here: cancel any edit (a fresh ask wins the
+  // composer), append the question to whatever was already typed, and focus.
+  // For the new-question view the parent put the text in `draft` instead —
+  // only the focus applies.
+  const askSeqSeen = useRef(askSeq);
+  useEffect(() => {
+    if (askSeq === askSeqSeen.current) return;
+    askSeqSeen.current = askSeq;
+    setEditing(null);
+    if (!isNew && askDraft !== null) {
+      setFollowUp((prev) => (prev.trim() ? `${prev.trimEnd()}\n\n${askDraft}` : askDraft));
+      onAskDraftConsumed?.();
+    }
+    setFocusBump((k) => k + 1);
+  }, [askSeq, askDraft, isNew, onAskDraftConsumed]);
 
   const onCopy = (m: CyraChatMessage) => {
     navigator.clipboard.writeText(m.text).then(
@@ -233,7 +271,8 @@ export function CyraThreadView({
         onStop={interrupt}
         placeholder="Ask Cyra, your expert teacher…"
         accent="tertiary"
-        autoFocus={isNew}
+        autoFocus={isNew && autoFocusNew}
+        focusKey={focusBump}
         {...(isNew
           ? { value: draft, onChange: onDraftChange }
           : editing
@@ -242,7 +281,7 @@ export function CyraThreadView({
                 onChange: (t: string) => setEditing((p) => (p ? { ...p, text: t } : p)),
                 autoFocus: true,
               }
-            : {})}
+            : { value: followUp, onChange: setFollowUp })}
       />
     </div>
   );

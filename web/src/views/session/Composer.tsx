@@ -11,6 +11,8 @@ interface ComposerProps {
   /** Tertiary accent marks the Cyra (expert teacher) composer. */
   accent?: "tertiary";
   autoFocus?: boolean;
+  /** Imperative focus: focuses the textarea (caret at end) whenever this changes. */
+  focusKey?: number;
   /** Controlled mode (used by the new-Cyra-question draft); omit for internal state. */
   value?: string;
   onChange?: (text: string) => void;
@@ -24,6 +26,7 @@ export function Composer({
   placeholder = "Explain it to your student…",
   accent,
   autoFocus,
+  focusKey,
   value,
   onChange,
 }: ComposerProps) {
@@ -51,6 +54,18 @@ export function Composer({
     // mount-only: refocusing on later prop changes would steal the caret
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Explicit focus requests (e.g. "Ask Cyra" landing a question in this
+  // composer) — distinct from autoFocus so it can't fire on mount.
+  const lastFocusKey = useRef(focusKey);
+  useEffect(() => {
+    if (focusKey === undefined || focusKey === lastFocusKey.current) return;
+    lastFocusKey.current = focusKey;
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }, [focusKey]);
 
   const send = () => {
     const trimmed = text.trim();

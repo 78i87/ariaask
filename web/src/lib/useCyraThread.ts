@@ -20,21 +20,30 @@ export interface CyraThreadSession {
 const STREAMING_ID_PREFIX = "streaming:";
 
 /** The notebook's list of Cyra conversations, newest first. */
-export function useCyraThreads(notebookId: string): { threads: CyraThreadSummary[]; refresh: () => Promise<void> } {
+export function useCyraThreads(notebookId: string): {
+  threads: CyraThreadSummary[];
+  /** True once the first fetch settles — gates UI that picks a default thread. */
+  loaded: boolean;
+  refresh: () => Promise<void>;
+} {
   const [threads, setThreads] = useState<CyraThreadSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const res = await api.listCyraThreads(notebookId);
       setThreads([...res.threads].reverse());
     } catch {
       /* the bar just shows what it last knew */
+    } finally {
+      setLoaded(true);
     }
   }, [notebookId]);
   useEffect(() => {
     setThreads([]);
+    setLoaded(false);
     void refresh();
   }, [refresh]);
-  return { threads, refresh };
+  return { threads, loaded, refresh };
 }
 
 /**

@@ -2,43 +2,243 @@
   background: var(--md-sys-color-surface);
 }
 
-/* position:relative canvas — the edge overlay's coordinate space. */
-.kmap {
-  position: relative;
-  max-width: var(--aria-content-max);
-  margin: 0 auto;
-  padding: 16px 24px 32px;
+.kmap__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
-.kmap__edges {
+/* ---------- sidebar outline ---------- */
+
+.kmap__sidebar {
+  width: 248px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 12px 8px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kmap__side-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kmap__side-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  margin-bottom: 3px;
+  border-radius: var(--md-sys-shape-corner-small);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--aria-font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+}
+.kmap__side-area:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+.kmap__side-area.is-active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.kmap__side-area-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kmap__side-count {
+  opacity: 0.65;
+}
+
+.kmap__side-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: var(--md-sys-shape-corner-small);
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  text-align: left;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.kmap__side-node:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+.kmap__side-node.is-active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.kmap__side-node.is-dim {
+  opacity: 0.35;
+}
+.kmap__side-node .m3-icon {
+  color: var(--aria-status-misconception);
+  flex-shrink: 0;
+}
+
+.kmap__side-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the constellation ---------- */
+
+.kgraph {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.kgraph__svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none;
-  z-index: 2; /* above the cards; kept readable via opacity */
+  display: block;
+  cursor: grab;
+  touch-action: none; /* pointer events own pan/zoom */
+}
+.kgraph__svg:active {
+  cursor: grabbing;
 }
 
-.kmap__edge {
-  fill: none;
+.kgraph__edge {
   stroke: var(--md-sys-color-outline-variant);
-  stroke-width: 1.5;
-  opacity: 0.6;
+  stroke-width: 1;
+  opacity: 0.55;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.kgraph__edge--active {
+  stroke: var(--md-sys-color-primary);
+  stroke-width: 1.8;
+  opacity: 1;
+}
+.kgraph__edge--dim {
+  opacity: 0.08;
 }
 
-.kmap__edge--active {
+.kgraph__node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.kgraph__node--dim {
+  opacity: 0.16;
+}
+
+.kgraph__dot {
+  stroke: var(--md-sys-color-surface);
+  stroke-width: 1.5;
+}
+.kgraph__node--understood .kgraph__dot {
+  fill: var(--aria-status-understood);
+}
+.kgraph__node--partial .kgraph__dot {
+  fill: var(--aria-status-partial);
+}
+.kgraph__node--misconception .kgraph__dot {
+  fill: var(--aria-status-misconception);
+}
+.kgraph__node--unknown .kgraph__dot {
+  fill: var(--aria-status-unknown);
+}
+
+.kgraph__node--selected .kgraph__dot,
+.kgraph__node:focus-visible .kgraph__dot {
   stroke: var(--md-sys-color-primary);
   stroke-width: 2.5;
-  opacity: 1;
+}
+
+.kgraph__label {
+  font-family: var(--aria-font-sans);
+  font-size: 11px;
+  fill: var(--md-sys-color-on-surface-variant);
+  paint-order: stroke;
+  stroke: var(--md-sys-color-surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  user-select: none;
+}
+.kgraph__node--selected .kgraph__label,
+.kgraph__node:hover .kgraph__label {
+  fill: var(--md-sys-color-on-surface);
+}
+
+.kgraph__challenged-mark {
+  font-family: var(--aria-font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  fill: var(--aria-status-misconception);
+  pointer-events: none;
+  user-select: none;
+}
+
+.kgraph__area {
+  /* Explicit metrics: SVG text inherits no app typography class. */
+  font-family: var(--aria-font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  fill: var(--md-sys-color-on-surface-variant);
+  opacity: 0.4;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: grab;
+  user-select: none;
+}
+.kgraph__area:hover {
+  opacity: 0.75;
+}
+.kgraph__area--active {
+  fill: var(--md-sys-color-primary);
+  opacity: 0.85;
+}
+
+/* Progress + legend float over the graph. */
+.kgraph__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+/* Frosted pills so panned/zoomed graph content never overprints the text. */
+.kgraph__overlay .kmap__progress,
+.kgraph__overlay .kmap__legend {
+  background: color-mix(in srgb, var(--md-sys-color-surface) 82%, transparent);
+  backdrop-filter: blur(6px);
+  border-radius: var(--md-sys-shape-corner-medium);
+  padding: 6px 12px;
 }
 
 .kmap__header {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 8px 4px 16px;
+  padding: 14px 24px 0;
 }
 
 .kmap__progress {
@@ -55,14 +255,30 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 4px;
   color: var(--md-sys-color-on-surface-variant);
+  pointer-events: auto; /* the overlay itself is inert */
 }
 
+/* Clickable: each legend entry spotlights its status, sidebar-style. */
 .kmap__legend-item {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  border: none;
+  background: none;
+  padding: 4px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.kmap__legend-item:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+.kmap__legend-item.is-active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
 }
 
 .kmap__dot {
@@ -84,79 +300,8 @@
   background: var(--aria-status-unknown);
 }
 
-.kmap__groups {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 16px;
-}
+/* ---------- bottom detail strip ---------- */
 
-.kmap__group {
-  flex: 1 1 300px;
-  max-width: 440px;
-  background: var(--md-sys-color-surface-container-low);
-  border-radius: var(--md-sys-shape-corner-large-increased);
-  padding: 14px 16px 16px;
-}
-
-.kmap__group-title {
-  margin: 0 0 10px;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.kmap__nodes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.kmap__node {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: none;
-  padding: 6px 14px;
-  border-radius: var(--md-sys-shape-corner-full);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition: filter var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
-}
-.kmap__node:hover {
-  filter: brightness(1.06);
-}
-
-.kmap__node--understood {
-  background: var(--aria-status-understood-container);
-  color: var(--aria-status-on-understood-container);
-}
-.kmap__node--partial {
-  background: var(--aria-status-partial-container);
-  color: var(--aria-status-on-partial-container);
-}
-.kmap__node--misconception {
-  background: var(--aria-status-misconception-container);
-  color: var(--aria-status-on-misconception-container);
-}
-.kmap__node--unknown {
-  background: var(--aria-status-unknown-container);
-  color: var(--aria-status-on-unknown-container);
-}
-
-.kmap__node--selected.kmap__node--understood {
-  outline: 2px solid var(--aria-status-understood);
-}
-.kmap__node--selected.kmap__node--partial {
-  outline: 2px solid var(--aria-status-partial);
-}
-.kmap__node--selected.kmap__node--misconception {
-  outline: 2px solid var(--aria-status-misconception);
-}
-.kmap__node--selected.kmap__node--unknown {
-  outline: 2px solid var(--aria-status-unknown);
-}
-
-/* Bottom detail strip — outside the scroller, docked above the pane's edge. */
 .kmap__detail {
   flex-shrink: 0;
   max-width: var(--aria-content-max);
@@ -242,9 +387,15 @@
   text-decoration: underline;
 }
 
+@media (max-width: 900px) {
+  .kmap__sidebar {
+    display: none; /* the graph + detail strip carry the narrow layout */
+  }
+}
+
 @media (max-width: 720px) {
-  .kmap {
-    padding: 12px 16px 24px;
+  .kmap__header {
+    padding: 10px 16px 0;
   }
   .kmap__detail {
     width: calc(100% - 32px);

@@ -62,6 +62,12 @@ export function SessionView() {
   const [preview, setPreview] = useState<SourceFile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** Sources panel collapse — an app-level preference, remembered across notebooks. */
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(() => localStorage.getItem("aria-sources-collapsed") === "1");
+  const toggleSources = (collapsed: boolean) => {
+    setSourcesCollapsed(collapsed);
+    localStorage.setItem("aria-sources-collapsed", collapsed ? "1" : "0");
+  };
   const snackbar = useSnackbar();
 
   // ---- "Ask Cyra" expert threads ----
@@ -195,24 +201,34 @@ export function SessionView() {
               onClick={() => setAddOpen(true)}
             />
             <IconButton icon={theme === "dark" ? "light_mode" : "dark_mode"} ariaLabel="Toggle theme" onClick={toggle} />
+            {notebook && notebook.sourceFiles.length > 0 && (
+              <span className="session__panel-toggle-slot">
+                <IconButton
+                  icon={sourcesCollapsed ? "right_panel_open" : "right_panel_close"}
+                  ariaLabel={sourcesCollapsed ? "Show sources panel" : "Hide sources panel"}
+                  onClick={() => toggleSources(!sourcesCollapsed)}
+                />
+              </span>
+            )}
             <IconButton icon="settings" ariaLabel="Settings" onClick={() => setSettingsOpen(true)} />
           </>
         }
         scrollContainer={scrollerRef.current}
       />
 
-      <ThreadBar active={activeThread} threads={cyraThreads} onSelect={setActiveThread} />
-
-      {notebook && notebook.sourceFiles.length > 0 && (
-        <div className="session__chips">
-          {notebook.sourceFiles.map((f) => (
-            <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
-          ))}
-        </div>
-      )}
-
       <div className="session__body">
-        {activeThread.kind === "aria" ? (
+        <div className="session__content">
+          <ThreadBar active={activeThread} threads={cyraThreads} onSelect={setActiveThread} />
+
+          {notebook && notebook.sourceFiles.length > 0 && (
+            <div className="session__chips">
+              {notebook.sourceFiles.map((f) => (
+                <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
+              ))}
+            </div>
+          )}
+
+          {activeThread.kind === "aria" ? (
           <div className="session__main">
             <div className="session__scroller" ref={scrollerRef} onScroll={onScroll}>
               <div className="session__thread">
@@ -315,8 +331,13 @@ export function SessionView() {
             onEdited={() => void refreshCyraThreads()}
           />
         )}
+        </div>
 
-        {notebook && <SourcesPanel notebook={notebook} onOpenFile={setPreview} onDeleteFile={setDeleteTarget} />}
+        {notebook && notebook.sourceFiles.length > 0 && (
+          <div className={`session__sources-wrap${sourcesCollapsed ? " session__sources-wrap--closed" : ""}`}>
+            <SourcesPanel notebook={notebook} onOpenFile={setPreview} onDeleteFile={setDeleteTarget} />
+          </div>
+        )}
       </div>
 
       {preview && notebook && (

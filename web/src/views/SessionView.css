@@ -24,6 +24,7 @@
 .session__main {
   flex: 1;
   min-width: 0; /* required: lets the chat column shrink below content width */
+  min-height: 0; /* required inside the session__content column */
   display: flex;
   flex-direction: column;
 }
@@ -92,12 +93,61 @@
   cursor: pointer;
 }
 
+/* Left column inside the body: thread chips + the active pane. Keeping the
+   chip row in here (not above the body) lets the sources panel's top align
+   with the chips' top. */
+.session__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The app-bar slot for the sources toggle; collapses away with the panel. */
+.session__panel-toggle-slot {
+  display: contents;
+}
+
+/* Animates the sources panel in and out: the panel stays mounted at its
+   natural size while this clip shrinks, so the chat column grows smoothly
+   instead of jumping. visibility flips after the slide so nothing clipped
+   stays focusable. */
+.session__sources-wrap {
+  width: 324px; /* panel 300 + 24 right gutter */
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  overflow: hidden;
+  transition:
+    width var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized),
+    opacity var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized),
+    visibility 0s linear;
+}
+.session__sources-wrap--closed {
+  width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    width var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized),
+    opacity var(--md-sys-motion-duration-medium) var(--md-sys-motion-easing-emphasized),
+    visibility 0s linear var(--md-sys-motion-duration-medium);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session__sources-wrap,
+  .session__sources-wrap--closed {
+    transition: none;
+  }
+}
+
 /* Not enough room for chat column + panel: fall back to the chips row. */
 @media (max-width: 1140px) {
   .session__chips {
     display: flex;
   }
-  .session__sources {
+  .session__sources-wrap,
+  .session__panel-toggle-slot {
     display: none;
   }
 }

@@ -237,21 +237,51 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
   }, [selected, hovered, focusArea, byId, areas]);
 
   /** Node, area, and status spotlights are mutually exclusive. */
+  const clearSelectedNode = () => {
+    const id = selected;
+    setSelected(null);
+    if (!id) return;
+
+    // Closing the detail strip can leave focus on the SVG group, which Chrome
+    // paints as a rectangular box around the node label.
+    nodeEls.current.get(id)?.blur();
+    requestAnimationFrame(() => nodeEls.current.get(id)?.blur());
+  };
   const selectNode = (id: string) => {
     setFocusArea(null);
     setFocusStatus(null);
-    setSelected((prev) => (prev === id ? null : id));
+    if (selected === id) {
+      clearSelectedNode();
+    } else {
+      setSelected(id);
+    }
   };
   const selectArea = (key: string) => {
-    setSelected(null);
+    clearSelectedNode();
     setFocusStatus(null);
     setFocusArea((prev) => (prev === key ? null : key));
   };
   const selectStatus = (s: BeliefStatus | "challenged") => {
-    setSelected(null);
+    clearSelectedNode();
     setFocusArea(null);
     setFocusStatus((prev) => (prev === s ? null : s));
   };
+
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
+      e.preventDefault();
+      // Own Esc while a detail strip is open so the parent map-close shortcut
+      // does not also switch back to chat on the same keypress.
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      clearSelectedNode();
+    };
+
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [selected]);
 
   /** Pan (keeping zoom) so a sidebar-picked node is actually on screen. */
   const ensureVisible = (id: string) => {
@@ -806,7 +836,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 challenged, unconvinced
               </span>
             )}
-            <IconButton icon="close" ariaLabel="Close details" onClick={() => setSelected(null)} />
+            <IconButton icon="close" ariaLabel="Close details" onClick={clearSelectedNode} />
           </div>
           <p className="body-medium kmap__detail-belief">{sel.belief}</p>
           {sel.note && <p className="body-medium kmap__detail-note">Last change: {sel.note}</p>}

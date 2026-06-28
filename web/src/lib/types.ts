@@ -119,39 +119,38 @@ export interface SettingsResponse {
   models: ModelInfo[];
 }
 
-// Mirrors server/src/domain/learning.ts. Server-driven: arrives on
-// GET /api/notebooks/:id (`learningState`) and via the "learning-state" SSE
+// Mirrors server/src/domain/knowledge.ts. Server-driven: arrives on
+// GET /api/notebooks/:id (`knowledgeState`) and via the "knowledge-state" SSE
 // event; rendered by the knowledge map pane (KnowledgeMapView).
-export type BeliefStatus = "unknown" | "misconception" | "partial" | "understood";
+export type KnowledgeStatus = "unknown" | "misconception" | "partial" | "understood";
 
-export interface Belief {
+export interface KnowledgeBelief {
   id: string;
   concept: string;
-  status: BeliefStatus;
+  status: KnowledgeStatus;
   belief: string;
-  challenged?: true;
   note?: string;
   /** Cluster label for the knowledge map; absent on pre-feature beliefs ("General"). */
   area?: string;
   /** Ids of prerequisite beliefs — the map's edges. */
   deps?: string[];
-  /** When the evaluator last touched this belief. */
+  /** When the evaluator last touched this concept. */
   touchedAt?: string;
 }
 
-export interface BeliefChange {
+export interface KnowledgeChange {
   beliefId: string;
   concept: string;
-  from: BeliefStatus;
-  to: BeliefStatus;
+  from: KnowledgeStatus;
+  to: KnowledgeStatus;
   belief?: string;
   justification: string;
 }
 
-export interface LearningState {
+export interface KnowledgeState {
   version: 1;
-  beliefs: Belief[];
-  lastChanges: BeliefChange[];
+  beliefs: KnowledgeBelief[];
+  lastChanges: KnowledgeChange[];
   lastEvaluatedMessageId: string | null;
   updatedAt: string;
 }

@@ -188,15 +188,6 @@
   fill: var(--md-sys-color-on-surface);
 }
 
-.kgraph__challenged-mark {
-  font-family: var(--aria-font-sans);
-  font-size: 12px;
-  font-weight: 700;
-  fill: var(--aria-status-misconception);
-  pointer-events: none;
-  user-select: none;
-}
-
 .kgraph__area {
   /* Explicit metrics: SVG text inherits no app typography class. */
   font-family: var(--aria-font-sans);
@@ -352,13 +343,6 @@
 .kmap__status-chip--unknown {
   background: var(--aria-status-unknown-container);
   color: var(--aria-status-on-unknown-container);
-}
-
-.kmap__challenged {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--aria-status-misconception);
 }
 
 .kmap__detail-belief {

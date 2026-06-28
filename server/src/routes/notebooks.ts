@@ -182,13 +182,21 @@ export function notebookRoutes(
       await store.save(nb);
     }
 
+    const sessionState = sessions.getState(nb.id);
+    const intakePending = nb.intake?.status === "pending" && nb.messages.length === 0;
+    const knowledgeState = config.learningStateDisabled
+      ? null
+      : sessionState.turnActive || intakePending
+        ? (nb.userKnowledgeState ?? null)
+        : await sessions.ensureKnowledgeState(nb.id);
+
     res.json({
       notebook: toSummary(nb),
       messages: nb.messages,
-      turnActive: sessions.getState(nb.id).turnActive,
+      turnActive: sessionState.turnActive,
       // Gated so the kill switch hides the map UI too — otherwise a previously
       // generated state would ship frozen, with the evaluator off.
-      learningState: config.learningStateDisabled ? null : (nb.learningState ?? null),
+      knowledgeState,
       intake: nb.intake
         ? { status: nb.intake.status, questions: composeIntakeQuestions(nb), research: nb.intake.research }
         : null,
@@ -311,6 +319,9 @@ export function notebookRoutes(
       await store.save(nb);
       // An explicit upload is also the user's signal to retry a failed embedder.
       void ensureRagIndex(store, settings, nb, { retryNow: true });
+      void sessions.rebuildKnowledgeStateForNotebook(nb.id).catch((err) =>
+        console.error(`[aria] user knowledge rebuild after upload failed for notebook ${nb.id}:`, err),
+      );
 
       res.status(201).json({ notebook: toSummary(nb), added: sourceFiles, warnings });
     },
@@ -341,6 +352,9 @@ export function notebookRoutes(
     await store.save(nb);
     // Retrieval already filters deleted sources by storedName; the rebuild compacts.
     void ensureRagIndex(store, settings, nb, { retryNow: true });
+    void sessions.rebuildKnowledgeStateForNotebook(nb.id).catch((err) =>
+      console.error(`[aria] user knowledge rebuild after source delete failed for notebook ${nb.id}:`, err),
+    );
 
     res.json({ notebook: toSummary(nb) });
   });

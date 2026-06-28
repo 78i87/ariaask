@@ -1,14 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
-import type { Belief, BeliefStatus, LearningState } from "../../lib/types";
+import type { KnowledgeBelief, KnowledgeState, KnowledgeStatus } from "../../lib/types";
 import "./KnowledgeMapView.css";
 
-const STATUS_LABEL: Record<BeliefStatus, string> = {
+const STATUS_LABEL: Record<KnowledgeStatus, string> = {
   understood: "Understood",
   partial: "Partial",
   misconception: "Misconception",
-  unknown: "Not yet taught",
+  unknown: "No evidence yet",
 };
 
 // ---------- force simulation (hand-rolled; ≤40 nodes, n² is nothing) ----------
@@ -116,7 +115,7 @@ function tick(sim: Sim): void {
   sim.alpha *= ALPHA_DECAY;
 }
 
-function areaKey(b: Belief): string {
+function areaKey(b: KnowledgeBelief): string {
   const a = b.area?.trim().toLowerCase();
   return a && a !== "general" ? a : "";
 }
@@ -132,7 +131,7 @@ function seedPosition(areaIdx: number, areaCount: number, memberIdx: number): { 
 // ---------- component ----------
 
 interface KnowledgeMapViewProps {
-  state: LearningState;
+  state: KnowledgeState;
 }
 
 /**
@@ -151,8 +150,8 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   /** Area key spotlighted from the sidebar or a caption click; exclusive with node selection. */
   const [focusArea, setFocusArea] = useState<string | null>(null);
-  /** Status spotlighted from the legend ("challenged" = the challenged flag, not a status). */
-  const [focusStatus, setFocusStatus] = useState<BeliefStatus | "challenged" | null>(null);
+  /** Status spotlighted from the legend. */
+  const [focusStatus, setFocusStatus] = useState<KnowledgeStatus | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const nodeEls = useRef(new Map<string, SVGGElement>());
@@ -188,7 +187,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
 
   /** Sidebar outline: areas with their member beliefs, "General" last. */
   const grouped = useMemo(() => {
-    const m = new Map<string, { key: string; label: string; beliefs: Belief[] }>();
+    const m = new Map<string, { key: string; label: string; beliefs: KnowledgeBelief[] }>();
     for (const b of state.beliefs) {
       const key = areaKey(b);
       let g = m.get(key);
@@ -222,7 +221,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
   }, [state.beliefs, edgeList]);
 
   const counts = useMemo(() => {
-    const c: Record<BeliefStatus, number> = { understood: 0, partial: 0, misconception: 0, unknown: 0 };
+    const c: Record<KnowledgeStatus, number> = { understood: 0, partial: 0, misconception: 0, unknown: 0 };
     for (const b of state.beliefs) c[b.status]++;
     return c;
   }, [state.beliefs]);
@@ -261,7 +260,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     setFocusStatus(null);
     setFocusArea((prev) => (prev === key ? null : key));
   };
-  const selectStatus = (s: BeliefStatus | "challenged") => {
+  const selectStatus = (s: KnowledgeStatus) => {
     clearSelectedNode();
     setFocusArea(null);
     setFocusStatus((prev) => (prev === s ? null : s));
@@ -646,18 +645,14 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     if (focusId) return neighbors.get(focusId) ?? null;
     if (focusArea !== null) return new Set(state.beliefs.filter((b) => areaKey(b) === focusArea).map((b) => b.id));
     if (focusStatus !== null) {
-      return new Set(
-        state.beliefs
-          .filter((b) => (focusStatus === "challenged" ? b.challenged === true : b.status === focusStatus))
-          .map((b) => b.id),
-      );
+      return new Set(state.beliefs.filter((b) => b.status === focusStatus).map((b) => b.id));
     }
     return null;
   }, [focusId, focusArea, focusStatus, neighbors, state.beliefs]);
   const dimmed = (id: string) => (focusSet ? !focusSet.has(id) : false);
 
   const sel = selected ? byId.get(selected) : undefined;
-  const selDeps = sel?.deps?.map((id) => byId.get(id)).filter((b): b is Belief => !!b) ?? [];
+  const selDeps = sel?.deps?.map((id) => byId.get(id)).filter((b): b is KnowledgeBelief => !!b) ?? [];
   const selLeads = sel ? state.beliefs.filter((b) => b.deps?.includes(sel.id)) : [];
 
   return (
@@ -690,7 +685,6 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 >
                   <span className={`kmap__dot kmap__dot--${b.status}`} />
                   <span className="kmap__side-label">{b.concept}</span>
-                  {b.challenged && <Icon name="priority_high" size={12} />}
                 </button>
               ))}
             </div>
@@ -711,7 +705,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             fitView();
           }}
           role="application"
-          aria-label="Knowledge map graph"
+          aria-label="Your knowledge map graph"
         >
           <g>
             {edgeList.map((e) => {
@@ -768,15 +762,10 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 }}
                 role="button"
                 tabIndex={0}
-                aria-label={`${b.concept}, ${STATUS_LABEL[b.status].toLowerCase()}${b.challenged ? ", challenged" : ""}`}
+                aria-label={`${b.concept}, ${STATUS_LABEL[b.status].toLowerCase()}`}
                 aria-pressed={selected === b.id}
               >
                 <circle className="kgraph__dot" r={6 + Math.min(Math.sqrt(degree.get(b.id) ?? 0) * 2.6, 8)} />
-                {b.challenged && (
-                  <text className="kgraph__challenged-mark" textAnchor="middle" dy="-10">
-                    !
-                  </text>
-                )}
                 <text className="kgraph__label" textAnchor="middle" dy={6 + Math.min(Math.sqrt(degree.get(b.id) ?? 0) * 2.6, 8) + 14}>
                   {b.concept}
                 </text>
@@ -792,7 +781,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             </span>
             <span className="body-medium kmap__progress-sub">
               {counts.partial} partial · {counts.misconception} misconception{counts.misconception === 1 ? "" : "s"} ·{" "}
-              {counts.unknown} not yet taught
+              {counts.unknown} no evidence yet
             </span>
           </div>
           <div className="kmap__legend label-medium">
@@ -808,15 +797,6 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 {STATUS_LABEL[s]}
               </button>
             ))}
-            <button
-              type="button"
-              className={`kmap__legend-item${focusStatus === "challenged" ? " is-active" : ""}`}
-              onClick={() => selectStatus("challenged")}
-              aria-pressed={focusStatus === "challenged"}
-            >
-              <Icon name="priority_high" size={14} />
-              Challenged
-            </button>
           </div>
         </div>
         </div>
@@ -830,16 +810,10 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             <span className={`kmap__status-chip kmap__status-chip--${sel.status} label-medium`}>
               {STATUS_LABEL[sel.status]}
             </span>
-            {sel.challenged && (
-              <span className="kmap__challenged label-medium">
-                <Icon name="priority_high" size={14} />
-                challenged, unconvinced
-              </span>
-            )}
             <IconButton icon="close" ariaLabel="Close details" onClick={clearSelectedNode} />
           </div>
           <p className="body-medium kmap__detail-belief">{sel.belief}</p>
-          {sel.note && <p className="body-medium kmap__detail-note">Last change: {sel.note}</p>}
+          {sel.note && <p className="body-medium kmap__detail-note">Last evidence: {sel.note}</p>}
           {(selDeps.length > 0 || selLeads.length > 0) && (
             <div className="kmap__detail-links body-medium">
               {selDeps.length > 0 && (

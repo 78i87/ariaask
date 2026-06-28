@@ -44,7 +44,7 @@ export function SessionView() {
     activity,
     error,
     intake,
-    learningState,
+    knowledgeState,
     notice,
     discovering,
     ragBuilding,
@@ -290,7 +290,7 @@ export function SessionView() {
           <>
             <Chip
               icon="hub"
-              label="Knowledge map"
+              label="Your knowledge map"
               selected={mapOpen}
               onClick={toggleMap}
               className="session__map-chip"
@@ -409,14 +409,14 @@ export function SessionView() {
             />
           </div>
         ) : activeThread.kind === "map" ? (
-          learningState ? (
-            <KnowledgeMapView state={learningState} />
+          knowledgeState ? (
+            <KnowledgeMapView state={knowledgeState} />
           ) : (
             <div className="session__main">
               <EmptyState
                 icon="hub"
                 headline="No map yet"
-                body="Aria's map of the topic appears here once she has her starting picture — right after the session gets going."
+                body="Your knowledge map appears here once Aria has a concept graph for the session."
               />
             </div>
           )

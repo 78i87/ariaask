@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "../lib/atomic.js";
 import type { LearningState } from "./learning.js";
+import type { KnowledgeState } from "./knowledge.js";
 import type { Intake } from "./intake.js";
 
 export interface SourceFile {
@@ -125,6 +126,12 @@ export interface Notebook {
    * self-invented-misconceptions behavior).
    */
   learningState?: LearningState;
+  /**
+   * The user's visible knowledge map (see knowledge.ts) — what the system infers
+   * the human teacher knows from teacher messages only. Kept separate from
+   * learningState, which remains Aria's private student-belief inventory.
+   */
+  userKnowledgeState?: KnowledgeState;
   /**
    * Pre-session setup form state (see intake.ts). Absent on pre-feature
    * notebooks and when ARIA_NO_INTAKE=1 — absence means auto-kickoff as before.

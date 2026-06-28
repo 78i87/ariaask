@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, LearningState, Notebook, SessionStateEvent, SourceFile } from "./types";
+import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionStateEvent, SourceFile } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
 export type SessionActivity = "reading-sources" | "thinking" | "researching" | null;
@@ -15,8 +15,8 @@ export interface TeachingSession {
   error: string | null;
   /** The setup form; null on pre-feature notebooks. */
   intake: Intake | null;
-  /** The student's belief inventory (knowledge map data); null when absent or disabled. */
-  learningState: LearningState | null;
+  /** The user's inferred knowledge map; null when absent or disabled. */
+  knowledgeState: KnowledgeState | null;
   /** One-shot non-fatal message from the server (e.g. research failed). */
   notice: string | null;
   /** True while Aria is finding and downloading online sources. */
@@ -47,7 +47,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const [activity, setActivity] = useState<SessionActivity>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
-  const [learningState, setLearningState] = useState<LearningState | null>(null);
+  const [knowledgeState, setKnowledgeState] = useState<KnowledgeState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [ragBuilding, setRagBuilding] = useState(false);
@@ -101,7 +101,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     const res = await api.getNotebook(notebookId);
     setNotebook(res.notebook);
     setIntake(res.intake);
-    setLearningState(res.learningState);
+    setKnowledgeState(res.knowledgeState);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(
@@ -259,14 +259,14 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       setNotice(data.message);
     });
 
-    // Belief inventory updates (evaluator pass, bootstrap, rewind re-derivation).
+    // User-knowledge map updates (teacher-message evaluator, bootstrap, rewind re-derivation).
     // Safe mid-stream: touches no delta buffers, just swaps the map's data. A
     // drop spanning evaluator-broadcast → student-reply-persist can leave the
     // map one pass stale until the next teacher message forces a refetch via
     // messageCount drift — acceptable for a passive visualization.
-    es.addEventListener("learning-state", (e) => {
-      const data = JSON.parse((e as MessageEvent).data) as { state: LearningState };
-      setLearningState(data.state);
+    es.addEventListener("knowledge-state", (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as { state: KnowledgeState };
+      setKnowledgeState(data.state);
     });
 
     es.addEventListener("message", (e) => {
@@ -443,7 +443,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     activity,
     error,
     intake,
-    learningState,
+    knowledgeState,
     notice,
     discovering,
     ragBuilding,

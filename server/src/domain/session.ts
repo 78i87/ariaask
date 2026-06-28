@@ -27,6 +27,19 @@ import {
   parseInitialState,
   type LearningState,
 } from "./learning.js";
+import {
+  applyKnowledgeEvaluatorOutput,
+  buildKnowledgeEvaluatorPrompt,
+  buildKnowledgeGraphPromptSources,
+  buildKnowledgeGraphPromptTopic,
+  buildKnowledgeTranscriptPrompt,
+  emptyKnowledgeState,
+  knowledgeFromConceptState,
+  mergeKnowledgeEvidence,
+  parseKnowledgeState,
+  resetKnowledgeEvidence,
+  type KnowledgeState,
+} from "./knowledge.js";
 import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntakeQuestions } from "./intake.js";
 import {
   buildRagQuery,
@@ -191,6 +204,7 @@ export class SessionManager {
 
     let teacherMessageId: string | null = null;
     let stateBeforeEval: LearningState | undefined;
+    let knowledgeBeforeEval: KnowledgeState | undefined;
     try {
       if (kickoff && !nb.learningState && !this.config.learningStateDisabled) {
         // The belief inventory must exist before ensureThread pins the
@@ -199,11 +213,18 @@ export class SessionManager {
         // state the kickoff falls back to self-invented misconceptions.
         await this.generateInitialState(nb);
         input = buildKickoffPrompt(nb);
-        // The page is usually open and attached while the kickoff runs — push
-        // the fresh inventory so the knowledge map appears right away. Without
-        // this, GET only delivers it on the next full page load and the first
-        // SSE broadcast doesn't happen until the first evaluator pass.
-        if (nb.learningState) this.broadcast(session, "learning-state", { state: nb.learningState });
+        if (nb.learningState) {
+          nb.userKnowledgeState = knowledgeFromConceptState(nb.learningState);
+          await this.store.save(nb);
+          this.broadcast(session, "knowledge-state", { state: nb.userKnowledgeState });
+        } else {
+          await this.rebuildKnowledgeState(nb, session, { forceGraphGeneration: true });
+        }
+      }
+      if (kickoff && nb.learningState && !nb.userKnowledgeState && !this.config.learningStateDisabled) {
+        nb.userKnowledgeState = knowledgeFromConceptState(nb.learningState);
+        await this.store.save(nb);
+        this.broadcast(session, "knowledge-state", { state: nb.userKnowledgeState });
       }
 
       await this.ensureThread(nb, session);
@@ -263,6 +284,16 @@ export class SessionManager {
       // replaces the object, never mutates it) so a failed turn/start that
       // rolls the teacher message back can withdraw the credit too — the map
       // must not show beliefs earned by a message that no longer exists.
+      if (!kickoff && !this.config.learningStateDisabled) {
+        if (!nb.userKnowledgeState) {
+          await this.rebuildKnowledgeState(nb, session, {
+            excludeMessageId: retryTeacher?.id ?? teacherMessageId!,
+            forceGraphGeneration: true,
+          });
+        }
+        knowledgeBeforeEval = nb.userKnowledgeState;
+        await this.runKnowledgeEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!);
+      }
       stateBeforeEval = nb.learningState;
       if (!kickoff && !this.config.learningStateDisabled) {
         await this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!);
@@ -330,7 +361,10 @@ export class SessionManager {
           nb.messages.splice(idx, 1);
           if (stateBeforeEval && nb.learningState !== stateBeforeEval) {
             nb.learningState = stateBeforeEval;
-            this.broadcast(session, "learning-state", { state: stateBeforeEval });
+          }
+          if (knowledgeBeforeEval && nb.userKnowledgeState !== knowledgeBeforeEval) {
+            nb.userKnowledgeState = knowledgeBeforeEval;
+            this.broadcast(session, "knowledge-state", { state: knowledgeBeforeEval });
           }
           await this.store.save(nb).catch(() => {});
         }
@@ -396,7 +430,6 @@ export class SessionManager {
             const state = parseInitialState(raw);
             if (state) {
               nb.learningState = state;
-              this.broadcast(session, "learning-state", { state });
             }
           } catch (err) {
             // Fail-open: the old inventory may credit deleted turns, but a
@@ -404,6 +437,9 @@ export class SessionManager {
             console.error(`[aria] belief re-derivation after edit failed for notebook ${nb.id}; keeping prior state:`, err);
           }
         }
+      }
+      if (!this.config.learningStateDisabled) {
+        await this.rebuildKnowledgeState(nb, session, { forceGraphGeneration: true });
       }
       await this.store.save(nb);
       if (session.cancelRequested) {
@@ -502,6 +538,9 @@ export class SessionManager {
         fresh.pendingNewSources = [...pending];
         await this.store.save(fresh);
         void ensureRagIndex(this.store, this.settings, fresh, { retryNow: true });
+        void this.rebuildKnowledgeState(fresh, session, { forceGraphGeneration: true }).catch((err) =>
+          console.error(`[aria] user knowledge rebuild after discovery failed for notebook ${notebookId}:`, err),
+        );
       }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -790,6 +829,95 @@ export class SessionManager {
     return parts.join("\n\n") || `The subject being taught: ${nb.title}.`;
   }
 
+  async ensureKnowledgeState(notebookId: string): Promise<KnowledgeState | null> {
+    if (this.config.learningStateDisabled) return null;
+    const nb = this.store.get(notebookId);
+    if (!nb) return null;
+    if (nb.userKnowledgeState) return nb.userKnowledgeState;
+    return this.rebuildKnowledgeState(nb, this.sessions.get(notebookId), { forceGraphGeneration: true });
+  }
+
+  async rebuildKnowledgeStateForNotebook(notebookId: string): Promise<KnowledgeState | null> {
+    if (this.config.learningStateDisabled) return null;
+    const nb = this.store.get(notebookId);
+    if (!nb) return null;
+    return this.rebuildKnowledgeState(nb, this.sessions.get(notebookId), { forceGraphGeneration: true });
+  }
+
+  private async buildKnowledgeGraph(nb: Notebook, forceGeneration = false): Promise<KnowledgeState> {
+    if (!forceGeneration && nb.learningState) return knowledgeFromConceptState(nb.learningState);
+
+    const s = this.settings.get();
+    const raw =
+      nb.sourceFiles.length > 0
+        ? await this.client.runOneShotTurn({
+            prompt: buildKnowledgeGraphPromptSources(
+              sourcesManifest(nb.sourceFiles),
+              nb.type === "topic" ? (nb.topic ?? nb.title) : null,
+            ),
+            model: s.model,
+            effort: "medium",
+            cwd: this.store.sourcesDir(nb.id),
+            timeoutMs: 120_000,
+          })
+        : await this.client.runOneShotTurn({
+            prompt: buildKnowledgeGraphPromptTopic(nb.topic ?? nb.title),
+            model: s.model,
+            effort: "medium",
+            timeoutMs: 120_000,
+          });
+    const parsed = parseKnowledgeState(raw);
+    if (!parsed) throw new Error("knowledge graph generation produced unusable state");
+    return resetKnowledgeEvidence(parsed);
+  }
+
+  private async rebuildKnowledgeState(
+    nb: Notebook,
+    session?: NotebookSession,
+    opts: { excludeMessageId?: string; forceGraphGeneration?: boolean } = {},
+  ): Promise<KnowledgeState> {
+    let base: KnowledgeState;
+    try {
+      base = await this.buildKnowledgeGraph(nb, opts.forceGraphGeneration);
+    } catch (err) {
+      console.error(`[aria] user knowledge graph generation failed for notebook ${nb.id}; falling back:`, err);
+      base = nb.learningState
+        ? knowledgeFromConceptState(nb.learningState)
+        : nb.userKnowledgeState
+          ? resetKnowledgeEvidence(nb.userKnowledgeState)
+          : emptyKnowledgeState(nb.topic ?? nb.title);
+    }
+
+    const messages = nb.messages.filter((m) => m.id !== opts.excludeMessageId);
+    const lastTeacherId = [...messages].reverse().find((m) => m.role === "teacher")?.id ?? null;
+    let state = base;
+    if (messages.some((m) => m.role === "teacher")) {
+      try {
+        const s = this.settings.get();
+        const raw = await this.client.runOneShotTurn({
+          prompt: buildKnowledgeTranscriptPrompt(base, messages),
+          model: s.model,
+          effort: this.config.evaluatorEffort,
+          timeoutMs: 120_000,
+        });
+        const evaluated = parseKnowledgeState(raw);
+        if (evaluated) {
+          state = mergeKnowledgeEvidence(base, evaluated);
+          state.lastEvaluatedMessageId = lastTeacherId;
+        } else {
+          console.error(`[aria] user knowledge transcript rebuild for notebook ${nb.id} was unusable; resetting evidence`);
+        }
+      } catch (err) {
+        console.error(`[aria] user knowledge transcript rebuild failed for notebook ${nb.id}; resetting evidence:`, err);
+      }
+    }
+
+    nb.userKnowledgeState = state;
+    await this.store.save(nb);
+    if (session) this.broadcast(session, "knowledge-state", { state });
+    return state;
+  }
+
   /**
    * Generate the kickoff belief inventory via a one-shot side call. Fail-open:
    * on any failure the notebook stays stateless and the whole learning-state
@@ -833,6 +961,41 @@ export class SessionManager {
     }
   }
 
+  private async runKnowledgeEvaluator(
+    nb: Notebook,
+    session: NotebookSession,
+    teacherText: string,
+    teacherMessageId: string,
+  ): Promise<void> {
+    try {
+      if (!nb.userKnowledgeState) return;
+      const state = nb.userKnowledgeState;
+      if (state.lastEvaluatedMessageId === teacherMessageId) return;
+      const s = this.settings.get();
+      this.broadcast(session, "activity", { kind: "thinking" });
+      const context = nb.messages.filter((m) => m.id !== teacherMessageId).slice(-6);
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildKnowledgeEvaluatorPrompt(state, teacherText, context),
+        model: s.model,
+        effort: this.config.evaluatorEffort,
+        timeoutMs: 60_000,
+      });
+      const next = applyKnowledgeEvaluatorOutput(raw, state, teacherText);
+      if (!next) {
+        state.lastChanges = [];
+        console.error(`[aria] user knowledge evaluator output for notebook ${nb.id} was unparseable; map unchanged`);
+        return;
+      }
+      next.lastEvaluatedMessageId = teacherMessageId;
+      nb.userKnowledgeState = next;
+      await this.store.save(nb);
+      this.broadcast(session, "knowledge-state", { state: next });
+    } catch (err) {
+      if (nb.userKnowledgeState) nb.userKnowledgeState.lastChanges = [];
+      console.error(`[aria] user knowledge evaluator failed for notebook ${nb.id}; map unchanged:`, err);
+    }
+  }
+
   /**
    * The gatekeeper between the teacher's message and the student's beliefs:
    * a strict one-shot evaluator decides which belief changes the message
@@ -866,7 +1029,6 @@ export class SessionManager {
         if (!state) return;
         nb.learningState = state;
         await this.store.save(nb);
-        this.broadcast(session, "learning-state", { state });
       }
 
       const state = nb.learningState;
@@ -888,7 +1050,6 @@ export class SessionManager {
       next.lastEvaluatedMessageId = teacherMessageId;
       nb.learningState = next;
       await this.store.save(nb);
-      this.broadcast(session, "learning-state", { state: next });
     } catch (err) {
       // Stale realizations from an earlier turn must not be replayed as new.
       if (nb.learningState) nb.learningState.lastChanges = [];

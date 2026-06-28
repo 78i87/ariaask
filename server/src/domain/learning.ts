@@ -30,9 +30,9 @@ export interface Belief {
   challenged?: true;
   /** One-line justification from the change that last touched this belief. */
   note?: string;
-  /** Cluster label for the knowledge map, e.g. "Kinetics". Absent on pre-feature beliefs. */
+  /** Cluster label for the private belief inventory graph, e.g. "Kinetics". Absent on pre-feature beliefs. */
   area?: string;
-  /** Ids of prerequisite beliefs in this inventory — the knowledge map's edges. */
+  /** Ids of prerequisite beliefs in this private inventory graph. */
   deps?: string[];
   /** When the evaluator last touched this belief; recency signal for working-set selection. */
   touchedAt?: string;
@@ -520,7 +520,7 @@ function resolveDeps(rawDeps: string[], selfId: string, idMap: Map<string, strin
 }
 
 /** Parse a generated initial (or bootstrapped) inventory. */
-export function parseInitialState(raw: string): LearningState | null {
+export function parseInitialState(raw: string, opts: { requireMisconception?: boolean } = {}): LearningState | null {
   const obj = extractJsonObject(raw);
   if (!obj || !Array.isArray(obj.beliefs)) return null;
   const used = new Set<string>();
@@ -545,9 +545,12 @@ export function parseInitialState(raw: string): LearningState | null {
     if (deps) p.belief.deps = deps;
   }
   const beliefs = parsed.map((p) => p.belief);
-  // A state without misconceptions defeats the feature's purpose — treat it
-  // as a failed generation rather than running with it.
-  if (beliefs.length < 3 || !beliefs.some((b) => b.status === "misconception")) return null;
+  // Student belief inventories need misconceptions to serve the reverse-tutor
+  // persona. Other inventory-shaped states can opt out and use the parser only
+  // for the concept graph/status wire format.
+  if (beliefs.length < 3 || ((opts.requireMisconception ?? true) && !beliefs.some((b) => b.status === "misconception"))) {
+    return null;
+  }
   return {
     version: 1,
     beliefs,

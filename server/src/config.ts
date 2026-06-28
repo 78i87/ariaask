@@ -15,7 +15,7 @@ export const config = {
   kickoffEffortOverride: process.env.ARIA_KICKOFF_EFFORT ?? null,
   /** Reasoning effort for the belief-state side calls (initial state from a topic, per-turn evaluator). */
   evaluatorEffort: process.env.ARIA_EVALUATOR_EFFORT ?? "low",
-  /** Kill switch for the learning-state layer: no state generation, no evaluator, no belief blocks. */
+  /** Kill switch for the learning/knowledge-state layers: no state generation, evaluator, map, or belief blocks. */
   learningStateDisabled: process.env.ARIA_NO_LEARNING_STATE === "1",
   /** Reasoning effort for the online source discovery turn. */
   researchEffort: process.env.ARIA_RESEARCH_EFFORT ?? "medium",

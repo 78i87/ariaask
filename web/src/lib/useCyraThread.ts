@@ -198,7 +198,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       if (role === "cyra") {
         deltaBuffers.current.clear();
         setMessages((prev) => {
-          const withoutStreaming = prev.filter((m) => m.status !== "streaming");
+          const withoutStreaming = prev.filter((m) => m.status !== "streaming" && !m.id.startsWith(STREAMING_ID_PREFIX));
           return [
             ...withoutStreaming,
             { id: data.id, role: "cyra", text: data.text, status: "complete", interrupted: data.interrupted },
@@ -219,7 +219,11 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       setMessages((prev) =>
         prev
           .filter((m) => !(m.status === "streaming" && !m.text.trim()))
-          .map((m) => (m.status === "streaming" ? { ...m, status: "complete" as const, interrupted: true } : m)),
+          .map((m) =>
+            m.status === "streaming"
+              ? { ...m, status: "complete" as const, interrupted: data.status !== "completed" }
+              : m,
+          ),
       );
       if (data.status === "failed") {
         setStatus("error");

@@ -284,7 +284,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       if (role === "student") {
         deltaBuffers.current.clear();
         setMessages((prev) => {
-          const withoutStreaming = prev.filter((m) => m.status !== "streaming");
+          const withoutStreaming = prev.filter((m) => m.status !== "streaming" && !m.id.startsWith(STREAMING_ID_PREFIX));
           return [
             ...withoutStreaming,
             { id: data.id, role: "student", text: data.text, status: "complete", interrupted: data.interrupted },
@@ -303,12 +303,17 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       deltaBuffers.current.clear();
       setKickoffRunning(false);
       setActivity(null);
-      // Reconcile any leftover streaming bubble: drop it if empty (no real text
-      // ever arrived), otherwise mark it complete-but-interrupted.
+      // Reconcile leftover streaming bubbles. On completed turns the persisted
+      // message event may arrive just after this event; keep the client-only
+      // bubble complete-but-not-interrupted until that message replaces it.
       setMessages((prev) =>
         prev
           .filter((m) => !(m.status === "streaming" && !m.text.trim()))
-          .map((m) => (m.status === "streaming" ? { ...m, status: "complete" as const, interrupted: true } : m)),
+          .map((m) =>
+            m.status === "streaming"
+              ? { ...m, status: "complete" as const, interrupted: data.status !== "completed" }
+              : m,
+          ),
       );
       if (data.status === "failed") {
         setStatus("error");

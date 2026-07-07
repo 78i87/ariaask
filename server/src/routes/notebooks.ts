@@ -17,6 +17,7 @@ import { config } from "../config.js";
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_MESSAGE_CHARS = 100_000;
 
 interface UploadRequest extends Request {
   notebookId?: string;
@@ -184,11 +185,13 @@ export function notebookRoutes(
 
     const sessionState = sessions.getState(nb.id);
     const intakePending = nb.intake?.status === "pending" && nb.messages.length === 0;
+    // Never blocks: if no map exists yet, this starts a background build and
+    // clients receive the result over the `knowledge-state` SSE event.
     const knowledgeState = config.learningStateDisabled
       ? null
       : sessionState.turnActive || intakePending
         ? (nb.userKnowledgeState ?? null)
-        : await sessions.ensureKnowledgeState(nb.id);
+        : sessions.ensureKnowledgeState(nb.id);
 
     res.json({
       notebook: toSummary(nb),
@@ -397,6 +400,16 @@ export function notebookRoutes(
   const validClientMessageId = (v: unknown): string | undefined =>
     typeof v === "string" && v.length > 0 && v.length <= 64 ? v : undefined;
 
+  const checkMessageLength = (text: unknown): void => {
+    if (typeof text === "string" && text.length > MAX_MESSAGE_CHARS) {
+      throw new HttpError(
+        400,
+        "message_too_long",
+        `Messages are limited to ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters; upload long material as a source instead.`,
+      );
+    }
+  };
+
   router.get("/:id/cyra", (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -408,6 +421,7 @@ export function notebookRoutes(
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string; sourceMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.startTurn(nb.id, {
       cyraThreadId: null,
       text: body.text,
@@ -431,6 +445,7 @@ export function notebookRoutes(
 
   router.post("/:id/cyra/:tid/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.startTurn(req.params.id, {
       cyraThreadId: req.params.tid,
       text: body.text,
@@ -443,6 +458,7 @@ export function notebookRoutes(
   // Rewind-and-resend within a Cyra conversation.
   router.post("/:id/cyra/:tid/messages/:mid/edit", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.editTurn(
       req.params.id,
       req.params.tid,
@@ -466,6 +482,7 @@ export function notebookRoutes(
 
   router.post("/:id/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await sessions.startTurn(
       req.params.id,
       body.text,
@@ -478,6 +495,7 @@ export function notebookRoutes(
   // Rewind-and-resend: replaces the message and deletes everything after it.
   router.post("/:id/messages/:mid/edit", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await sessions.editTurn(
       req.params.id,
       req.params.mid,

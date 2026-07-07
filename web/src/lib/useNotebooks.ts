@@ -1,35 +1,56 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { evictNotebookCache } from "./useTeachingSession";
 import type { Notebook } from "./types";
 
+let cachedNotebooks: Notebook[] | null = null;
+
+export function clearNotebooksListCache(): void {
+  cachedNotebooks = null;
+}
+
 export function useNotebooks() {
-  const [notebooks, setNotebooks] = useState<Notebook[] | null>(null);
+  const [notebooks, setNotebooks] = useState<Notebook[] | null>(cachedNotebooks);
   const [error, setError] = useState<string | null>(null);
+
+  const commit = useCallback((next: Notebook[]) => {
+    cachedNotebooks = next;
+    setNotebooks(next);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
       const res = await api.listNotebooks();
-      setNotebooks(res.notebooks);
+      commit(res.notebooks);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load notebooks");
+      if (cachedNotebooks === null) {
+        setError(err instanceof Error ? err.message : "Failed to load notebooks");
+      }
     }
-  }, []);
+  }, [commit]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const create = useCallback(async (form: FormData) => {
-    const res = await api.createNotebook(form);
-    setNotebooks((prev) => (prev ? [res.notebook, ...prev] : [res.notebook]));
-    return res;
-  }, []);
+  const create = useCallback(
+    async (form: FormData) => {
+      const res = await api.createNotebook(form);
+      commit([res.notebook, ...(cachedNotebooks ?? [])]);
+      return res;
+    },
+    [commit],
+  );
 
-  const remove = useCallback(async (id: string) => {
-    setNotebooks((prev) => prev?.filter((n) => n.id !== id) ?? null);
-    await api.deleteNotebook(id);
-  }, []);
+  const remove = useCallback(
+    async (id: string) => {
+      commit((cachedNotebooks ?? []).filter((n) => n.id !== id));
+      evictNotebookCache(id);
+      await api.deleteNotebook(id);
+    },
+    [commit],
+  );
 
   return { notebooks, error, refresh, create, remove };
 }

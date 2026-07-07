@@ -453,19 +453,73 @@ function slugify(s: string, used: Set<string>): string {
   return id;
 }
 
-/** Tolerates code fences and surrounding prose: parses the first {...last} span. */
+/**
+ * Tolerates code fences, leaked reasoning blocks, and brace-containing prose
+ * around (or between) JSON objects. Tries fenced blocks first, then balanced
+ * top-level {...} spans from last to first — the final object in a completion
+ * is usually the answer; earlier ones tend to be drafts.
+ */
 export function extractJsonObject(raw: string): Record<string, unknown> | null {
+  const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  const candidates: string[] = [];
+  for (const match of cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) {
+    if (match[1]) candidates.push(match[1]);
+  }
+  candidates.push(cleaned);
+  for (const candidate of candidates) {
+    const spans = balancedObjectSpans(candidate);
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const parsed = tryParseObject(spans[i]!);
+      if (parsed) return parsed;
+    }
+  }
+  // Legacy fallback: the first-{...last-} span of the raw completion.
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
+  return tryParseObject(raw.slice(start, end + 1));
+}
+
+function tryParseObject(text: string): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
+    const parsed: unknown = JSON.parse(text);
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+/** Top-level {...} spans, string- and escape-aware inside objects. */
+function balancedObjectSpans(text: string): string[] {
+  const spans: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth > 0) inString = true;
+    } else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        spans.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return spans;
 }
 
 /**

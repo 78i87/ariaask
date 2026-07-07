@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api";
+import { clearNotebooksListCache } from "./useNotebooks";
+import { clearNotebookCache } from "./useTeachingSession";
 import type { AuthStatus } from "./types";
 
 type AuthState =
@@ -32,6 +34,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const applyStatus = useCallback((status: AuthStatus) => {
+    if (!status.authenticated) {
+      clearNotebooksListCache();
+      clearNotebookCache();
+    }
     setState(
       status.authenticated
         ? { phase: "signed-in", email: status.email, planType: status.planType }
@@ -88,6 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await api.logout();
+    clearNotebooksListCache();
+    clearNotebookCache();
     setState({ phase: "signed-out" });
   }, []);
 

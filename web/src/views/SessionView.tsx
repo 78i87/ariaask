@@ -155,6 +155,9 @@ export function SessionView() {
   const onEditMessage = useCallback((m: ChatMessage) => {
     setEditing({ id: m.id, text: m.text });
   }, []);
+  useEffect(() => {
+    if (editing && !messages.some((m) => m.id === editing.id)) setEditing(null);
+  }, [messages, editing]);
 
   const confirmDeleteSource = async () => {
     const target = deleteTarget;
@@ -388,7 +391,7 @@ export function SessionView() {
             )}
             <Composer
               key={editing ? `edit:${editing.id}` : "normal"}
-              disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
+              disabled={status === "loading" || kickoffRunning || intakePending || messages.length === 0}
               busy={busy}
               onSend={(text) => {
                 if (editing) {

@@ -174,7 +174,8 @@ export class CyraSessionManager {
         // Optimistic persist + SSE echo, rolled back on failure — mirrors
         // session.ts:207-219. For a created thread this single save also
         // persists the thread record itself.
-        userMessageId = opts.clientMessageId ?? randomUUID();
+        const idTaken = opts.clientMessageId ? ct.messages.some((m) => m.id === opts.clientMessageId) : false;
+        userMessageId = opts.clientMessageId && !idTaken ? opts.clientMessageId : randomUUID();
         ct.messages.push({ id: userMessageId, role: "user", text, turnId: null, createdAt: new Date().toISOString() });
         ct.updatedAt = new Date().toISOString();
         await this.store.save(nb);
@@ -211,8 +212,12 @@ export class CyraSessionManager {
       session.state = "idle";
       this.clearWatchdog(session);
       // Mirrors session.ts:283-300, plus whole-thread rollback on first-send
-      // failure so no empty Cyra threads exist.
-      if (userMessageId) {
+      // failure so no empty Cyra threads exist. A deliberate Stop on an
+      // existing thread keeps the question; a created thread still rolls back
+      // whole because first-send atomicity wins.
+      const cancelled = err instanceof HttpError && err.code === "turn_cancelled";
+      const rollbackMessage = userMessageId !== null && (!cancelled || created);
+      if (rollbackMessage && userMessageId) {
         const idx = ct.messages.findIndex((m) => m.id === userMessageId);
         if (idx >= 0) ct.messages.splice(idx, 1);
       }
@@ -220,7 +225,7 @@ export class CyraSessionManager {
         nb.cyraThreads = (nb.cyraThreads ?? []).filter((t) => t.id !== ct.id);
         this.disposeSession(ct.id);
       }
-      if (userMessageId || created) await this.store.save(nb).catch(() => {});
+      if (rollbackMessage || created) await this.store.save(nb).catch(() => {});
       if (err instanceof HttpError) throw err;
       const message = err instanceof Error ? err.message : "Failed to start the turn";
       this.broadcast(session, "error", { message, retryable: true });
@@ -255,12 +260,16 @@ export class CyraSessionManager {
     // Occupy the state machine while truncating — a concurrent send must not
     // land on a half-rewound thread.
     session.state = "starting";
+    session.cancelRequested = false;
     try {
       ct.messages = ct.messages.slice(0, idx);
       ct.threadId = null; // Cyra must not remember the deleted turns
       if (idx === 0) ct.title = deriveCyraTitle(text.trim());
       ct.updatedAt = new Date().toISOString();
       await this.store.save(nb);
+      if (session.cancelRequested) {
+        throw new HttpError(409, "turn_cancelled", "Stopped before Cyra replied.");
+      }
     } finally {
       // startTurn re-checks idle synchronously right after this — no interleave.
       session.state = "idle";

@@ -178,11 +178,27 @@ Output exactly this JSON shape:
 ${KNOWLEDGE_SCHEMA}`;
 }
 
-export function buildKnowledgeTranscriptPrompt(base: KnowledgeState, messages: ChatMessage[]): string {
-  const transcript = messages
-    .map((m) => `${m.role === "teacher" ? "Teacher" : "Aria student"}: ${m.text}`)
-    .join("\n\n");
-  return `You are rebuilding a knowledge map for the HUMAN TEACHER in a reverse-tutoring app.
+const TRANSCRIPT_PROMPT_CHAR_BUDGET = 60_000;
+
+export function buildKnowledgeTranscriptPrompt(
+  base: KnowledgeState,
+  messages: ChatMessage[],
+): { prompt: string; truncated: boolean } {
+  // Long sessions are exactly the ones with the most evidence at stake. Keep
+  // the prompt bounded so a rebuild one-shot cannot fail on context length.
+  // `truncated` tells the caller that "unknown" may mean "not in the window".
+  const lines = messages.map((m) => `${m.role === "teacher" ? "Teacher" : "Aria student"}: ${m.text}`);
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    total += line.length + 2;
+    if (kept.length > 0 && total > TRANSCRIPT_PROMPT_CHAR_BUDGET) break;
+    kept.unshift(line);
+  }
+  const omitted = lines.length - kept.length;
+  const transcript = (omitted > 0 ? `[${omitted} earlier messages omitted]\n\n` : "") + kept.join("\n\n");
+  const prompt = `You are rebuilding a knowledge map for the HUMAN TEACHER in a reverse-tutoring app.
 You are an analyst, not the student. Output JSON only - no prose, no code fences.
 
 The current concept graph. Keep these ids and concepts unless you add a genuinely missing
@@ -207,6 +223,31 @@ Infer what the human teacher has shown they know:
 
 Output the complete updated map in exactly this JSON shape:
 ${KNOWLEDGE_SCHEMA}`;
+  return { prompt, truncated: omitted > 0 };
+}
+
+/**
+ * After a truncated transcript rebuild, restore prior evidence for beliefs the
+ * model left "unknown": it never saw the omitted early messages, so "unknown"
+ * from it means "no evidence in the window", not "no evidence ever".
+ */
+export function carryForwardKnowledgeEvidence(prior: KnowledgeState, next: KnowledgeState): KnowledgeState {
+  const priorById = new Map(prior.beliefs.map((b) => [b.id, b]));
+  return {
+    ...next,
+    beliefs: next.beliefs.map((b) => {
+      if (b.status !== "unknown") return b;
+      const prev = priorById.get(b.id);
+      if (!prev || prev.status === "unknown") return b;
+      return stripPrivateFields({
+        ...b,
+        status: prev.status,
+        belief: prev.belief,
+        note: prev.note,
+        touchedAt: prev.touchedAt,
+      });
+    }),
+  };
 }
 
 export function buildKnowledgeEvaluatorPrompt(state: KnowledgeState, teacherMessage: string, recentMessages: ChatMessage[]): string {

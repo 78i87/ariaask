@@ -385,10 +385,23 @@ message follows.]
  * or student-style change). Callers pass the transcript EXCLUDING the message
  * being sent as the live prompt, so it can't appear twice.
  */
+const CATCH_UP_CHAR_BUDGET = 48_000;
+
 export function buildCatchUpBlock(messages: ChatMessage[]): string {
-  const recent = messages.slice(-30);
-  const lines = recent.map((m) => `${m.role === "teacher" ? "Teacher" : "You"}: ${m.text}`);
-  return `[SYSTEM: your earlier conversation with the teacher was lost. Here is the transcript so far — re-internalize it; everything you learned in it stays learned. Do not mention this interruption. The teacher's next message follows after the transcript.]
+  const kept: ChatMessage[] = [];
+  let total = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    total += message.text.length + 12;
+    if (kept.length > 0 && total > CATCH_UP_CHAR_BUDGET) break;
+    kept.unshift(message);
+  }
+  const truncated = kept.length < messages.length;
+  const lines = kept.map((m) => `${m.role === "teacher" ? "Teacher" : "You"}: ${m.text}`);
+  const header = truncated
+    ? `[SYSTEM: your earlier conversation with the teacher was lost. Here is the most recent part of the transcript — the earliest ${messages.length - kept.length} messages are omitted, but everything you learned in them stays learned. Do not mention this interruption. The teacher's next message follows after the transcript.]`
+    : `[SYSTEM: your earlier conversation with the teacher was lost. Here is the transcript so far — re-internalize it; everything you learned in it stays learned. Do not mention this interruption. The teacher's next message follows after the transcript.]`;
+  return `${header}
 
 ${lines.join("\n\n")}
 

@@ -39,6 +39,29 @@ export interface TeachingSession {
 
 const STREAMING_ID_PREFIX = "streaming:";
 
+type NotebookSnapshot = Awaited<ReturnType<typeof api.getNotebook>>;
+
+const notebookCache = new Map<string, NotebookSnapshot>();
+const NOTEBOOK_CACHE_MAX = 8;
+
+export function evictNotebookCache(notebookId: string): void {
+  notebookCache.delete(notebookId);
+}
+
+export function clearNotebookCache(): void {
+  notebookCache.clear();
+}
+
+function toCompleteMessages(snap: NotebookSnapshot): ChatMessage[] {
+  return snap.messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    status: "complete" as const,
+    interrupted: m.interrupted,
+  }));
+}
+
 export function useTeachingSession(notebookId: string): TeachingSession {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -99,20 +122,18 @@ export function useTeachingSession(notebookId: string): TeachingSession {
 
   const loadNotebook = useCallback(async () => {
     const res = await api.getNotebook(notebookId);
+    notebookCache.delete(notebookId);
+    notebookCache.set(notebookId, res);
+    if (notebookCache.size > NOTEBOOK_CACHE_MAX) {
+      const oldest = notebookCache.keys().next().value;
+      if (oldest !== undefined) notebookCache.delete(oldest);
+    }
     setNotebook(res.notebook);
     setIntake(res.intake);
     setKnowledgeState(res.knowledgeState);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
-    setMessages(
-      res.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        status: "complete" as const,
-        interrupted: m.interrupted,
-      })),
-    );
+    setMessages(toCompleteMessages(res));
     return res;
   }, [notebookId]);
 
@@ -125,6 +146,16 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         return true;
       } catch (err) {
         if (err instanceof ApiError && err.code === "turn_active") return true; // already running; SSE will drive UI
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setKickoffRunning(false);
+          if (persistedCount.current === 0) {
+            setStatus("error");
+            setError("Stopped while Aria was getting ready.");
+            return false;
+          }
+          setStatus("idle");
+          return true;
+        }
         setStatus("error");
         setError(err instanceof Error ? err.message : "Failed to reach the student");
         return false;
@@ -142,6 +173,13 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     setDiscovering(false);
     setRagBuilding(false);
     setRagBuildFailed(false);
+    const snap = notebookCache.get(notebookId);
+    setNotebook(snap?.notebook ?? null);
+    setIntake(snap?.intake ?? null);
+    setKnowledgeState(snap?.knowledgeState ?? null);
+    persistedCount.current = snap?.messages.length ?? 0;
+    knownIds.current = new Set(snap?.messages.map((m) => m.id) ?? []);
+    setMessages(snap ? toCompleteMessages(snap) : []);
     void (async () => {
       try {
         const res = await loadNotebook();
@@ -170,7 +208,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     return () => {
       cancelled = true;
     };
-  }, [loadNotebook, startTurn]);
+  }, [notebookId, loadNotebook, startTurn]);
 
   // SSE channel.
   useEffect(() => {
@@ -318,6 +356,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       if (data.status === "failed") {
         setStatus("error");
         setError(data.error?.message ?? "The student lost their train of thought.");
+      } else if (data.status === "interrupted" && persistedCount.current === 0) {
+        setStatus("error");
+        setError("Stopped while Aria was getting ready.");
       } else {
         setStatus("idle");
       }
@@ -382,6 +423,11 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         // Unlike send(), a rejected edit (incl. turn_active) leaves this tab's
         // optimistic truncation wrong — resync the real transcript, then surface it.
         void loadNotebook().catch(() => {});
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setStatus("idle");
+          setNotice("Stopped before the student replied.");
+          return;
+        }
         setStatus("error");
         setError(err instanceof Error ? err.message : "Couldn't edit the message");
       });

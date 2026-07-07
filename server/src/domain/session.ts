@@ -18,6 +18,22 @@ import {
   sourcesManifest,
 } from "./persona.js";
 import {
+  buildInterviewCatchUpBlock,
+  buildInterviewerInstructions,
+  buildInterviewKickoffPrompt,
+  buildInterviewNewSourcesNote,
+  buildInterviewRemovedSourcesNote,
+  interviewMaterialsManifest,
+  renderInterviewerRetrievalBlock,
+} from "./interviewer.js";
+import {
+  buildCoverageEvaluatorPrompt,
+  buildCoverageGraphPrompt,
+  buildCoverageTranscriptPrompt,
+  emptyCoverageState,
+  resetCoverageEvidence,
+} from "./coverage.js";
+import {
   applyEvaluatorOutput,
   buildBeliefBlock,
   buildBootstrapPrompt,
@@ -45,6 +61,7 @@ import { buildIntakeQuestionsPrompt, buildIntakeTuning, intakeFocus, parseIntake
 import {
   buildRagQuery,
   buildRetrievalBlock,
+  buildRetrievalBlockWith,
   didLastRagBuildFail,
   ensureRagIndex,
   isRagIndexBuilding,
@@ -52,11 +69,12 @@ import {
 } from "./rag.js";
 import {
   buildDiscoverPrompt,
+  buildInterviewDiscoverPrompt,
   downloadDiscoveredSources,
   parseDiscoveredSources,
   type DiscoverFailure,
 } from "./discover.js";
-import { toSummary } from "./store.js";
+import { isInterview, toSummary } from "./store.js";
 import type {
   AgentMessageDeltaNotification,
   ErrorNotification,
@@ -172,7 +190,13 @@ export class SessionManager {
     const nb = this.store.get(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
-    if (session.state !== "idle") throw new HttpError(409, "turn_active", "The student is already responding.");
+    if (session.state !== "idle") {
+      throw new HttpError(
+        409,
+        "turn_active",
+        isInterview(nb) ? "The interviewer is already responding." : "The student is already responding.",
+      );
+    }
 
     // A kickoff before the setup form is submitted would lock the intake out
     // forever (its answers could no longer apply) — stale clients and direct
@@ -194,10 +218,16 @@ export class SessionManager {
       // silently discard what the user typed. The UI keeps the composer
       // disabled until the opener exists; reject stale clients that don't.
       if (text && text.trim()) {
-        throw new HttpError(409, "kickoff_pending", "Aria hasn't introduced herself yet — retry the kickoff first.");
+        throw new HttpError(
+          409,
+          "kickoff_pending",
+          isInterview(nb)
+            ? "The interviewer hasn't opened the session yet — retry the kickoff first."
+            : "Aria hasn't introduced herself yet — retry the kickoff first.",
+        );
       }
       kickoff = true;
-      input = buildKickoffPrompt(nb);
+      input = isInterview(nb) ? buildInterviewKickoffPrompt(nb) : buildKickoffPrompt(nb);
     } else if (retry) {
       retryTeacher = [...nb.messages].reverse().find((m) => m.role === "teacher") ?? null;
       if (!retryTeacher) throw new HttpError(400, "nothing_to_retry");
@@ -221,7 +251,14 @@ export class SessionManager {
     let stateBeforeEval: LearningState | undefined;
     let knowledgeBeforeEval: KnowledgeState | undefined;
     try {
-      if (kickoff && !nb.learningState && !this.config.learningStateDisabled) {
+      if (kickoff && isInterview(nb)) {
+        // No belief inventory in interview mode — the interviewer is not a
+        // calibrated student. Only the coverage map is generated, so it exists
+        // when the opener lands. Fail-open inside rebuildKnowledgeState.
+        if (!nb.userKnowledgeState && !this.config.learningStateDisabled) {
+          await this.rebuildKnowledgeState(nb, session, { forceGraphGeneration: true, signal: startSignal });
+        }
+      } else if (kickoff && !nb.learningState && !this.config.learningStateDisabled) {
         // The belief inventory must exist before ensureThread pins the
         // persona (the belief contract is part of developerInstructions) and
         // before the kickoff prompt is built from it. Fail-open: without a
@@ -250,7 +287,7 @@ export class SessionManager {
       let catchUp = "";
       if (session.catchUpNeeded) {
         const history = retryTeacher ? nb.messages.filter((m) => m.id !== retryTeacher.id) : nb.messages;
-        catchUp = buildCatchUpBlock(history);
+        catchUp = isInterview(nb) ? buildInterviewCatchUpBlock(history) : buildCatchUpBlock(history);
       }
 
       // Reading added/removed after the thread was created is delivered as
@@ -264,11 +301,17 @@ export class SessionManager {
       if (kickoff) {
         for (const name of nb.pendingNewSources ?? []) addedCovered.add(name);
       } else {
-        if (removedCovered.size > 0) sourcesNote += buildRemovedSourcesNote([...removedCovered]);
+        if (removedCovered.size > 0) {
+          sourcesNote += isInterview(nb)
+            ? buildInterviewRemovedSourcesNote([...removedCovered])
+            : buildRemovedSourcesNote([...removedCovered]);
+        }
         if (nb.pendingNewSources && nb.pendingNewSources.length > 0) {
           const pending = new Set(nb.pendingNewSources);
           const newFiles = nb.sourceFiles.filter((f) => pending.has(f.storedName));
-          if (newFiles.length > 0) sourcesNote += buildNewSourcesNote(newFiles);
+          if (newFiles.length > 0) {
+            sourcesNote += isInterview(nb) ? buildInterviewNewSourcesNote(newFiles) : buildNewSourcesNote(newFiles);
+          }
           // Pending names without a matching source file are stale — drop those too.
           for (const name of pending) {
             if (newFiles.some((f) => f.storedName === name) || !nb.sourceFiles.some((f) => f.storedName === name)) {
@@ -310,13 +353,19 @@ export class SessionManager {
           });
         }
         knowledgeBeforeEval = nb.userKnowledgeState;
+        // Interview notebooks never run the belief evaluator — even its
+        // bootstrap path would mint a learningState the mode must not have.
         await Promise.all([
           this.runKnowledgeEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!),
-          this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!),
+          ...(isInterview(nb) ? [] : [this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!)]),
         ]);
       }
       if (session.cancelRequested) {
-        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+        throw new HttpError(
+          409,
+          "turn_cancelled",
+          isInterview(nb) ? "Stopped before the interviewer replied." : "Stopped before the student replied.",
+        );
       }
 
       const s = this.settings.get();
@@ -334,12 +383,28 @@ export class SessionManager {
       // understands. Never on kickoff — its prompt directs a full agentic
       // read instead. Bounded internally; "" on any failure.
       const ragBlock = !kickoff
-        ? await buildRetrievalBlock(this.store, this.settings, nb, buildRagQuery(nb.messages, input))
+        ? isInterview(nb)
+          ? // Interviewer framing, and no pending-source exclusion: the
+            // interviewer has no "one honest read" fiction to protect (same
+            // rationale as Cyra).
+            await buildRetrievalBlockWith(
+              this.store,
+              this.settings,
+              nb,
+              buildRagQuery(nb.messages, input),
+              renderInterviewerRetrievalBlock,
+              { excludePendingSources: false },
+            )
+          : await buildRetrievalBlock(this.store, this.settings, nb, buildRagQuery(nb.messages, input))
         : "";
       if (session.cancelRequested) {
         // Retrieval is the only await between the pre-evaluator cancel check
         // and turn/start — don't let a Stop pressed during it be lost.
-        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+        throw new HttpError(
+          409,
+          "turn_cancelled",
+          isInterview(nb) ? "Stopped before the interviewer replied." : "Stopped before the student replied.",
+        );
       }
       const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + beliefBlock + ragBlock + input, s.model, effort);
       // Only clear once the turn actually started — a failed turn/start must
@@ -417,7 +482,13 @@ export class SessionManager {
     const nb = this.store.get(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
-    if (session.state !== "idle") throw new HttpError(409, "turn_active", "The student is already responding.");
+    if (session.state !== "idle") {
+      throw new HttpError(
+        409,
+        "turn_active",
+        isInterview(nb) ? "The interviewer is already responding." : "The student is already responding.",
+      );
+    }
     if (!text || !text.trim()) throw new HttpError(400, "empty_message");
     const idx = nb.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) throw new HttpError(404, "message_not_found");
@@ -474,7 +545,11 @@ export class SessionManager {
       }
       await this.store.save(nb);
       if (session.cancelRequested) {
-        throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
+        throw new HttpError(
+          409,
+          "turn_cancelled",
+          isInterview(nb) ? "Stopped before the interviewer replied." : "Stopped before the student replied.",
+        );
       }
     } finally {
       // startTurn re-checks idle synchronously right after this — no interleave.
@@ -529,15 +604,25 @@ export class SessionManager {
         .map((f) => f.originUrl)
         .filter((u): u is string => typeof u === "string" && u.length > 0);
       const raw = await this.client.runOneShotTurn({
-        prompt: buildDiscoverPrompt({
-          topic: initial.topic ?? initial.title,
-          focus: initial.intake?.answers ? intakeFocus(initial.intake.answers) : null,
-          note: null,
-          query,
-          manifest: initial.sourceFiles.length > 0 ? sourcesManifest(initial.sourceFiles) : null,
-          knownUrls,
-          max: this.config.discoverMax,
-        }),
+        prompt: isInterview(initial)
+          ? buildInterviewDiscoverPrompt({
+              role: initial.interview?.role ?? initial.title,
+              company: initial.interview?.company ?? null,
+              note: null,
+              query,
+              manifest: initial.sourceFiles.length > 0 ? interviewMaterialsManifest(initial.sourceFiles) : null,
+              knownUrls,
+              max: this.config.discoverMax,
+            })
+          : buildDiscoverPrompt({
+              topic: initial.topic ?? initial.title,
+              focus: initial.intake?.answers ? intakeFocus(initial.intake.answers) : null,
+              note: null,
+              query,
+              manifest: initial.sourceFiles.length > 0 ? sourcesManifest(initial.sourceFiles) : null,
+              knownUrls,
+              max: this.config.discoverMax,
+            }),
         model: s.model,
         effort: this.config.researchEffort,
         timeoutMs: 120_000,
@@ -781,15 +866,25 @@ export class SessionManager {
     const answers = nb.intake!.answers!;
     try {
       const raw = await this.client.runOneShotTurn({
-        prompt: buildDiscoverPrompt({
-          topic: nb.topic ?? nb.title,
-          focus: intakeFocus(answers),
-          note: answers.researchNote,
-          query: null,
-          manifest: nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null,
-          knownUrls: [],
-          max: this.config.discoverMax,
-        }),
+        prompt: isInterview(nb)
+          ? buildInterviewDiscoverPrompt({
+              role: nb.interview?.role ?? nb.title,
+              company: nb.interview?.company ?? null,
+              note: answers.researchNote,
+              query: null,
+              manifest: nb.sourceFiles.length > 0 ? interviewMaterialsManifest(nb.sourceFiles) : null,
+              knownUrls: [],
+              max: this.config.discoverMax,
+            })
+          : buildDiscoverPrompt({
+              topic: nb.topic ?? nb.title,
+              focus: intakeFocus(answers),
+              note: answers.researchNote,
+              query: null,
+              manifest: nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null,
+              knownUrls: [],
+              max: this.config.discoverMax,
+            }),
         model: s.model,
         effort: this.config.researchEffort,
         timeoutMs: 120_000,
@@ -820,7 +915,11 @@ export class SessionManager {
       }
       // A deliberate Stop needs no apology toast.
       if (!aborted) {
-        this.broadcast(session, "notice", { message: "Aria couldn't finish her online reading — starting without it." });
+        this.broadcast(session, "notice", {
+          message: isInterview(nb)
+            ? "Cyra couldn't finish the background research — starting without it."
+            : "Aria couldn't finish her online reading — starting without it.",
+        });
       }
     }
   }
@@ -890,6 +989,26 @@ export class SessionManager {
   }
 
   private async buildKnowledgeGraph(nb: Notebook, forceGeneration = false, signal?: AbortSignal): Promise<KnowledgeState> {
+    if (isInterview(nb)) {
+      // Interview coverage map: competencies from role + CV/JD/research.
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildCoverageGraphPrompt({
+          role: nb.interview?.role ?? nb.title,
+          company: nb.interview?.company ?? null,
+          manifest: nb.sourceFiles.length > 0 ? interviewMaterialsManifest(nb.sourceFiles) : null,
+          format: nb.intake?.answers?.interviewFormat ?? null,
+          round: nb.intake?.answers?.interviewRound ?? null,
+        }),
+        model: this.settings.get().model,
+        effort: "medium",
+        ...(nb.sourceFiles.length > 0 ? { cwd: this.store.sourcesDir(nb.id) } : {}),
+        timeoutMs: 120_000,
+        signal,
+      });
+      const parsed = parseKnowledgeState(raw);
+      if (!parsed) throw new Error("coverage graph generation produced unusable state");
+      return resetCoverageEvidence(parsed);
+    }
     if (!forceGeneration && nb.learningState) return knowledgeFromConceptState(nb.learningState);
 
     const s = this.settings.get();
@@ -933,18 +1052,24 @@ export class SessionManager {
       base = await this.buildKnowledgeGraph(nb, opts.forceGraphGeneration, opts.signal);
     } catch (err) {
       console.error(`[aria] user knowledge graph generation failed for notebook ${nb.id}; falling back:`, err);
-      base = nb.learningState
-        ? knowledgeFromConceptState(nb.learningState)
-        : nb.userKnowledgeState
-          ? resetKnowledgeEvidence(nb.userKnowledgeState)
-          : emptyKnowledgeState(nb.topic ?? nb.title);
+      base = isInterview(nb)
+        ? nb.userKnowledgeState
+          ? resetCoverageEvidence(nb.userKnowledgeState)
+          : emptyCoverageState(nb.interview?.role ?? nb.title)
+        : nb.learningState
+          ? knowledgeFromConceptState(nb.learningState)
+          : nb.userKnowledgeState
+            ? resetKnowledgeEvidence(nb.userKnowledgeState)
+            : emptyKnowledgeState(nb.topic ?? nb.title);
     }
 
     const messages = nb.messages.filter((m) => m.id !== opts.excludeMessageId);
     const lastTeacherId = [...messages].reverse().find((m) => m.role === "teacher")?.id ?? null;
     let state = base;
     if (messages.some((m) => m.role === "teacher")) {
-      const { prompt, truncated } = buildKnowledgeTranscriptPrompt(base, messages);
+      const { prompt, truncated } = isInterview(nb)
+        ? buildCoverageTranscriptPrompt(base, messages)
+        : buildKnowledgeTranscriptPrompt(base, messages);
       let evaluated: KnowledgeState | null = null;
       try {
         const s = this.settings.get();
@@ -1036,7 +1161,9 @@ export class SessionManager {
       this.broadcast(session, "activity", { kind: "thinking" });
       const context = nb.messages.filter((m) => m.id !== teacherMessageId).slice(-6);
       const raw = await this.client.runOneShotTurn({
-        prompt: buildKnowledgeEvaluatorPrompt(state, teacherText, context),
+        prompt: isInterview(nb)
+          ? buildCoverageEvaluatorPrompt(state, teacherText, context)
+          : buildKnowledgeEvaluatorPrompt(state, teacherText, context),
         model: s.model,
         effort: this.config.evaluatorEffort,
         timeoutMs: 60_000,
@@ -1127,7 +1254,10 @@ export class SessionManager {
     // re-apply them (verified behaviorally). A style change therefore requires
     // a fresh thread, rebuilt from the transcript catch-up block.
     const applied = nb.appliedStyle ?? { replyLength: "default", probing: "default" };
-    const styleCurrent = applied.replyLength === s.replyLength && applied.probing === s.probing;
+    // The interviewer persona has no replyLength/probing slots — a Settings
+    // change must never silently restart an interview thread mid-session.
+    const styleCurrent =
+      isInterview(nb) || (applied.replyLength === s.replyLength && applied.probing === s.probing);
 
     if (nb.threadId && styleCurrent && session.threadGeneration === this.client.generation) return;
 
@@ -1135,7 +1265,7 @@ export class SessionManager {
       cwd: this.store.sourcesDir(nb.id),
       sandbox: "read-only",
       approvalPolicy: "never",
-      developerInstructions: buildDeveloperInstructions(nb, s),
+      developerInstructions: isInterview(nb) ? buildInterviewerInstructions(nb) : buildDeveloperInstructions(nb, s),
       personality: "none",
       model: s.model,
     };
@@ -1313,7 +1443,12 @@ export class SessionManager {
             code: typeof p.turn.error?.codexErrorInfo === "string" ? p.turn.error.codexErrorInfo : undefined,
           }
         : kickoffEmpty
-          ? { message: "The student didn't manage to introduce themselves. Try again." }
+          ? {
+              message:
+                nb && isInterview(nb)
+                  ? "The interviewer didn't manage to open the session. Try again."
+                  : "The student didn't manage to introduce themselves. Try again.",
+            }
           : undefined;
 
     session.state = "idle";
@@ -1330,6 +1465,10 @@ export class SessionManager {
   private failAllActiveTurns(message: string): void {
     for (const session of this.sessions.values()) {
       if (session.state === "idle") continue;
+      // The caller's wording assumes the Aria student; interview notebooks
+      // get the interviewer equivalent.
+      const nb = this.store.get(session.notebookId);
+      const sessionMessage = nb && isInterview(nb) ? message.replace("The student's", "The interviewer's") : message;
       void (async () => {
         if (!session.kickoffTurn) {
           for (const [itemId, text] of session.partials) {
@@ -1345,8 +1484,8 @@ export class SessionManager {
         session.finalizedItems.clear();
         session.kickoffMessages = [];
         this.clearWatchdog(session);
-        this.broadcast(session, "error", { message, retryable: true });
-        this.broadcast(session, "turn-completed", { turnId: null, status: "failed", error: { message } });
+        this.broadcast(session, "error", { message: sessionMessage, retryable: true });
+        this.broadcast(session, "turn-completed", { turnId: null, status: "failed", error: { message: sessionMessage } });
       })().catch((err) => console.error("[aria] failAllActiveTurns failed:", err));
     }
   }
@@ -1386,7 +1525,10 @@ export class SessionManager {
               }
             }
           }
-          this.broadcast(session, "error", { message: "The student stopped responding.", retryable: true });
+          this.broadcast(session, "error", {
+            message: nb && isInterview(nb) ? "The interviewer stopped responding." : "The student stopped responding.",
+            retryable: true,
+          });
           this.broadcast(session, "turn-completed", { turnId: null, status: "failed", error: { message: "timeout" } });
         })().catch((err) => console.error("[aria] watchdog force-reset failed:", err));
       }, 15_000);

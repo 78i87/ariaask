@@ -8,16 +8,9 @@ import { api } from "../../lib/api";
 import { useCyraThread } from "../../lib/useCyraThread";
 import type { CyraChatMessage, CyraThreadSummary } from "../../lib/types";
 import { Composer } from "./Composer";
+import { CyraAvatar } from "./MessageBubble";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import "./CyraThreadView.css";
-
-export function CyraAvatar({ pulsing }: { pulsing?: boolean }) {
-  return (
-    <div className={`cyra-avatar${pulsing ? " cyra-avatar--pulsing" : ""}`}>
-      <Icon name="history_edu" size={18} />
-    </div>
-  );
-}
 
 interface CyraBubbleProps {
   message: CyraChatMessage;

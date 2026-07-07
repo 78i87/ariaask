@@ -27,3 +27,13 @@
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
+
+.create-nb__cv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.create-nb__cv-caption {
+  color: var(--md-sys-color-on-surface-variant);
+}

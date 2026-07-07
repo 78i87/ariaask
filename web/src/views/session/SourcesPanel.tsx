@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
+import type { IconName } from "../../components/iconNames";
 import { IconButton } from "../../components/IconButton";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import type { Notebook, SourceFile } from "../../lib/types";
 import "./SourcesPanel.css";
 
-export function sourceIcon(f: SourceFile): string {
+export function sourceIcon(f: SourceFile): IconName {
+  if (f.kind === "cv") return "contact_page";
   if (f.origin === "research") return "travel_explore";
   return f.storedName.toLowerCase().endsWith(".pdf") ? "picture_as_pdf" : "description";
 }

@@ -13,8 +13,18 @@ export function StudentAvatar({ pulsing }: { pulsing?: boolean }) {
   );
 }
 
+export function CyraAvatar({ pulsing }: { pulsing?: boolean }) {
+  return (
+    <div className={`cyra-avatar${pulsing ? " cyra-avatar--pulsing" : ""}`}>
+      <Icon name="history_edu" size={18} />
+    </div>
+  );
+}
+
 interface MessageBubbleProps {
   message: ChatMessage;
+  /** Interview mode: student-role messages are Cyra the interviewer (avatar + tertiary tint). */
+  interviewer?: boolean;
   /** All handlers must be deps-stable callbacks — this component is memo'd. */
   onCopy?: (m: ChatMessage) => void;
   onAskCyra?: (m: ChatMessage) => void;
@@ -24,7 +34,13 @@ interface MessageBubbleProps {
 
 // Memoized so finalized bubbles (stable message reference) don't re-render on
 // every streaming flush; only the actively-streaming bubble updates.
-export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAskCyra, onEdit }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  interviewer,
+  onCopy,
+  onAskCyra,
+  onEdit,
+}: MessageBubbleProps) {
   if (message.role === "teacher") {
     const showTeacherActions = onCopy !== undefined || onEdit !== undefined;
     return (
@@ -55,9 +71,11 @@ export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAs
   const showActions = !streaming && (onCopy !== undefined || onAskCyra !== undefined);
   return (
     <div className="msg msg--student">
-      <StudentAvatar pulsing={streaming} />
+      {interviewer ? <CyraAvatar pulsing={streaming} /> : <StudentAvatar pulsing={streaming} />}
       <div className="msg__col">
-        <div className={`msg__bubble msg__bubble--student body-large${streaming ? " msg__bubble--streaming" : ""}`}>
+        <div
+          className={`msg__bubble msg__bubble--student${interviewer ? " msg__bubble--cyra" : ""} body-large${streaming ? " msg__bubble--streaming" : ""}`}
+        >
           {/* Render plain text while streaming (avoids re-parsing partial markdown each frame); parse once on completion. */}
           {streaming ? (
             <span className="msg__streaming-text">{message.text}</span>

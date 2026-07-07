@@ -10,13 +10,17 @@ const CUSTOM = "__custom__";
 interface IntakeFormProps {
   questions: IntakeQuestion[];
   submitting: boolean;
+  /** Interview notebooks: same form, interviewer-flavored copy. */
+  interview?: boolean;
   onSubmit: (answers: IntakeAnswerPayload) => void;
   onSkip: () => void;
 }
 
-export function IntakeForm({ questions, submitting, onSubmit, onSkip }: IntakeFormProps) {
+export function IntakeForm({ questions, submitting, interview, onSubmit, onSkip }: IntakeFormProps) {
   // questionId -> selected option value (or CUSTOM); separate map for custom text.
-  const [selected, setSelected] = useState<Record<string, string>>({ level: "standard", research: "yes" });
+  const [selected, setSelected] = useState<Record<string, string>>(
+    interview ? { format: "mixed", round: "not-sure", research: "yes" } : { level: "standard", research: "yes" },
+  );
   const [customText, setCustomText] = useState<Record<string, string>>({});
 
   const submit = () => {
@@ -35,8 +39,14 @@ export function IntakeForm({ questions, submitting, onSubmit, onSkip }: IntakeFo
 
   return (
     <section className="intake" aria-label="Session setup">
-      <h2 className="intake__headline headline-small">Tune Aria before you start</h2>
-      <p className="intake__supporting body-medium">These choices shape the student you're about to teach.</p>
+      <h2 className="intake__headline headline-small">
+        {interview ? "Set up your interview" : "Tune Aria before you start"}
+      </h2>
+      <p className="intake__supporting body-medium">
+        {interview
+          ? "These choices shape the interview you're about to walk into."
+          : "These choices shape the student you're about to teach."}
+      </p>
 
       {questions.map((q) => (
         <fieldset key={q.id} className="intake__question" disabled={submitting}>
@@ -87,7 +97,11 @@ export function IntakeForm({ questions, submitting, onSubmit, onSkip }: IntakeFo
       {!questions.some((q) => q.id === "research") && (
         <div className="intake__note body-medium">
           <Icon name="travel_explore" size={18} />
-          <span>With no materials uploaded, Aria will find readings online before class — they'll show up in your sources.</span>
+          <span>
+            {interview
+              ? "Cyra will research the role and company online before you begin — what she finds shows up in your sources."
+              : "With no materials uploaded, Aria will find readings online before class — they'll show up in your sources."}
+          </span>
         </div>
       )}
 
@@ -96,7 +110,7 @@ export function IntakeForm({ questions, submitting, onSubmit, onSkip }: IntakeFo
           Skip
         </Button>
         <Button onClick={submit} disabled={submitting}>
-          Start teaching
+          {interview ? "Start interview" : "Start teaching"}
         </Button>
       </div>
     </section>

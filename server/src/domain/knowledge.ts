@@ -15,7 +15,8 @@ export type KnowledgeState = LearningState;
 
 const KNOWLEDGE_SCHEMA = `{"beliefs": [{"id": "short-kebab-slug", "concept": "concept label, a few words", "status": "unknown" | "misconception" | "partial" | "understood", "belief": "one sentence addressed to the human teacher as 'you': what the system has evidence they know, misunderstand, or have not shown yet", "area": "short cluster label shared by related entries", "deps": ["ids of entries that are prerequisites for this one"]}]}`;
 
-const GRAPH_RULES = `- Group the entries: every entry gets an "area" - a one-or-two-word cluster label shared
+// Shared with coverage.ts (interview mode) — same graph mechanics, different framing.
+export const GRAPH_RULES = `- Group the entries: every entry gets an "area" - a one-or-two-word cluster label shared
   by related entries, 3 to 6 distinct areas overall. Spell and case a label identically
   everywhere it is used.
 - Mark prerequisites with "deps": the ids of entries a learner should grasp before this
@@ -35,6 +36,9 @@ function unknownText(concept: string): string {
   return `No evidence yet that you have explained ${concept}.`;
 }
 
+/** No-evidence sentence, injectable so coverage.ts (interview mode) can keep its own wording. */
+export type UnknownTextFn = (concept: string) => string;
+
 function stripPrivateFields(b: KnowledgeBelief): KnowledgeBelief {
   const next: KnowledgeBelief = {
     id: b.id,
@@ -49,7 +53,7 @@ function stripPrivateFields(b: KnowledgeBelief): KnowledgeBelief {
   return next;
 }
 
-export function emptyKnowledgeState(label: string): KnowledgeState {
+export function emptyKnowledgeState(label: string, unknown: UnknownTextFn = unknownText): KnowledgeState {
   const concept = label.trim() || "This topic";
   return {
     version: 1,
@@ -58,7 +62,7 @@ export function emptyKnowledgeState(label: string): KnowledgeState {
         id: slugify(concept),
         concept,
         status: "unknown",
-        belief: unknownText(concept),
+        belief: unknown(concept),
         area: "General",
       },
     ],
@@ -68,14 +72,14 @@ export function emptyKnowledgeState(label: string): KnowledgeState {
   };
 }
 
-export function knowledgeFromConceptState(state: LearningState): KnowledgeState {
+export function knowledgeFromConceptState(state: LearningState, unknown: UnknownTextFn = unknownText): KnowledgeState {
   return {
     version: 1,
     beliefs: state.beliefs.map((b) => {
       const next = stripPrivateFields({
         ...b,
         status: "unknown",
-        belief: unknownText(b.concept),
+        belief: unknown(b.concept),
       });
       delete next.note;
       delete next.touchedAt;
@@ -102,8 +106,8 @@ export function stripKnowledgeState(state: KnowledgeState): KnowledgeState {
   };
 }
 
-export function resetKnowledgeEvidence(state: KnowledgeState): KnowledgeState {
-  return knowledgeFromConceptState(state);
+export function resetKnowledgeEvidence(state: KnowledgeState, unknown: UnknownTextFn = unknownText): KnowledgeState {
+  return knowledgeFromConceptState(state, unknown);
 }
 
 export function mergeKnowledgeEvidence(base: KnowledgeState, evaluated: KnowledgeState): KnowledgeState {

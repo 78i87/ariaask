@@ -21,7 +21,7 @@ import { Composer } from "./session/Composer";
 import { CyraThreadView } from "./session/CyraThreadView";
 import { IntakeForm } from "./session/IntakeForm";
 import { KnowledgeMapView } from "./session/KnowledgeMapView";
-import { MessageBubble } from "./session/MessageBubble";
+import { CyraAvatar, MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
 import { ThinkingIndicator } from "./session/ThinkingIndicator";
@@ -30,6 +30,9 @@ import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
 
 const PIN_THRESHOLD = 80;
+
+/** Interview mode: the fixed message the "End interview" button sends. */
+const END_INTERVIEW_MESSAGE = "Let's end the interview here — please give me your debrief.";
 
 export function SessionView() {
   const { id } = useParams<{ id: string }>();
@@ -59,6 +62,10 @@ export function SessionView() {
     updateNotebook,
   } = session;
 
+  /** Interview notebooks: the main thread IS Cyra the interviewer — no Aria
+      student, no Ask-Cyra side threads, and the map reads as coverage. */
+  const isInterview = notebook?.type === "interview";
+
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const didInitialScroll = useRef(false);
@@ -81,13 +88,17 @@ export function SessionView() {
   /** Unsent new-question draft; non-null while the provisional chip exists. */
   const [newDraft, setNewDraft] = useState<string | null>(null);
   const [seedSourceMessageId, setSeedSourceMessageId] = useState<string | null>(null);
-  const { threads: cyraThreads, loaded: cyraLoaded, refresh: refreshCyraThreads } = useCyraThreads(id!);
+  const {
+    threads: cyraThreads,
+    loaded: cyraLoaded,
+    refresh: refreshCyraThreads,
+  } = useCyraThreads(id!, notebook !== null && notebook.type !== "interview");
 
-  // ---- split chat (Aria left, Cyra right) ----
+  // ---- split chat (Aria left, Cyra right; never in interview mode) ----
   const splitChat = useSplitChat();
   // Below this the sources panel is gone too — not enough room for two chats.
   const wideEnough = useMediaQuery("(min-width: 1141px)");
-  const splitActive = splitChat && wideEnough;
+  const splitActive = splitChat && wideEnough && !isInterview;
   const splitActiveRef = useRef(splitActive);
   splitActiveRef.current = splitActive;
   /** Right-pane thread: undefined = follow the newest thread, null = new question. */
@@ -277,11 +288,17 @@ export function SessionView() {
   const busy = status === "waiting" || status === "streaming";
   const waitingLabel =
     activity === "researching"
-      ? "Aria is finding readings online…"
+      ? isInterview
+        ? "Cyra is researching the role and company…"
+        : "Aria is finding readings online…"
       : kickoffRunning
         ? activity === "reading-sources"
-          ? "Aria is doing the reading…"
-          : "Aria is getting ready…"
+          ? isInterview
+            ? "Cyra is reviewing your CV…"
+            : "Aria is doing the reading…"
+          : isInterview
+            ? "Cyra is preparing your interview…"
+            : "Aria is getting ready…"
         : undefined;
 
   return (
@@ -292,8 +309,8 @@ export function SessionView() {
         trailing={
           <>
             <Chip
-              icon="hub"
-              label="Your knowledge map"
+              icon={isInterview ? "fact_check" : "hub"}
+              label={isInterview ? "Interview coverage" : "Your knowledge map"}
               selected={mapOpen}
               onClick={toggleMap}
               className="session__map-chip"
@@ -322,8 +339,10 @@ export function SessionView() {
 
       <div className="session__body">
         <div className="session__content">
-          {/* Full-screen map: no thread switcher — the app-bar chip / Esc exit. */}
-          {!mapOpen && (
+          {/* Full-screen map: no thread switcher — the app-bar chip / Esc exit.
+              Interview mode has no threads to switch (gating on `notebook`
+              avoids a one-frame teach-mode flash on first load). */}
+          {notebook && notebook.type !== "interview" && !mapOpen && (
             <ThreadBar active={activeThread} threads={cyraThreads} onSelect={onSelectThread} split={splitActive} />
           )}
 
@@ -344,6 +363,7 @@ export function SessionView() {
                   <IntakeForm
                     questions={intake.questions}
                     submitting={false}
+                    interview={isInterview}
                     onSubmit={(answers) => submitIntake({ answers })}
                     onSkip={() => submitIntake({ skip: true })}
                   />
@@ -353,18 +373,24 @@ export function SessionView() {
                   <MessageBubble
                     key={m.id}
                     message={m}
+                    interviewer={isInterview}
                     onCopy={onCopyMessage}
-                    onAskCyra={onAskCyra}
+                    onAskCyra={isInterview ? undefined : onAskCyra}
                     onEdit={onEditMessage}
                   />
                 ))}
 
-                {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
+                {status === "waiting" && (
+                  <ThinkingIndicator label={waitingLabel} avatar={isInterview ? <CyraAvatar pulsing /> : undefined} />
+                )}
 
                 {status === "error" && (
                   <div className="session__error">
                     <Icon name="error" size={18} className="session__error-icon" />
-                    <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
+                    <span className="body-medium">
+                      {error ??
+                        (isInterview ? "Cyra lost her train of thought." : "The student lost their train of thought.")}
+                    </span>
                     <Button variant="text" onClick={retry}>
                       Retry
                     </Button>
@@ -389,10 +415,24 @@ export function SessionView() {
                 </Button>
               </div>
             )}
+            {isInterview && !editing && messages.length > 0 && (
+              <div className="session__end-interview">
+                <Button
+                  variant="tonal"
+                  icon="flag"
+                  disabled={busy || status === "loading"}
+                  onClick={() => send(END_INTERVIEW_MESSAGE)}
+                >
+                  End interview
+                </Button>
+              </div>
+            )}
             <Composer
               key={editing ? `edit:${editing.id}` : "normal"}
               disabled={status === "loading" || kickoffRunning || intakePending || messages.length === 0}
               busy={busy}
+              placeholder={isInterview ? "Answer Cyra…" : undefined}
+              accent={isInterview ? "tertiary" : undefined}
               onSend={(text) => {
                 if (editing) {
                   editMessage(editing.id, text);
@@ -413,7 +453,15 @@ export function SessionView() {
           </div>
         ) : activeThread.kind === "map" ? (
           knowledgeState ? (
-            <KnowledgeMapView state={knowledgeState} />
+            <KnowledgeMapView state={knowledgeState} mode={isInterview ? "interview" : "teach"} />
+          ) : isInterview ? (
+            <div className="session__main">
+              <EmptyState
+                icon="fact_check"
+                headline="No coverage yet"
+                body="The competencies Cyra probes — and how you did on each — appear here once the interview is underway."
+              />
+            </div>
           ) : (
             <div className="session__main">
               <EmptyState
@@ -503,10 +551,15 @@ export function SessionView() {
         <AddSourcesDialog
           open={addOpen}
           notebookId={notebook.id}
-          topicSuggestion={notebook.topic ?? notebook.title}
+          topicSuggestion={
+            isInterview
+              ? `${notebook.interview?.role ?? notebook.title}${notebook.interview?.company ? ` at ${notebook.interview.company}` : ""} interview questions`
+              : (notebook.topic ?? notebook.title)
+          }
           discovering={discovering}
           kickoffRunning={kickoffRunning}
           intakePending={intakePending}
+          interview={isInterview}
           onClose={() => setAddOpen(false)}
           onAdded={updateNotebook}
           onDiscover={discoverSources}
@@ -532,8 +585,8 @@ export function SessionView() {
         }
       >
         <span className="body-medium">
-          <strong>{deleteTarget?.originalName}</strong> will be deleted from this notebook and the student won't be
-          able to read it anymore.
+          <strong>{deleteTarget?.originalName}</strong> will be deleted from this notebook and{" "}
+          {isInterview ? "Cyra" : "the student"} won't be able to read it anymore.
         </span>
       </Dialog>
 

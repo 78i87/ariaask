@@ -8,8 +8,15 @@ import type { NotebookStore, SourceFile } from "../domain/store.js";
 import { sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
+import { downloadJobDescriptionFile } from "../domain/discover.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
-import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
+import {
+  composeIntakeQuestions,
+  INTERVIEW_FORMAT_QUESTION,
+  INTERVIEW_ROUND_QUESTION,
+  type IntakeAnswers,
+  type IntakeLevel,
+} from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
 import { config } from "../config.js";
@@ -24,6 +31,17 @@ interface UploadRequest extends Request {
   usedNames?: Set<string>;
 }
 
+/**
+ * Busboy (under multer) decodes multipart FILENAMES as latin1, but browsers
+ * send UTF-8 — non-ASCII names (e.g. a Chinese CV) arrive as mojibake. Field
+ * values are unaffected. Re-decode, keeping the original when the bytes
+ * weren't valid UTF-8 (a genuinely latin1 name must not be corrupted).
+ */
+function decodeOriginalName(name: string): string {
+  const utf8 = Buffer.from(name, "latin1").toString("utf8");
+  return utf8.includes("�") ? name : utf8;
+}
+
 /** Per-file processing shared by notebook creation and add-sources: PDF extraction + word counts. */
 async function processUploads(
   store: NotebookStore,
@@ -34,6 +52,7 @@ async function processUploads(
   const warnings: string[] = [];
   const sourceFiles: SourceFile[] = [];
   for (const f of files) {
+    const originalName = decodeOriginalName(f.originalname);
     const ext = path.extname(f.filename).toLowerCase();
     let extractedName: string | null = null;
     let approxWords: number | null = null;
@@ -51,14 +70,14 @@ async function processUploads(
         await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
         approxWords = approxWordCount(text);
       } else {
-        warnings.push(`"${f.originalname}" appears to be a scanned or unreadable PDF; the student may not be able to read it.`);
+        warnings.push(`"${originalName}" appears to be a scanned or unreadable PDF; the student may not be able to read it.`);
       }
     } else {
       const text = await fs.readFile(f.path, "utf8").catch(() => "");
       approxWords = approxWordCount(text);
     }
     sourceFiles.push({
-      originalName: f.originalname,
+      originalName,
       storedName: f.filename,
       extractedName,
       mimeType: f.mimetype,
@@ -67,6 +86,26 @@ async function processUploads(
     });
   }
   return { sourceFiles, warnings };
+}
+
+/** Write pasted text (interview CV / job description) as an ordinary source file. */
+async function writePastedSource(
+  store: NotebookStore,
+  id: string,
+  usedNames: Set<string>,
+  opts: { baseName: string; originalName: string; text: string; kind: "cv" | "jd" },
+): Promise<SourceFile> {
+  const storedName = sanitizeName(opts.baseName, usedNames);
+  await fs.writeFile(path.join(store.sourcesDir(id), storedName), opts.text, "utf8");
+  return {
+    originalName: opts.originalName,
+    storedName,
+    extractedName: null,
+    mimeType: "text/plain",
+    size: Buffer.byteLength(opts.text, "utf8"),
+    approxWords: approxWordCount(opts.text),
+    kind: opts.kind,
+  };
 }
 
 export function notebookRoutes(
@@ -80,7 +119,7 @@ export function notebookRoutes(
   const upload = multer({
     storage: multer.diskStorage({
       destination: (req: UploadRequest, _file, cb) => cb(null, store.sourcesDir(req.notebookId!)),
-      filename: (req: UploadRequest, file, cb) => cb(null, sanitizeName(file.originalname, req.usedNames!)),
+      filename: (req: UploadRequest, file, cb) => cb(null, sanitizeName(decodeOriginalName(file.originalname), req.usedNames!)),
     }),
     limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
     fileFilter: (_req, file, cb) => {
@@ -130,29 +169,101 @@ export function notebookRoutes(
     async (req: UploadRequest, res) => {
       const id = req.notebookId!;
       const body = req.body as Record<string, string | undefined>;
-      const type = body.type === "files" ? "files" : body.type === "topic" ? "topic" : null;
+      const type =
+        body.type === "files" ? "files" : body.type === "topic" ? "topic" : body.type === "interview" ? "interview" : null;
       const topic = body.topic?.trim() || null;
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const role = body.role?.trim().slice(0, 200) || null;
+      const company = body.company?.trim().slice(0, 200) || null;
+      const jobDescription = body.jobDescription?.trim().slice(0, 50_000) || null;
+      const cvText = body.cvText?.trim().slice(0, 200_000) || null;
+      // A bare "boards.example.com/job/123" is a valid intent — default the scheme.
+      const jdUrlRaw = body.jobDescriptionUrl?.trim().slice(0, 2000) || null;
+      const jobDescriptionUrl = jdUrlRaw && !/^https?:\/\//i.test(jdUrlRaw) ? `https://${jdUrlRaw}` : jdUrlRaw;
 
       const fail = async (status: number, code: string, message?: string) => {
         await fs.rm(store.notebookDir(id), { recursive: true, force: true });
         throw new HttpError(status, code, message);
       };
 
-      if (!type) await fail(400, "invalid_type", 'type must be "topic" or "files"');
+      if (!type) await fail(400, "invalid_type", 'type must be "topic", "files" or "interview"');
       if (type === "topic" && !topic) await fail(400, "missing_topic", "A topic is required");
       if (type === "files" && files.length === 0) await fail(400, "missing_files", "At least one source file is required");
+      if (type === "interview" && !role) await fail(400, "missing_role", "A target role is required");
+      if (type === "interview" && files.length === 0 && !cvText) {
+        await fail(400, "missing_cv", "Provide a CV file or paste its text");
+      }
+      if (jobDescriptionUrl) {
+        try {
+          const u = new URL(jobDescriptionUrl);
+          if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("not http(s)");
+        } catch {
+          await fail(400, "invalid_jd_url", "The job description link isn't a valid URL");
+        }
+      }
 
       const { sourceFiles, warnings } = await processUploads(store, id, files, req.usedNames!);
+      if (type === "interview") {
+        // The creation dialog's upload slot is CV-only; pasted text becomes
+        // ordinary source files so preview/delete/RAG/kickoff-read work as-is.
+        for (const f of sourceFiles) f.kind = "cv";
+        if (cvText) {
+          sourceFiles.push(
+            await writePastedSource(store, id, req.usedNames!, {
+              baseName: "cv.txt",
+              originalName: "CV (pasted)",
+              text: cvText,
+              kind: "cv",
+            }),
+          );
+        }
+        if (jobDescription) {
+          sourceFiles.push(
+            await writePastedSource(store, id, req.usedNames!, {
+              baseName: "job-description.txt",
+              originalName: "Job description",
+              text: jobDescription,
+              kind: "jd",
+            }),
+          );
+        }
+        if (jobDescriptionUrl) {
+          // Fail-open like PDF extraction: a dead or unreadable link becomes a
+          // warning on the created notebook, never a failed creation.
+          try {
+            sourceFiles.push(await downloadJobDescriptionFile(store.sourcesDir(id), jobDescriptionUrl, req.usedNames!));
+          } catch (err) {
+            console.error(`[aria] job description fetch failed for notebook ${id}:`, err);
+            warnings.push(
+              "Couldn't fetch the job description link — you can paste the posting or add it as a source later.",
+            );
+          }
+        }
+      }
 
       const title =
         body.title?.trim() ||
-        (type === "topic" ? topic! : path.basename(files[0]!.originalname, path.extname(files[0]!.originalname)));
+        (type === "topic"
+          ? topic!
+          : type === "interview"
+            ? company
+              ? `${role!} — ${company}`
+              : role!
+            : path.basename(decodeOriginalName(files[0]!.originalname), path.extname(files[0]!.originalname)));
 
-      const nb = await store.create({ title, type: type as "topic" | "files", topic }, id);
+      const nb = await store.create({ title, type: type as "topic" | "files" | "interview", topic }, id);
       nb.sourceFiles = sourceFiles;
+      if (type === "interview") nb.interview = { role: role!, company };
       if (!config.intakeDisabled) {
-        nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
+        nb.intake = {
+          status: "pending",
+          // Interview forms are deterministic-only: presetting [] ("attempted,
+          // never retried") locks out the teach-framed question generator.
+          generatedQuestions: type === "interview" ? [] : null,
+          answers: null,
+          research: "none",
+          submittedAt: null,
+        };
       }
       await store.save(nb);
       // Head start: generate the model-authored setup questions while the
@@ -223,20 +334,24 @@ export function notebookRoutes(
     const raw = body.answers ?? {};
     const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 500) : null);
 
+    const interview = nb.type === "interview";
     let mapped: IntakeAnswers;
     if (body.skip === true) {
       mapped = {
         level: null,
         levelNote: null,
-        research: nb.sourceFiles.length === 0,
+        // Interview skip still researches: discovery (real interview accounts,
+        // company background) is core to the mode — the CV isn't research.
+        research: interview ? true : nb.sourceFiles.length === 0,
         researchNote: null,
         focus: {},
         skipped: true,
+        ...(interview ? { interviewFormat: null, interviewRound: null } : {}),
       };
     } else {
       const levelCustom = clip(raw.level?.custom);
       const levelValue = raw.level?.value;
-      if (levelValue !== undefined && !["fundamental", "standard", "challenge"].includes(levelValue)) {
+      if (!interview && levelValue !== undefined && !["fundamental", "standard", "challenge"].includes(levelValue)) {
         throw new HttpError(400, "invalid_answer", `Unknown level "${levelValue}"`);
       }
       const researchCustom = clip(raw.research?.custom);
@@ -250,15 +365,40 @@ export function notebookRoutes(
         const text = clip(a?.custom) ?? clip(a?.value);
         if (text) focus[q.id] = text;
       }
-      mapped = {
-        level: levelCustom ? null : ((levelValue as IntakeLevel | undefined) ?? null),
-        levelNote: levelCustom,
-        // A free-text research answer is inherently a "yes, but…".
-        research: researchCustom ? true : researchValue === undefined ? true : researchValue === "yes",
-        researchNote: researchCustom,
-        focus,
-        skipped: false,
-      };
+      const research = researchCustom ? true : researchValue === undefined ? true : researchValue === "yes";
+      if (interview) {
+        const formatValue = raw.format?.value;
+        if (
+          formatValue !== undefined &&
+          !INTERVIEW_FORMAT_QUESTION.options.some((o) => o.value === formatValue)
+        ) {
+          throw new HttpError(400, "invalid_answer", `Unknown format "${formatValue}"`);
+        }
+        const roundValue = raw.round?.value;
+        if (roundValue !== undefined && !INTERVIEW_ROUND_QUESTION.options.some((o) => o.value === roundValue)) {
+          throw new HttpError(400, "invalid_answer", `Unknown round "${roundValue}"`);
+        }
+        mapped = {
+          level: null,
+          levelNote: null,
+          research,
+          researchNote: researchCustom,
+          focus,
+          skipped: false,
+          interviewFormat: clip(raw.format?.custom) ?? formatValue ?? null,
+          interviewRound: clip(raw.round?.custom) ?? roundValue ?? null,
+        };
+      } else {
+        mapped = {
+          level: levelCustom ? null : ((levelValue as IntakeLevel | undefined) ?? null),
+          levelNote: levelCustom,
+          // A free-text research answer is inherently a "yes, but…".
+          research,
+          researchNote: researchCustom,
+          focus,
+          skipped: false,
+        };
+      }
     }
 
     nb.intake.answers = mapped;
@@ -315,6 +455,11 @@ export function notebookRoutes(
       if (files.length === 0) throw new HttpError(400, "missing_files", "At least one file is required");
 
       const { sourceFiles, warnings } = await processUploads(store, nb.id, files, req.usedNames!);
+      // Interview notebooks can mark an upload as an updated CV so the
+      // manifest keeps labeling it [CV] for the interviewer.
+      if (nb.type === "interview" && (req.body as Record<string, string | undefined>).kind === "cv") {
+        for (const f of sourceFiles) f.kind = "cv";
+      }
       nb.sourceFiles.push(...sourceFiles);
       // The live thread's instructions can't change — the student learns about
       // these on the next turn via a hidden note (see session.ts).
@@ -420,6 +565,11 @@ export function notebookRoutes(
   router.post("/:id/cyra", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (nb.type === "interview") {
+      // The interview's main thread IS Cyra. Creation is the only entry point
+      // for side-threads, so the other /cyra routes need no guard.
+      throw new HttpError(400, "cyra_unavailable", "Interview notebooks don't have Ask-Cyra threads.");
+    }
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string; sourceMessageId?: string };
     checkMessageLength(body.text);
     const result = await cyra.startTurn(nb.id, {

@@ -1,9 +1,10 @@
 import { forwardRef } from "react";
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./IconButton.css";
 
 interface IconButtonProps {
-  icon: string;
+  icon: IconName;
   ariaLabel: string;
   variant?: "standard" | "tonal";
   fill?: 0 | 1;

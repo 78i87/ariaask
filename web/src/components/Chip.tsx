@@ -1,9 +1,10 @@
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Chip.css";
 
 interface ChipProps {
   label: string;
-  icon?: string;
+  icon?: IconName;
   onClick?: () => void;
   onRemove?: () => void;
   selected?: boolean;

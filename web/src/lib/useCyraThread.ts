@@ -19,8 +19,12 @@ export interface CyraThreadSession {
 
 const STREAMING_ID_PREFIX = "streaming:";
 
-/** The notebook's list of Cyra conversations, newest first. */
-export function useCyraThreads(notebookId: string): {
+/**
+ * The notebook's list of Cyra conversations, newest first. While `enabled` is
+ * false (e.g. interview notebooks have no Ask-Cyra threads) nothing is
+ * fetched: threads stay empty, loaded stays false, and refresh is a no-op.
+ */
+export function useCyraThreads(notebookId: string, enabled = true): {
   threads: CyraThreadSummary[];
   /** True once the first fetch settles — gates UI that picks a default thread. */
   loaded: boolean;
@@ -29,6 +33,7 @@ export function useCyraThreads(notebookId: string): {
   const [threads, setThreads] = useState<CyraThreadSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const refresh = useCallback(async () => {
+    if (!enabled) return;
     try {
       const res = await api.listCyraThreads(notebookId);
       setThreads([...res.threads].reverse());
@@ -37,7 +42,7 @@ export function useCyraThreads(notebookId: string): {
     } finally {
       setLoaded(true);
     }
-  }, [notebookId]);
+  }, [notebookId, enabled]);
   useEffect(() => {
     setThreads([]);
     setLoaded(false);

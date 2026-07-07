@@ -75,6 +75,16 @@
   min-width: 0;
 }
 
+/* Interview mode: the "End interview" strip above the composer. */
+.session__end-interview {
+  display: flex;
+  justify-content: flex-end;
+  max-width: var(--aria-chat-max);
+  margin: 0 auto;
+  width: 100%;
+  padding: 4px 24px 0;
+}
+
 .session__jump {
   position: sticky;
   bottom: 16px;

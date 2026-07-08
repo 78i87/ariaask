@@ -1,11 +1,17 @@
-# Aria — the reverse tutor
+# Aria — learn anything, the right way
 
-You don't get tutored. **You teach.** Aria is a calibrated novice student that
-holds plausible misconceptions and probes exactly where your explanations get
-vague — because the fastest way to find the holes in your own understanding is to
-teach it to someone who keeps asking "wait, but why?"
+Aria is a **learning coach** that tells you *how* to learn anything. Create a
+learning project, and an AI coach — grounded in a curated learning-science
+knowledge base (distilled from learning coach Justin Sung) — helps you pick the
+right technique for your task and stage, plans your study, and makes you do the
+thinking (it won't hand over answers you haven't attempted).
 
-The AI student is powered by **OpenAI Codex** — you sign in with your own
+One of the techniques it recommends is **teaching it back**: Aria also includes a
+calibrated novice student that holds plausible misconceptions and probes exactly
+where your explanations get vague — because the fastest way to find the holes in
+your own understanding is to teach it to someone who keeps asking "wait, but why?"
+
+Everything is powered by **OpenAI Codex** — you sign in with your own
 ChatGPT/OpenAI account, no API key required.
 
 ## Prerequisites
@@ -25,28 +31,43 @@ npm run dev
 - Frontend (Vite): http://localhost:5173
 - Backend (Express): http://localhost:5275 (the Vite dev server proxies `/api` to it)
 
-Open http://localhost:5173, sign in with OpenAI, and create your first notebook.
+Open http://localhost:5173, sign in with OpenAI, and create your first learning
+project.
 
 ## How it works
 
-1. **Create a notebook** from a typed topic ("how transformers work") or by
-   uploading sources (txt / md / pdf — PDFs are text-extracted on upload).
-2. **The student opens** with its current shaky understanding and one question.
-3. **You teach.** It reacts with calibrated confusion, tests rules by restating
-   them slightly wrong, presents contradictions as its own puzzlement (never
-   corrects you), and shows a genuine "aha" when an explanation actually lands —
-   then asks something one level deeper.
+1. **Create a learning project** from a typed topic ("how transformers work") or
+   by uploading sources (txt / md / pdf — PDFs are text-extracted on upload).
+2. **The coach greets you**, reads any materials you added, and asks what you
+   want to be able to do and where you're starting from.
+3. **It coaches the process.** It recommends one concrete technique at a time
+   (with why it fits and the mistake to avoid), grounded in its knowledge base,
+   and pushes back with scaffolds instead of answers when you ask a content
+   question you haven't attempted.
+4. **Teach it back** (a technique the coach can hand you) opens the Aria student:
+   it reacts with calibrated confusion, tests rules by restating them slightly
+   wrong, presents contradictions as its own puzzlement (never corrects you), and
+   shows a genuine "aha" when an explanation lands — then asks something deeper.
 
 ## Architecture
 
 - **`server/`** — Express + TypeScript. Owns one long-lived `codex app-server`
-  child process, speaking JSON-RPC over stdio. One Codex thread per notebook
-  (the student remembers what you taught it). Chat history is persisted as
-  per-notebook JSON under `data/`. Student responses stream to the browser over
-  a per-notebook SSE channel. The student persona and kickoff prompts live in
-  [`server/src/domain/persona.ts`](server/src/domain/persona.ts).
+  child process, speaking JSON-RPC over stdio. Each notebook has up to three
+  Codex personas on their own threads: the **coach**
+  ([`server/src/domain/coach.ts`](server/src/domain/coach.ts)), the **Aria
+  student** ([`server/src/domain/persona.ts`](server/src/domain/persona.ts)), and
+  on-demand **Cyra** expert threads. Chat history is persisted as per-notebook
+  JSON under `data/`; responses stream to the browser over per-persona SSE
+  channels.
+- **`kb/`** — the coach's learning-science knowledge base (curated principle /
+  technique docs + cleaned transcripts). Indexed once to `data/kb-index.json`
+  ([`server/src/domain/kb.ts`](server/src/domain/kb.ts)) and retrieved into each
+  coach turn. Add material by dropping a cleaned `.md` in `kb/` and restarting.
 - **`web/`** — React + Vite, hand-rolled Material 3 (Expressive) components over
-  CSS design tokens. The streaming chat hook is
+  CSS design tokens. The coach shell is
+  [`web/src/views/CoachShell.tsx`](web/src/views/CoachShell.tsx); the coach and
+  teach-back streaming hooks are
+  [`web/src/lib/useCoachThread.ts`](web/src/lib/useCoachThread.ts) and
   [`web/src/lib/useTeachingSession.ts`](web/src/lib/useTeachingSession.ts).
 
 The student runs in a **read-only sandbox** with approvals disabled — it can read
@@ -70,6 +91,9 @@ persist in `data/settings.json`.
 | `ARIA_EFFORT` | (model default) | Seeds the thinking-level setting on first boot only |
 | `ARIA_KICKOFF_EFFORT` | (auto) | Pin the opener's effort; otherwise max(medium, chosen thinking level) |
 | `ARIA_DATA_DIR` | `./data` | Where notebooks and settings are stored |
+| `ARIA_COACH_EFFORT` | (thinking level) | Reasoning effort for coach turns |
+| `ARIA_NO_KB` | (off) | Disable the knowledge base; the coach runs persona-only |
+| `ARIA_KB_DIR` | `./kb` | Location of the knowledge-base corpus |
 | `CODEX_BIN` | `codex` | Path to the Codex CLI |
 
 ## Scripts
@@ -78,4 +102,6 @@ persist in `data/settings.json`.
 - `npm run dev:server` / `npm run dev:web` — run one side
 - `npm run typecheck` — typecheck both workspaces
 
-v1 is conversational Q&A only — no scoring, debrief, or quizzes (yet).
+The coach is conversational for now. Guided PDF reading (in-document highlights
+for pause / simplify / compare / connect / judge) and adaptive learner levels
+with technique-usage tracking are planned next.

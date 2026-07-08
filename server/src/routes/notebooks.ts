@@ -13,6 +13,7 @@ import type { AppServerClient } from "../appserver/client.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
 import { createReadingSession, isGenerationOrphaned } from "../domain/reading.js";
 import { toReadingSummary, type ReadingLevel } from "../domain/store.js";
+import type { UsageStore } from "../domain/usage.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
@@ -79,6 +80,7 @@ export function notebookRoutes(
   cyra: CyraSessionManager,
   coach: CoachSessionManager,
   client: AppServerClient,
+  usage: UsageStore,
 ): Router {
   const router = Router();
 
@@ -437,6 +439,7 @@ export function notebookRoutes(
       clientMessageId: validClientMessageId(body.clientMessageId),
       sourceMessageId: typeof body.sourceMessageId === "string" ? body.sourceMessageId : null,
     });
+    usage.recordUse("ask-expert");
     res.status(201).json(result);
   });
 
@@ -579,6 +582,7 @@ export function notebookRoutes(
     if (typeof body.source !== "string" || !body.source) throw new HttpError(400, "missing_source");
     const level = READING_LEVELS.includes(body.level as ReadingLevel) ? (body.level as ReadingLevel) : "beginner";
     const session = await createReadingSession(client, store, settings, nb, body.source, level);
+    usage.recordUse(`guided-reading:${level}`);
     res.status(201).json({ session });
   });
 
@@ -623,12 +627,18 @@ export function notebookRoutes(
 
   router.post("/:id/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    // A teach-back "use" is a teaching session, not a message: count when the
+    // notebook has no messages yet or the last one is more than 4 hours old.
+    const nbBefore = store.get(req.params.id);
+    const lastMsg = nbBefore?.messages[nbBefore.messages.length - 1];
+    const newSession = !lastMsg || Date.now() - new Date(lastMsg.createdAt).getTime() > 4 * 60 * 60_000;
     const result = await sessions.startTurn(
       req.params.id,
       body.text,
       body.retry === true,
       validClientMessageId(body.clientMessageId),
     );
+    if (newSession && body.retry !== true) usage.recordUse("teach-back");
     res.status(202).json(result);
   });
 

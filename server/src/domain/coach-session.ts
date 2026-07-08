@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import type { CoachState, Notebook, NotebookStore } from "./store.js";
 import { ensureCoachState } from "./store.js";
 import type { SettingsStore } from "./settings.js";
+import type { UsageStore } from "./usage.js";
 import {
   buildCoachCatchUpBlock,
   buildCoachInstructions,
@@ -70,6 +71,7 @@ export class CoachSessionManager {
     private client: AppServerClient,
     private store: NotebookStore,
     private settings: SettingsStore,
+    private usage: UsageStore,
   ) {
     client.on("crashed", () => this.failAllActiveTurns("The coach's connection dropped."));
   }
@@ -167,12 +169,14 @@ export class CoachSessionManager {
         this.broadcast(session, "message", { id: userMessageId, role: "user", text });
       }
 
-      // Two groundings, both fail-open with their own 2s caps: the coach's
-      // knowledge base (learning science) and the learner's own materials.
-      // Skipped for the kickoff turn — it's a greeting, not a consultation.
+      // Three hidden preambles: the usage profile (adaptive scaffold-fading),
+      // plus two fail-open retrievals (the coach's knowledge base and the
+      // learner's own materials). Skipped for the kickoff turn — a greeting.
+      let profileBlock = "";
       let kbBlock = "";
       let sourcesBlock = "";
       if (!opts.kickoff) {
+        profileBlock = this.usage.renderProfileBlock();
         const query = buildCoachRagQuery(coach.messages, text);
         [kbBlock, sourcesBlock] = await Promise.all([
           buildKbBlock(query, renderCoachKbBlock),
@@ -187,7 +191,7 @@ export class CoachSessionManager {
 
       const s = this.settings.get();
       const effort = config.coachEffort ?? s.effort;
-      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + kbBlock + sourcesBlock + text, s.model, effort);
+      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
       session.catchUpNeeded = false;
       session.turnId = turn.id;
       session.state = "streaming";
@@ -326,19 +330,22 @@ export class CoachSessionManager {
   }
 
   /**
-   * Mirrors cyra-session.ts ensureCyraThread (356-392): the coach's
-   * instructions never change mid-thread, so a live thread only needs
-   * resuming across app-server respawns.
+   * Mirrors cyra-session.ts ensureCyraThread (356-392), plus the coaching-mode
+   * drift check (the appliedStyle pattern from session.ts): instructions are
+   * pinned per thread, so a mode change starts a FRESH thread and the next
+   * turn carries a transcript catch-up.
    */
   private async ensureCoachThread(nb: Notebook, coach: CoachState, session: CoachSession): Promise<void> {
     const s = this.settings.get();
-    if (coach.threadId && session.threadGeneration === this.client.generation) return;
+    const mode = this.usage.get().coachMode;
+    const modeDrifted = (coach.appliedMode ?? "guided") !== mode;
+    if (coach.threadId && session.threadGeneration === this.client.generation && !modeDrifted) return;
 
     const threadConfig: Omit<ThreadStartParams, "ephemeral"> = {
       cwd: this.store.sourcesDir(nb.id),
       sandbox: "read-only",
       approvalPolicy: "never",
-      developerInstructions: buildCoachInstructions(nb),
+      developerInstructions: buildCoachInstructions(nb, mode),
       personality: "none",
       model: s.model,
     };
@@ -346,11 +353,12 @@ export class CoachSessionManager {
     const startFresh = async () => {
       const res = await this.client.threadStart({ ...threadConfig, ephemeral: false });
       coach.threadId = res.thread.id;
+      coach.appliedMode = mode;
       await this.store.save(nb);
       if (coach.messages.length > 0) session.catchUpNeeded = true;
     };
 
-    if (!coach.threadId) {
+    if (!coach.threadId || modeDrifted) {
       await startFresh();
     } else {
       try {

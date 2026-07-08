@@ -6,11 +6,13 @@ import type { SessionManager } from "./domain/session.js";
 import type { CyraSessionManager } from "./domain/cyra-session.js";
 import type { CoachSessionManager } from "./domain/coach-session.js";
 import type { SettingsStore } from "./domain/settings.js";
+import type { UsageStore } from "./domain/usage.js";
 import { errorHandler, HttpError } from "./lib/errors.js";
 import { authRoutes, LoginTracker } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
 import { notebookRoutes } from "./routes/notebooks.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { usageRoutes } from "./routes/usage.js";
 
 export interface AppDeps {
   config: Config;
@@ -21,6 +23,7 @@ export interface AppDeps {
   coach: CoachSessionManager;
   logins: LoginTracker;
   settings: SettingsStore;
+  usage: UsageStore;
 }
 
 export function createApp(deps: AppDeps): express.Express {
@@ -41,8 +44,9 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   app.use("/api/auth", authRoutes(deps.client, deps.logins));
-  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra, deps.coach, deps.client));
+  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra, deps.coach, deps.client, deps.usage));
   app.use("/api/settings", settingsRoutes(deps.settings, deps.client));
+  app.use("/api/usage", usageRoutes(deps.usage));
 
   app.use("/api", (_req, _res, next) => next(new HttpError(404, "not_found")));
   app.use(errorHandler);

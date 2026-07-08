@@ -106,6 +106,14 @@ export interface CoachChatMessage {
   interrupted?: boolean;
 }
 
+// Mirrors server/src/domain/usage.ts.
+export type CoachMode = "guided" | "intermediate" | "experienced";
+
+export interface Usage {
+  coachMode: CoachMode;
+  techniques: Record<string, { uses: number; lastUsedAt: string }>;
+}
+
 // Mirrors server/src/domain/store.ts reading types.
 export type ReadingLevel = "beginner" | "intermediate" | "experienced";
 

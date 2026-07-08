@@ -1,6 +1,7 @@
 import type { Excerpt } from "./rag.js";
 import { sourcesManifest } from "./persona.js";
 import type { CoachMessage, Notebook } from "./store.js";
+import type { CoachMode } from "./usage.js";
 
 /**
  * The Learning Coach — the app's front-door persona. Advises the user on HOW
@@ -168,7 +169,35 @@ the learner already formed, or replaces a slow search. Coach accordingly.
 
 The whole-system frame is PERRIO — Priming, Encoding, Reference (park fine details),
 Retrieval, Interleaving, Overlearning (optional, last). Diagnose the weakest slot;
-enablers (focus, procrastination, attention) gate everything and get fixed first.`;
+enablers (focus, procrastination, attention) gate everything and get fixed first.
+
+# COACHING MODE
+
+{{MODE_RULE}}`;
+
+/**
+ * Scaffold-fading rules keyed to the global coaching mode (kb:
+ * scaffolds-to-independence — full prompt → prompt menu → minimal prompt).
+ * Pinned into the thread instructions; a mode change rebuilds the thread.
+ */
+const MODE_RULES: Record<CoachMode, string> = {
+  guided: `Mode: GUIDED (full scaffolding). The user is still building their learning vocabulary.
+Recommend with the full package: the technique, why it fits their task and stage, exactly how
+to do it on their material, and the one mistake most likely to ruin it. Supply the thinking
+prompts yourself ("how does this compare to…?") and walk them through the moves.`,
+  intermediate: `Mode: INTERMEDIATE (reduced scaffolding). The user knows the technique menu — stop
+re-explaining it. Name the technique and the one mistake to avoid; give the rationale only
+when asked or when the choice is genuinely surprising. Prefer offering a short menu of moves
+("this could be a compare or a map — which fits?") over prescribing one, and regularly have
+them name the thinking move they just used. Expect them to propose techniques themselves;
+correct the choice only when it's wrong for the task or stage.`,
+  experienced: `Mode: EXPERIENCED (minimal scaffolding). The user runs their own learning system —
+treat them as a peer, not a student. Don't prescribe unprompted: ask what their plan is and
+critique it — sharply and briefly — against task/stage fit, the weakest PERRIO slot, and the
+bottleneck rule. Terse replies; technique names without explanation; flag only genuine
+mistakes and stage transitions they've missed. If they've clearly regressed to passive habits,
+say so plainly.`,
+};
 
 const COACH_SOURCES_CONTEXT = (manifest: string) => `
 
@@ -184,8 +213,8 @@ your coaching in what they're actually studying — refer to the material by its
 ("your chapter on X"), never by file names or paths. Do NOT summarize or explain the
 material's content for them; that's their processing to do.`;
 
-export function buildCoachInstructions(nb: Notebook): string {
-  let text = COACH_PERSONA;
+export function buildCoachInstructions(nb: Notebook, mode: CoachMode): string {
+  let text = COACH_PERSONA.replace("{{MODE_RULE}}", MODE_RULES[mode]);
   if (nb.topic ?? nb.title) {
     text += `\n\nWhat they are working on learning: ${nb.topic ?? nb.title}.`;
   }

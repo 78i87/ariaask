@@ -9,7 +9,7 @@ import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { setSplitChat, useSplitChat } from "../../lib/splitChat";
 import { useTheme, type Palette } from "../../lib/theme";
-import type { AppSettings, ModelInfo } from "../../lib/types";
+import type { AppSettings, CoachMode, ModelInfo } from "../../lib/types";
 import "./SettingsDialog.css";
 
 const EFFORT_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "X-high" };
@@ -34,20 +34,34 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [coachMode, setCoachMode] = useState<CoachMode>("guided");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const requestSeq = useRef(0);
 
   const load = useCallback(async () => {
     setLoadState("loading");
     try {
-      const res = await api.getSettings();
+      const [res, usageRes] = await Promise.all([api.getSettings(), api.getUsage()]);
       setSettings(res.settings);
       setModels(res.models);
+      setCoachMode(usageRes.usage.coachMode);
       setLoadState("ready");
     } catch {
       setLoadState("error");
     }
   }, []);
+
+  const updateCoachMode = useCallback(
+    (mode: CoachMode) => {
+      const before = coachMode;
+      setCoachMode(mode);
+      void api.updateUsage({ coachMode: mode }).catch(() => {
+        setCoachMode(before);
+        snackbar.show("Couldn't save the coaching style");
+      });
+    },
+    [coachMode, snackbar],
+  );
 
   useEffect(() => {
     if (open) void load();
@@ -127,6 +141,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </section>
           )}
+
+          <section className="settings__section">
+            <h3 className="settings__heading label-large">Coaching style</h3>
+            <Segmented
+              ariaLabel="Coaching style"
+              options={[
+                { value: "guided", label: "Guided" },
+                { value: "intermediate", label: "Intermediate" },
+                { value: "experienced", label: "Experienced" },
+              ]}
+              value={coachMode}
+              onChange={(v) => updateCoachMode(v as CoachMode)}
+            />
+            <span className="settings__supporting body-medium">
+              {coachMode === "guided"
+                ? "Full scaffolding — the coach explains which technique, why it fits, and exactly how to run it."
+                : coachMode === "intermediate"
+                  ? "Lighter scaffolding — the coach names the move and the mistake to avoid; you supply the how."
+                  : "Peer mode — you bring the plan, the coach critiques it. The scaffolds are in your head now."}
+            </span>
+          </section>
 
           <section className="settings__section">
             <h3 className="settings__heading label-large">Chat layout</h3>

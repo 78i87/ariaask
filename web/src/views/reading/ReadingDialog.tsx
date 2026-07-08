@@ -34,6 +34,7 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
   const [sessions, setSessions] = useState<ReadingSessionSummary[] | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [level, setLevel] = useState<ReadingLevel>("beginner");
+  const [levelNudge, setLevelNudge] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   const pdfs = notebook.sourceFiles.filter((f) => f.storedName.toLowerCase().endsWith(".pdf") && f.extractedName);
@@ -44,6 +45,26 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
     api.listReadings(notebook.id).then(
       (res) => setSessions([...res.sessions].reverse()),
       () => setSessions([]),
+    );
+    // Scaffold fading (kb: scaffolds-to-independence): after ~5 uses of a
+    // level, default the picker one step lighter and say why. The user can
+    // always step back up.
+    api.getUsage().then(
+      ({ usage }) => {
+        const uses = (lvl: ReadingLevel) => usage.techniques[`guided-reading:${lvl}`]?.uses ?? 0;
+        if (uses("intermediate") >= 5) {
+          setLevel("experienced");
+          setLevelNudge(
+            `You've done ${uses("intermediate")} intermediate readings — time to find the key passages yourself.`,
+          );
+        } else if (uses("beginner") >= 5) {
+          setLevel("intermediate");
+          setLevelNudge(
+            `You've done ${uses("beginner")} learner-mode readings — the prompts should be coming to you by now.`,
+          );
+        }
+      },
+      () => {},
     );
     setSource((prev) => prev ?? pdfs[0]?.storedName ?? null);
     // pdfs derives from notebook, stable while open
@@ -157,6 +178,11 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
               value={level}
               onChange={(v) => setLevel(v as ReadingLevel)}
             />
+            {levelNudge && (
+              <p className="rdd__nudge body-medium">
+                <Icon name="psychology" size={16} /> {levelNudge}
+              </p>
+            )}
             <p className="rdd__hint body-medium">{LEVEL_HINTS[level]}</p>
           </>
         )}

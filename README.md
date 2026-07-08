@@ -110,6 +110,9 @@ persist in `data/settings.json`.
 - `npm run dev:server` / `npm run dev:web` — run one side
 - `npm run typecheck` — typecheck both workspaces
 
-Planned next: adaptive learner levels with technique-usage tracking — the app
-notices how often you've used a scaffold (like guided reading's learner mode)
-and suggests stepping down to lighter modes as the habits internalize.
+The app tracks how often you use each technique and adapts: after several
+learner-mode readings it defaults the level one step lighter, and the coach
+itself fades its scaffolding as your habits internalize. Set the overall
+**Coaching style** (Guided → Intermediate → Experienced) in Settings — at the
+far end the coach treats you as a peer and critiques your plan instead of
+handing you one, because the goal is for the thinking to end up in your head.

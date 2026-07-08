@@ -11,8 +11,10 @@ import type {
   ReadingLevel,
   ReadingSession,
   ReadingSessionSummary,
+  CoachMode,
   SettingsResponse,
   SourceFile,
+  Usage,
 } from "./types";
 
 export class ApiError extends Error {
@@ -154,6 +156,10 @@ export const api = {
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>
     request<{ settings: AppSettings }>("/api/settings", { ...json(patch), method: "PUT" }),
+
+  getUsage: () => request<{ usage: Usage }>("/api/usage"),
+  updateUsage: (patch: { coachMode: CoachMode }) =>
+    request<{ usage: Usage }>("/api/usage", { ...json(patch), method: "PUT" }),
 };
 
 export type { ChatMessage };

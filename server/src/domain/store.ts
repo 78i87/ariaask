@@ -123,6 +123,12 @@ export interface CoachState {
   threadId: string | null;
   /** The visible streamed kickoff turn has completed with a non-empty reply. */
   kickoffDone: boolean;
+  /**
+   * Coaching mode baked into the current thread's instructions (mirrors
+   * Notebook.appliedStyle — instructions are pinned, so a mode change starts
+   * a fresh thread with a catch-up). Absent on pre-feature threads = "guided".
+   */
+  appliedMode?: string;
   createdAt: string;
   updatedAt: string;
   messages: CoachMessage[];

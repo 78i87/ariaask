@@ -7,6 +7,7 @@ import { CyraSessionManager } from "./domain/cyra-session.js";
 import { CoachSessionManager } from "./domain/coach-session.js";
 import { ensureKbIndex } from "./domain/kb.js";
 import { SettingsStore } from "./domain/settings.js";
+import { UsageStore } from "./domain/usage.js";
 import { LoginTracker } from "./routes/auth.js";
 import { createApp } from "./app.js";
 
@@ -31,15 +32,18 @@ async function main(): Promise<void> {
   const settings = new SettingsStore(config.dataDir, { model: config.envModel, effort: config.envEffort });
   await settings.init();
 
+  const usage = new UsageStore(config.dataDir);
+  await usage.init();
+
   // Build (or freshness-check) the knowledge-base index in the background;
   // also pre-warms the shared embedding model for notebook retrieval.
   if (!config.kbDisabled) void ensureKbIndex();
 
   const sessions = new SessionManager(client, store, settings, config);
   const cyra = new CyraSessionManager(client, store, settings);
-  const coach = new CoachSessionManager(client, store, settings);
+  const coach = new CoachSessionManager(client, store, settings, usage);
   const logins = new LoginTracker(client);
-  const app = createApp({ config, client, store, sessions, cyra, coach, logins, settings });
+  const app = createApp({ config, client, store, sessions, cyra, coach, logins, settings, usage });
 
   const server = app.listen(config.port, () => {
     console.log(`[aria] server listening on http://localhost:${config.port}`);
@@ -50,6 +54,7 @@ async function main(): Promise<void> {
     server.close();
     await store.flush();
     await settings.flush();
+    await usage.flush();
     await client.stop();
     process.exit(0);
   };

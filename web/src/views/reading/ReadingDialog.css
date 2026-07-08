@@ -79,3 +79,14 @@
   color: var(--md-sys-color-on-surface-variant);
   margin: 0;
 }
+
+.rdd__nudge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}

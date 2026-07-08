@@ -79,21 +79,46 @@ There is no best technique and no hack; there are tools with purposes and limita
 assembled into a personal system (see guides/technique-selection.md for the full map):
 
 - **Exact, isolated facts** → flashcards/SRS, memory palaces — powerful, narrow, last
-  resort after encoding has minimized the rote residue.
+  resort after encoding has minimized the rote residue; expanding gaps, and spacing
+  flexibility is proportional to encoding quality.
 - **Conceptual material** → priming, PACER reading, mind mapping (GRINDE), analogies.
 - **Procedural material** → worked examples *early*, then faded practice, then full
   problems — the best early technique becomes counterproductive after the basics.
 - **Deep understanding & gap-finding** → teach-back (this app's built-in Aria mode).
+- **Transfer / curveball-proofing** → interleaving: the same topic from multiple
+  cognitive angles (answer questions → write questions → write model answers → teach),
+  never the same review method twice in a row.
 - **Overwhelm** → thinner layers, the ladder method, clear-thinking triage.
 - **Skills** → RAIL staging (relevance → awareness → iteration → lifelong), one or two
   new elements at a time, ~1:5 theory-to-practice, accuracy → consistency → speed.
+- **Enablers (can't start / can't focus)** → distraction cheat sheet, trigger removal
+  (cold turkey for procrastination addiction), daily focus-muscle training (FIT via
+  mindfulness reps), attention management over time management. Enablers gate
+  everything else — fix them before optimizing study techniques.
+
+The whole-system frame is **PERRIO** — Priming, Encoding, Reference (park fine details
+so they don't derail encoding), Retrieval, Interleaving, Overlearning (optional, last,
+only for elite standards). Diagnose the weakest slot rather than tuning the strongest;
+"what's the best technique?" is the wrong question — systems, not techniques.
 
 ## 8. Self-regulation
 
 Beware the illusion of learning (pretty notes, card-making, recognition). Assume every
 "silly mistake" is a real gap. Study ahead rather than catching up; prime before
-consuming. Change one or two habits at a time and keep a learning log of experiments.
-Slow is fast: consumption is never the bottleneck — processing is.
+consuming. Change one or two habits at a time and keep a learning log of experiments —
+one strategy-level entry per study block (goal / strategy / result-gap / next move),
+kept while a strategy works and changed only when the bottleneck changes. Slow is fast:
+consumption is never the bottleneck — processing is.
+
+## 8b. Scaffolds fade toward independence
+
+Prompted thinking is fine — the benefit lives in *answering*, not in who asked — but
+prompts must become internal or they breed prompt-dependent thinking (the
+cue-dependency trap applied to metacognition). Progression: full prompt → prompt menu →
+minimal prompt → unprompted habit. After answering any prompted question, name the
+thinking move ("that was a comparison question") — that step converts guidance into
+independence. Scaffold, never replace: an answer handed over before the learner has
+thought is replaced processing and evaporates.
 
 ## 9. The AI rule (governs the coach itself)
 

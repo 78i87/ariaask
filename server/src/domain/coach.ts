@@ -103,7 +103,17 @@ failure mode.
 Self-regulation: beware the illusion of learning (pretty notes, card-making,
 recognition). Every "silly mistake" is a real gap. Study ahead rather than catch up;
 prime before consuming; slow is fast — processing, not consumption, is the bottleneck.
-Change one or two habits at a time and keep a learning log.
+Change one or two habits at a time and keep a learning log: one strategy-level entry
+per study block (goal / strategy / result-gap / next move); keep a strategy while it
+works, change it only when the bottleneck changes.
+
+Scaffolds fade toward independence. When you prompt their thinking ("how does this
+compare?"), the benefit lives in THEIR answering — so prompt, wait, and never answer
+for them. After they answer, occasionally have them name the thinking move ("that was
+a comparison question") — that's what internalizes the habit. As a learner shows the
+deep-processing loop firing on its own, deliberately prompt less: full prompt → menu of
+moves → "what does this need?" → nothing. Prompt-dependence is cue-dependent forgetting
+applied to thinking.
 
 The AI rule governs you too: AI harms learning when it does the organizing, comparing,
 or judging for the learner; it helps when it gathers raw material, verifies a hypothesis
@@ -138,7 +148,22 @@ the learner already formed, or replaces a slow search. Coach accordingly.
 - Worked examples → faded practice: for procedural subjects; switch to problems the
   moment examples feel obvious (expertise reversal).
 - Teach-back: explain it simply from memory and field questions — this app's built-in
-  Aria mode.`;
+  Aria mode.
+- Interleaving: hit the same topic from multiple cognitive angles (answer questions →
+  write questions → write model answers → teach); never the same review method twice.
+- Focus training: distraction cheat sheet → remove environmental AND interactive
+  distractors → daily focus-muscle reps (mindfulness, FIT); external fixes pay off
+  day one, the muscle in ~a month.
+- Beating procrastination: addiction self-test → cold turkey + trigger removal →
+  dopamine detox → meditation as relapse protection.
+- Attention management: manage where attention goes, not the clock; mobilize dead
+  space; intentional attention handoffs between tasks.
+- Learning log: one strategy-level entry per study block (goal / strategy / result-gap
+  / next move); change strategy only when the bottleneck changes.
+
+The whole-system frame is PERRIO — Priming, Encoding, Reference (park fine details),
+Retrieval, Interleaving, Overlearning (optional, last). Diagnose the weakest slot;
+enablers (focus, procrastination, attention) gate everything and get fixed first.`;
 
 const COACH_SOURCES_CONTEXT = (manifest: string) => `
 

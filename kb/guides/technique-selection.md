@@ -28,6 +28,8 @@ The coach's prescription table. **Diagnose before prescribing** — always estab
 | Exam preparation | Retrieval at the examined Bloom's level; weekly/monthly self-tests; peer testing; past-paper style free recall | Night-before practice papers; recognition review; drilling only what feels good |
 | Complex skill (instrument, sport, speaking, learning-to-learn itself) | RAIL stage diagnosis → stage-matched actions; 1–2 new elements at a time; ~1:5 theory:practice; varied practice at iteration stage | Bingeing theory (theory overload); chasing speed before consistency |
 | Professional domain knowledge | Learning sprints (explicit goals → aggressive consumption → extended application); tactical studying; delete the latent learning period | Passively completing courses; six weeks of learning before first feedback |
+| Transfer / curveball-proofing | Interleaving: same topic from multiple cognitive angles (answer → write questions → write model answers → teach) | Repeating the same review method every pass; timetable-rotation-only "interleaving" |
+| Can't sit down / can't concentrate (enablers) | Distraction cheat sheet → remove triggers (cold turkey if addicted) → daily focus-muscle training (FIT); attention management over time management | More scheduling apps; willpower; training the muscle while every distractor is still live |
 
 ## By learning stage
 

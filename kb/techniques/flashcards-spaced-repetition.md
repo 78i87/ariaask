@@ -74,7 +74,25 @@ spaced repetition takes you from *bad to better* (strong evidence), but has rapi
 diminishing returns from *better to best* — for already-good students, more repetition
 can even hurt, because repetition-heavy systems tax every fact 3–5 revisits forever.
 Strong encoding flattens the forgetting curve from the start, cancelling most of those
-revisits.
+revisits. The honest test: **if it works, you shouldn't have to do it five or six
+times.** Needing many repetitions means the material is failing the brain's relevance
+filter, and the repetition is compensation, not learning. And it's a common weapon, not
+a secret one — flashcards are "wearing shoes to go outside": used by top achievers and
+failing students alike.
+
+**Spacing intervals (what actually matters):** Use expanding gaps (day → days → week →
+weeks) — research mildly favors them, fixed intervals are never time-efficient, and
+longer gaps both mimic real retrieval demands (the exam is a week away, not two days)
+and reveal *which* things decay when. But don't fine-tune settings: **the flexibility
+of your spacing is proportional to your encoding quality.** Well-encoded material
+tolerates "roughly a week, give or take days" with only a few percent difference;
+poorly encoded material forgets so fast it *forces* short fixed intervals — miss two
+days and 600 cards fall due ("Anki hell"), which eats exactly the time needed to fix
+the real problem, the encoding. Escaping that cycle: before making any card, spend a
+moment comparing the idea against others and looking for an analogous relationship
+that makes it obvious — if you find one, it doesn't need a card. Early on, rote may
+still carry 90% of your load; as encoding skill grows, the deck shrinks toward the
+genuinely arbitrary residue.
 
 **Common mistakes:** Flashcards as the entire study system; carding conceptual material
 that needed mapping or self-explanation; making cards as procrastination (creation isn't

@@ -34,6 +34,8 @@ export const config = {
   kbDisabled: process.env.ARIA_NO_KB === "1",
   /** Reasoning effort for coach turns. null = the chat effort from settings. */
   coachEffort: process.env.ARIA_COACH_EFFORT ?? null,
+  /** Reasoning effort for the guided-reading annotation pass (reading.ts). */
+  readingEffort: process.env.ARIA_READING_EFFORT ?? "medium",
   /** Embedding model for source retrieval (a transformers.js model id; cached under dataDir/models). */
   ragModel: process.env.ARIA_RAG_MODEL ?? "Xenova/bge-small-en-v1.5",
   /** The "auto" recall threshold: sources must hold at least this many extracted words. */

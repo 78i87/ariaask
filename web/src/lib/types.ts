@@ -106,6 +106,44 @@ export interface CoachChatMessage {
   interrupted?: boolean;
 }
 
+// Mirrors server/src/domain/store.ts reading types.
+export type ReadingLevel = "beginner" | "intermediate" | "experienced";
+
+export type ReadingAnnotationKind = "pause" | "simplify" | "compare" | "connect" | "judge" | "apply" | "technique";
+
+export interface ReadingAnnotation {
+  id: string;
+  /** 1-based page number. */
+  page: number;
+  /** Exact quote from the page; matched against the PDF.js text layer. */
+  anchor: string;
+  kind: ReadingAnnotationKind;
+  prompt: string;
+  userResponse?: string;
+  resolved?: boolean;
+}
+
+export interface ReadingSession {
+  id: string;
+  source: string;
+  level: ReadingLevel;
+  status: "generating" | "ready" | "failed";
+  error?: string;
+  annotations: ReadingAnnotation[];
+  afterReading: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReadingSessionSummary {
+  id: string;
+  source: string;
+  level: ReadingLevel;
+  status: "generating" | "ready" | "failed";
+  annotationCount: number;
+  createdAt: string;
+}
+
 /** Which pane the session view is showing. */
 export type ThreadSelection = { kind: "aria" } | { kind: "map" } | { kind: "cyra"; threadId: string | null };
 

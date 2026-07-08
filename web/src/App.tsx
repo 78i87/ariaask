@@ -6,6 +6,7 @@ import { SnackbarProvider } from "./components/Snackbar";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
 import { CoachShell } from "./views/CoachShell";
+import { ReadingView } from "./views/reading/ReadingView";
 import { SessionView } from "./views/SessionView";
 import { SignInView } from "./views/SignInView";
 
@@ -41,6 +42,7 @@ function Gate() {
     <Routes>
       <Route path="/" element={<CoachShell />} />
       <Route path="/learn/:id" element={<CoachShell />} />
+      <Route path="/learn/:id/read/:rid" element={<ReadingView />} />
       <Route path="/notebook/:id" element={<SessionView />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

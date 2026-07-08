@@ -128,6 +128,68 @@ export interface CoachState {
   messages: CoachMessage[];
 }
 
+export type ReadingLevel = "beginner" | "intermediate" | "experienced";
+
+export type ReadingAnnotationKind = "pause" | "simplify" | "compare" | "connect" | "judge" | "apply" | "technique";
+
+/**
+ * One guided-reading prompt anchored to a passage. Anchoring is text-quote
+ * based: `anchor` is an exact snippet from the page's extracted text, matched
+ * client-side against the PDF.js text layer (robust to extraction drift).
+ */
+export interface ReadingAnnotation {
+  id: string;
+  /** 1-based page number. */
+  page: number;
+  /** Exact quote from the page (roughly 4–15 words) the highlight attaches to. */
+  anchor: string;
+  kind: ReadingAnnotationKind;
+  /** The coach's prompt/instruction for this point — a question, never an answer. */
+  prompt: string;
+  /** The learner's jotted response, if any. */
+  userResponse?: string;
+  resolved?: boolean;
+}
+
+/**
+ * One guided reading of a PDF source (see reading.ts). Generation is a
+ * one-shot KB-grounded pass over the per-page text; `status` is "generating"
+ * until annotations land.
+ */
+export interface ReadingSession {
+  id: string;
+  /** SourceFile.storedName of the PDF being read. */
+  source: string;
+  level: ReadingLevel;
+  status: "generating" | "ready" | "failed";
+  error?: string;
+  annotations: ReadingAnnotation[];
+  /** Post-reading suggestions ("what to do afterwards to drill it home"). */
+  afterReading: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReadingSessionSummary {
+  id: string;
+  source: string;
+  level: ReadingLevel;
+  status: "generating" | "ready" | "failed";
+  annotationCount: number;
+  createdAt: string;
+}
+
+export function toReadingSummary(rs: ReadingSession): ReadingSessionSummary {
+  return {
+    id: rs.id,
+    source: rs.source,
+    level: rs.level,
+    status: rs.status,
+    annotationCount: rs.annotations.length,
+    createdAt: rs.createdAt,
+  };
+}
+
 /** Lazily initialize a notebook's coach conversation (caller persists). */
 export function ensureCoachState(nb: Notebook): CoachState {
   if (!nb.coach) {
@@ -180,6 +242,8 @@ export interface Notebook {
   cyraThreads?: CyraThread[];
   /** The learning-coach conversation. Absent = never opened in the coach shell. */
   coach?: CoachState;
+  /** Guided readings of PDF sources (see reading.ts). Absent = none yet. */
+  readingSessions?: ReadingSession[];
   /**
    * "coach" = created from the coach shell: Aria intake init is deferred until
    * the teach-back view is first opened (GET /:id), so a project that never

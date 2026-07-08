@@ -41,7 +41,7 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   app.use("/api/auth", authRoutes(deps.client, deps.logins));
-  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra, deps.coach));
+  app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra, deps.coach, deps.client));
   app.use("/api/settings", settingsRoutes(deps.settings, deps.client));
 
   app.use("/api", (_req, _res, next) => next(new HttpError(404, "not_found")));

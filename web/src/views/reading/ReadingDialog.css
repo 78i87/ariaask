@@ -1,0 +1,81 @@
+.rdd__loading {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.rdd__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rdd__label {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.rdd__session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rdd__session-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rdd__session-open:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.rdd__session-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rdd__session-meta {
+  color: var(--md-sys-color-on-surface-variant);
+  flex-shrink: 0;
+}
+
+.rdd__pdf {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rdd__pdf--selected {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.rdd__hint,
+.rdd__empty {
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0;
+}

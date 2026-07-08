@@ -7,6 +7,10 @@ import type {
   IntakeAnswerPayload,
   KnowledgeState,
   Notebook,
+  ReadingAnnotation,
+  ReadingLevel,
+  ReadingSession,
+  ReadingSessionSummary,
   SettingsResponse,
   SourceFile,
 } from "./types";
@@ -120,6 +124,18 @@ export const api = {
   interruptCoach: (id: string) => request<unknown>(`/api/notebooks/${id}/coach/interrupt`, { method: "POST" }),
   /** Raw URL for the coach EventSource. */
   coachEventsUrl: (id: string) => `/api/notebooks/${id}/coach/events`,
+
+  listReadings: (id: string) => request<{ sessions: ReadingSessionSummary[] }>(`/api/notebooks/${id}/reading`),
+  createReading: (id: string, body: { source: string; level: ReadingLevel }) =>
+    request<{ session: ReadingSession }>(`/api/notebooks/${id}/reading`, json(body)),
+  getReading: (id: string, rid: string) => request<{ session: ReadingSession }>(`/api/notebooks/${id}/reading/${rid}`),
+  updateReadingAnnotation: (id: string, rid: string, aid: string, patch: { userResponse?: string; resolved?: boolean }) =>
+    request<{ annotation: ReadingAnnotation }>(`/api/notebooks/${id}/reading/${rid}/annotations/${aid}`, {
+      ...json(patch),
+      method: "PATCH",
+    }),
+  deleteReading: (id: string, rid: string) =>
+    request<void>(`/api/notebooks/${id}/reading/${rid}`, { method: "DELETE" }),
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,

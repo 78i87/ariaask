@@ -44,7 +44,14 @@ project.
    (with why it fits and the mistake to avoid), grounded in its knowledge base,
    and pushes back with scaffolds instead of answers when you ask a content
    question you haven't attempted.
-4. **Teach it back** (a technique the coach can hand you) opens the Aria student:
+4. **Guided reading** opens any PDF source with the coach's highlights in the
+   document itself: key passages marked with pause / simplify / compare /
+   connect / judge prompts (plus apply points and technique suggestions), a rail
+   to work through them, and after-reading steps that hand back into the coach
+   chat. Pick your level — scaffolding fades from full prompts (learner) to a
+   few nudges (experienced), because the loop is supposed to end up in your
+   head, not in the UI.
+5. **Teach it back** (a technique the coach can hand you) opens the Aria student:
    it reacts with calibrated confusion, tests rules by restating them slightly
    wrong, presents contradictions as its own puzzlement (never corrects you), and
    shows a genuine "aha" when an explanation lands — then asks something deeper.
@@ -92,6 +99,7 @@ persist in `data/settings.json`.
 | `ARIA_KICKOFF_EFFORT` | (auto) | Pin the opener's effort; otherwise max(medium, chosen thinking level) |
 | `ARIA_DATA_DIR` | `./data` | Where notebooks and settings are stored |
 | `ARIA_COACH_EFFORT` | (thinking level) | Reasoning effort for coach turns |
+| `ARIA_READING_EFFORT` | `medium` | Reasoning effort for the guided-reading annotation pass |
 | `ARIA_NO_KB` | (off) | Disable the knowledge base; the coach runs persona-only |
 | `ARIA_KB_DIR` | `./kb` | Location of the knowledge-base corpus |
 | `CODEX_BIN` | `codex` | Path to the Codex CLI |
@@ -102,6 +110,6 @@ persist in `data/settings.json`.
 - `npm run dev:server` / `npm run dev:web` — run one side
 - `npm run typecheck` — typecheck both workspaces
 
-The coach is conversational for now. Guided PDF reading (in-document highlights
-for pause / simplify / compare / connect / judge) and adaptive learner levels
-with technique-usage tracking are planned next.
+Planned next: adaptive learner levels with technique-usage tracking — the app
+notices how often you've used a scaffold (like guided reading's learner mode)
+and suggests stepping down to lighter modes as the habits internalize.

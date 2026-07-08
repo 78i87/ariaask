@@ -9,7 +9,10 @@ import { ensureCoachState, sanitizeName, toCyraThreadSummary, toSummary } from "
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
 import type { CoachSessionManager } from "../domain/coach-session.js";
+import type { AppServerClient } from "../appserver/client.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
+import { createReadingSession, isGenerationOrphaned } from "../domain/reading.js";
+import { toReadingSummary, type ReadingLevel } from "../domain/store.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
@@ -75,6 +78,7 @@ export function notebookRoutes(
   settings: SettingsStore,
   cyra: CyraSessionManager,
   coach: CoachSessionManager,
+  client: AppServerClient,
 ): Router {
   const router = Router();
 
@@ -546,6 +550,75 @@ export function notebookRoutes(
     if (!nb) throw new HttpError(404, "notebook_not_found");
     if (!nb.coach) ensureCoachState(nb); // benign in-memory init; persisted on first real write
     coach.attach(nb.id, res);
+  });
+
+  // ---------- Guided reading ----------
+
+  const READING_LEVELS: ReadingLevel[] = ["beginner", "intermediate", "experienced"];
+
+  router.get("/:id/reading", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    // Crash recovery: a session left "generating" by a dead process can never finish.
+    let dirty = false;
+    for (const rs of nb.readingSessions ?? []) {
+      if (isGenerationOrphaned(rs)) {
+        rs.status = "failed";
+        rs.error = "Preparation was interrupted. Create the reading again.";
+        dirty = true;
+      }
+    }
+    if (dirty) await store.save(nb);
+    res.json({ sessions: (nb.readingSessions ?? []).map(toReadingSummary) });
+  });
+
+  router.post("/:id/reading", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const body = (req.body ?? {}) as { source?: string; level?: string };
+    if (typeof body.source !== "string" || !body.source) throw new HttpError(400, "missing_source");
+    const level = READING_LEVELS.includes(body.level as ReadingLevel) ? (body.level as ReadingLevel) : "beginner";
+    const session = await createReadingSession(client, store, settings, nb, body.source, level);
+    res.status(201).json({ session });
+  });
+
+  router.get("/:id/reading/:rid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const rs = nb.readingSessions?.find((r) => r.id === req.params.rid);
+    if (!rs) throw new HttpError(404, "reading_not_found");
+    if (isGenerationOrphaned(rs)) {
+      rs.status = "failed";
+      rs.error = "Preparation was interrupted. Create the reading again.";
+      await store.save(nb);
+    }
+    res.json({ session: rs });
+  });
+
+  // Persist the learner's response / resolved state on one annotation.
+  router.patch("/:id/reading/:rid/annotations/:aid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const rs = nb.readingSessions?.find((r) => r.id === req.params.rid);
+    if (!rs) throw new HttpError(404, "reading_not_found");
+    const ann = rs.annotations.find((a) => a.id === req.params.aid);
+    if (!ann) throw new HttpError(404, "annotation_not_found");
+    const body = (req.body ?? {}) as { userResponse?: unknown; resolved?: unknown };
+    if (typeof body.userResponse === "string") ann.userResponse = body.userResponse.slice(0, 4000);
+    if (typeof body.resolved === "boolean") ann.resolved = body.resolved;
+    rs.updatedAt = new Date().toISOString();
+    await store.save(nb);
+    res.json({ annotation: ann });
+  });
+
+  router.delete("/:id/reading/:rid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const before = nb.readingSessions?.length ?? 0;
+    nb.readingSessions = (nb.readingSessions ?? []).filter((r) => r.id !== req.params.rid);
+    if (nb.readingSessions.length === before) throw new HttpError(404, "reading_not_found");
+    await store.save(nb);
+    res.status(204).end();
   });
 
   router.post("/:id/messages", async (req, res) => {

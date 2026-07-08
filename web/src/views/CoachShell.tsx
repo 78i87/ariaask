@@ -16,6 +16,7 @@ import { useTheme } from "../lib/theme";
 import type { Notebook } from "../lib/types";
 import { CoachChatView } from "./coach/CoachChatView";
 import { CreateNotebookDialog } from "./home/CreateNotebookDialog";
+import { ReadingDialog } from "./reading/ReadingDialog";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import "./CoachShell.css";
@@ -38,6 +39,7 @@ export function CoachShell() {
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [readingOpen, setReadingOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const accountAnchor = useRef<HTMLButtonElement>(null);
@@ -151,6 +153,10 @@ export function CoachShell() {
                   <span className="shell__chip-label">Sources</span>
                   {current.sourceFiles.length > 0 && <span className="shell__chip-count">{current.sourceFiles.length}</span>}
                 </button>
+                <button type="button" className="shell__chip label-large" onClick={() => setReadingOpen(true)}>
+                  <Icon name="auto_stories" size={18} />
+                  <span className="shell__chip-label">Guided reading</span>
+                </button>
                 <button
                   type="button"
                   className="shell__chip shell__chip--teach label-large"
@@ -200,6 +206,8 @@ export function CoachShell() {
         }}
         coachFirst
       />
+
+      {current && <ReadingDialog open={readingOpen} notebook={current} onClose={() => setReadingOpen(false)} />}
 
       {current && (
         <AddSourcesDialog

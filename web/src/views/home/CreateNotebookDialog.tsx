@@ -14,9 +14,11 @@ interface CreateNotebookDialogProps {
   onClose: () => void;
   onCreate: (form: FormData) => Promise<{ notebook: Notebook; warnings: string[] }>;
   onCreated: (notebook: Notebook) => void;
+  /** Coach-shell creation: the project opens on the coach; Aria intake is deferred to first teach-back. */
+  coachFirst?: boolean;
 }
 
-export function CreateNotebookDialog({ open, onClose, onCreate, onCreated }: CreateNotebookDialogProps) {
+export function CreateNotebookDialog({ open, onClose, onCreate, onCreated, coachFirst }: CreateNotebookDialogProps) {
   const [mode, setMode] = useState<"topic" | "files">("topic");
   const [topic, setTopic] = useState("");
   const [title, setTitle] = useState("");
@@ -45,6 +47,7 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated }: Cre
     try {
       const form = new FormData();
       form.set("type", mode);
+      if (coachFirst) form.set("coachFirst", "1");
       if (title.trim()) form.set("title", title.trim());
       if (mode === "topic") {
         form.set("topic", topic.trim());
@@ -66,7 +69,7 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated }: Cre
     <Dialog
       open={open}
       onClose={close}
-      headline="New notebook"
+      headline={coachFirst ? "New learning project" : "New notebook"}
       actions={
         <>
           <Button variant="text" onClick={close} disabled={creating}>

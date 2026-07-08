@@ -1,0 +1,266 @@
+.shell {
+  display: flex;
+  height: 100dvh;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* ---------- sidebar ---------- */
+
+.shell__sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 288px;
+  flex-shrink: 0;
+  background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  padding: 16px 12px 12px;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* Mobile: the sidebar becomes an overlay drawer. */
+.shell__sidebar--hidden {
+  display: none;
+}
+.shell__sidebar--open {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  box-shadow: var(--md-sys-elevation-3, 0 4px 16px rgba(0, 0, 0, 0.3));
+}
+.shell__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: color-mix(in srgb, var(--md-sys-color-scrim, #000) 45%, transparent);
+}
+
+.shell__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.shell__brand-icon {
+  color: var(--md-sys-color-primary);
+}
+
+.shell__brand-sub {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.shell__new {
+  display: flex;
+  padding: 0 4px;
+}
+.shell__new .m3-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.shell__projects {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+
+.shell__projects-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.shell__projects-error {
+  color: var(--md-sys-color-error);
+  padding: 8px;
+}
+
+.shell__project {
+  display: flex;
+  align-items: center;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+
+.shell__project:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.shell__project--active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.shell__project--active:hover {
+  background: var(--md-sys-color-secondary-container);
+}
+
+.shell__project-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  border-radius: inherit;
+  font: inherit;
+}
+
+.shell__project-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__project-delete {
+  display: none;
+  flex-shrink: 0;
+}
+.shell__project:hover .shell__project-delete,
+.shell__project--active .shell__project-delete {
+  display: flex;
+}
+
+.shell__footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  padding-top: 12px;
+}
+
+.shell__account {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+
+.shell__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.shell__account-id {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+}
+
+.shell__account-plan {
+  color: var(--md-sys-color-on-surface-variant);
+  text-transform: capitalize;
+}
+
+/* ---------- main pane ---------- */
+
+.shell__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.shell__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell__chip:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.shell__chip--teach {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border-color: transparent;
+}
+.shell__chip--teach:hover {
+  background: var(--md-sys-color-primary);
+  opacity: 0.92;
+}
+
+.shell__chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: 12px;
+}
+
+.shell__empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.shell__empty-menu {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+}
+
+@media (max-width: 640px) {
+  .shell__chip-label {
+    display: none; /* icons only on narrow screens */
+  }
+  .shell__header {
+    padding: 8px 12px;
+  }
+}

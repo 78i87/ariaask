@@ -284,7 +284,7 @@ export function SessionView() {
   return (
     <div className="session">
       <TopAppBar
-        leading={<IconButton icon="arrow_back" ariaLabel="Back to notebooks" onClick={() => navigate("/")} />}
+        leading={<IconButton icon="arrow_back" ariaLabel="Back to your coach" onClick={() => navigate(id ? `/learn/${id}` : "/")} />}
         headline={<span className="title-large">{notebook?.title ?? ""}</span>}
         trailing={
           <>

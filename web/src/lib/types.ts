@@ -97,6 +97,15 @@ export interface CyraChatMessage {
   interrupted?: boolean;
 }
 
+export interface CoachChatMessage {
+  id: string;
+  /** "user" = the learner; "coach" = the AI learning coach. */
+  role: "user" | "coach";
+  text: string;
+  status: "complete" | "streaming";
+  interrupted?: boolean;
+}
+
 /** Which pane the session view is showing. */
 export type ThreadSelection = { kind: "aria" } | { kind: "map" } | { kind: "cyra"; threadId: string | null };
 

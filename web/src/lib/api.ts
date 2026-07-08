@@ -105,6 +105,22 @@ export const api = {
   /** Raw URL for the per-thread EventSource. */
   cyraEventsUrl: (id: string, tid: string) => `/api/notebooks/${id}/cyra/${tid}/events`,
 
+  getCoach: (id: string) =>
+    request<{
+      coach: { kickoffDone: boolean };
+      messages: { id: string; role: "user" | "coach"; text: string; interrupted?: boolean }[];
+      turnActive: boolean;
+    }>(`/api/notebooks/${id}/coach`),
+  coachKickoff: (id: string) => request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/kickoff`, { method: "POST" }),
+  sendCoachMessage: (id: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/messages`, json(body)),
+  /** Rewind-and-resend within the coach conversation. */
+  editCoachMessage: (id: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/messages/${messageId}/edit`, json({ text, clientMessageId })),
+  interruptCoach: (id: string) => request<unknown>(`/api/notebooks/${id}/coach/interrupt`, { method: "POST" }),
+  /** Raw URL for the coach EventSource. */
+  coachEventsUrl: (id: string) => `/api/notebooks/${id}/coach/events`,
+
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,
   addSources: (id: string, form: FormData) =>

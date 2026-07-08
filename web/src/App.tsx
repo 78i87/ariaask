@@ -5,7 +5,7 @@ import { ProgressIndicator } from "./components/ProgressIndicator";
 import { SnackbarProvider } from "./components/Snackbar";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
-import { HomeView } from "./views/HomeView";
+import { CoachShell } from "./views/CoachShell";
 import { SessionView } from "./views/SessionView";
 import { SignInView } from "./views/SignInView";
 
@@ -39,7 +39,8 @@ function Gate() {
 
   return (
     <Routes>
-      <Route path="/" element={<HomeView />} />
+      <Route path="/" element={<CoachShell />} />
+      <Route path="/learn/:id" element={<CoachShell />} />
       <Route path="/notebook/:id" element={<SessionView />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

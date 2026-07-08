@@ -28,6 +28,12 @@ export const config = {
   intakeDisabled: process.env.ARIA_NO_INTAKE === "1",
   /** Kill switch for the retrieval layer (rag.ts): no index builds, no recall blocks. */
   ragDisabled: process.env.ARIA_NO_RAG === "1",
+  /** The learning-coach knowledge base corpus (kb.ts); indexed globally to dataDir/kb-index.json. */
+  kbDir: process.env.ARIA_KB_DIR ?? path.resolve(here, "../../kb"),
+  /** Kill switch for the knowledge base: no index build, no coaching-notes blocks (persona-only coach). */
+  kbDisabled: process.env.ARIA_NO_KB === "1",
+  /** Reasoning effort for coach turns. null = the chat effort from settings. */
+  coachEffort: process.env.ARIA_COACH_EFFORT ?? null,
   /** Embedding model for source retrieval (a transformers.js model id; cached under dataDir/models). */
   ragModel: process.env.ARIA_RAG_MODEL ?? "Xenova/bge-small-en-v1.5",
   /** The "auto" recall threshold: sources must hold at least this many extracted words. */

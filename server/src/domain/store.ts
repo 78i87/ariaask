@@ -98,6 +98,45 @@ export function toCyraThreadSummary(ct: CyraThread): CyraThreadSummary {
   };
 }
 
+export interface CoachMessage {
+  id: string;
+  /**
+   * "user" = the human learner; "coach" = the AI learning coach. Deliberately
+   * NOT teacher/student for the same reason as CyraMessage — the Aria thread
+   * uses those with the human↔AI mapping inverted.
+   */
+  role: "user" | "coach";
+  text: string;
+  turnId: string | null;
+  interrupted?: true;
+  createdAt: string;
+}
+
+/**
+ * The learning-coach conversation (see coach-session.ts): one long-lived
+ * coach thread per notebook, foregrounded by the coach shell UI. The coach
+ * advises on HOW to learn (technique selection, study planning) grounded in
+ * the kb/ knowledge base — it is neither the Aria student nor the Cyra expert.
+ */
+export interface CoachState {
+  /** Codex thread id; null until the first turn starts. */
+  threadId: string | null;
+  /** The visible streamed kickoff turn has completed with a non-empty reply. */
+  kickoffDone: boolean;
+  createdAt: string;
+  updatedAt: string;
+  messages: CoachMessage[];
+}
+
+/** Lazily initialize a notebook's coach conversation (caller persists). */
+export function ensureCoachState(nb: Notebook): CoachState {
+  if (!nb.coach) {
+    const now = new Date().toISOString();
+    nb.coach = { threadId: null, kickoffDone: false, createdAt: now, updatedAt: now, messages: [] };
+  }
+  return nb.coach;
+}
+
 export interface Notebook {
   schemaVersion: 1;
   id: string;
@@ -139,6 +178,14 @@ export interface Notebook {
   intake?: Intake;
   /** "Ask Cyra" expert conversations (see cyra-session.ts). Absent = none yet. */
   cyraThreads?: CyraThread[];
+  /** The learning-coach conversation. Absent = never opened in the coach shell. */
+  coach?: CoachState;
+  /**
+   * "coach" = created from the coach shell: Aria intake init is deferred until
+   * the teach-back view is first opened (GET /:id), so a project that never
+   * launches teach-back never generates intake questions.
+   */
+  createdVia?: "coach";
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;

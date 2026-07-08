@@ -5,9 +5,10 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
 import type { NotebookStore, SourceFile } from "../domain/store.js";
-import { sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
+import { ensureCoachState, sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
+import type { CoachSessionManager } from "../domain/coach-session.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
@@ -73,6 +74,7 @@ export function notebookRoutes(
   sessions: SessionManager,
   settings: SettingsStore,
   cyra: CyraSessionManager,
+  coach: CoachSessionManager,
 ): Router {
   const router = Router();
 
@@ -150,7 +152,14 @@ export function notebookRoutes(
 
       const nb = await store.create({ title, type: type as "topic" | "files", topic }, id);
       nb.sourceFiles = sourceFiles;
-      if (!config.intakeDisabled) {
+      if (body.coachFirst === "1") {
+        // Coach-shell creation: the coach conversation is the front door and
+        // Aria intake init is DEFERRED to the first teach-back open (GET /:id)
+        // so a project that never launches teach-back never spends a one-shot
+        // call generating intake questions.
+        nb.createdVia = "coach";
+        ensureCoachState(nb);
+      } else if (!config.intakeDisabled) {
         nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
       }
       await store.save(nb);
@@ -166,6 +175,15 @@ export function notebookRoutes(
   router.get("/:id", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
+
+    // Deferred Aria intake for coach-first projects: only the teach-back view
+    // calls this endpoint, so the first open is the moment to initialize the
+    // setup form (precedent: this handler already mutates intake state below).
+    if (nb.createdVia === "coach" && !nb.intake && !nb.kickoffDone && nb.messages.length === 0 && !config.intakeDisabled) {
+      nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
+      await store.save(nb);
+      void sessions.ensureIntakeQuestions(nb);
+    }
 
     if (nb.intake && nb.intake.status === "pending" && nb.intake.generatedQuestions === null) {
       // Wait briefly for question generation; past the cap, lock in the
@@ -387,6 +405,7 @@ export function notebookRoutes(
     if (!nb) throw new HttpError(404, "notebook_not_found");
     await sessions.dispose(nb.id);
     await cyra.disposeNotebook(nb.id);
+    await coach.disposeNotebook(nb.id);
     dropRagIndex(nb.id);
     await store.delete(nb.id);
     res.status(204).end();
@@ -462,6 +481,71 @@ export function notebookRoutes(
 
   router.get("/:id/cyra/:tid/events", (req, res) => {
     cyra.attach(req.params.id, req.params.tid, res);
+  });
+
+  // ---------- Learning coach ----------
+
+  // Lazily initialize the coach conversation (pre-pivot notebooks get one on
+  // first open in the coach shell). Read-check-then-set on the live object;
+  // concurrent inits write identical values through the per-notebook save chain.
+  router.get("/:id/coach", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const hadCoach = nb.coach !== undefined;
+    const state = ensureCoachState(nb);
+    if (!hadCoach) await store.save(nb);
+    res.json({
+      coach: { kickoffDone: state.kickoffDone },
+      messages: state.messages,
+      turnActive: coach.getState(nb.id).turnActive,
+    });
+  });
+
+  // Idempotent kickoff: no-op once done or while a turn is active.
+  router.post("/:id/coach/kickoff", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const state = ensureCoachState(nb);
+    if (state.kickoffDone || coach.getState(nb.id).turnActive) {
+      res.status(202).json({ turnId: null });
+      return;
+    }
+    const result = await coach.startTurn(nb.id, { kickoff: true });
+    res.status(202).json({ turnId: result.turnId });
+  });
+
+  router.post("/:id/coach/messages", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    ensureCoachState(nb);
+    const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    const result = await coach.startTurn(nb.id, {
+      text: body.text,
+      retry: body.retry === true,
+      clientMessageId: validClientMessageId(body.clientMessageId),
+    });
+    res.status(202).json({ turnId: result.turnId });
+  });
+
+  // Rewind-and-resend within the coach conversation.
+  router.post("/:id/coach/messages/:mid/edit", async (req, res) => {
+    const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    const result = await coach.editTurn(req.params.id, req.params.mid, body.text, validClientMessageId(body.clientMessageId));
+    res.status(202).json({ turnId: result.turnId });
+  });
+
+  router.post("/:id/coach/interrupt", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    await coach.interrupt(nb.id);
+    res.status(202).json({});
+  });
+
+  router.get("/:id/coach/events", (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (!nb.coach) ensureCoachState(nb); // benign in-memory init; persisted on first real write
+    coach.attach(nb.id, res);
   });
 
   router.post("/:id/messages", async (req, res) => {

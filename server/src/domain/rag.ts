@@ -27,7 +27,7 @@ export type RagRecall = "light" | "default" | "generous";
  * ARIA_NO_RAG=1.
  */
 
-interface RagChunk {
+export interface RagChunk {
   /** Indexable file the text came from, e.g. "topic-2.extracted.txt". */
   file: string;
   /** Owning SourceFile.storedName — retrieval filters deleted/unannounced sources by it. */
@@ -40,7 +40,7 @@ interface RagChunk {
 }
 
 /** On-disk shape of rag-index.json. */
-interface RagIndexFile {
+export interface RagIndexFile {
   version: 1;
   model: string;
   dims: number;
@@ -63,7 +63,7 @@ interface LoadedIndex {
   vec: Float32Array;
 }
 
-const CHUNKER_VERSION = 3;
+export const CHUNKER_VERSION = 3;
 const CHUNK_MAX_CHARS = 1200; // ~300 tokens — safely under bge's 512 even on fused-word text
 const CHUNK_OVERLAP_CHARS = 200;
 const MIN_CHUNK_CHARS = 80;
@@ -84,7 +84,7 @@ const RECALL_PRESETS: Record<RagRecall, { topK: number; budgetChars: number }> =
 };
 
 /** Query-side instruction some models were trained with; passages get no prefix. */
-const QUERY_PREFIXES: Record<string, string> = {
+export const QUERY_PREFIXES: Record<string, string> = {
   "Xenova/bge-small-en-v1.5": "Represent this sentence for searching relevant passages: ",
   "Xenova/bge-base-en-v1.5": "Represent this sentence for searching relevant passages: ",
 };
@@ -159,7 +159,7 @@ function getEmbedder(): Promise<EmbedFn> {
   return embedderPromise;
 }
 
-async function embedBatched(texts: string[]): Promise<{ dims: number; vectors: Float32Array }> {
+export async function embedBatched(texts: string[]): Promise<{ dims: number; vectors: Float32Array }> {
   const embed = await getEmbedder();
   const parts: Float32Array[] = [];
   let dims = 0;
@@ -252,7 +252,7 @@ function splitSections(lines: CleanLine[]): Section[] {
 }
 
 /** Heading-aware chunking: small sections pack together, oversized ones split at paragraph boundaries with overlap. */
-function chunkFile(file: string, source: string, text: string): RagChunk[] {
+export function chunkFile(file: string, source: string, text: string): RagChunk[] {
   const chunks: RagChunk[] = [];
   const emit = (t: string, heading: string | null) => {
     const trimmed = t.trim();
@@ -327,11 +327,11 @@ function indexableName(f: Notebook["sourceFiles"][number]): string | null {
   return f.storedName.endsWith(".pdf") ? null : f.storedName;
 }
 
-function encodeVectors(v: Float32Array): string {
+export function encodeVectors(v: Float32Array): string {
   return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64");
 }
 
-function decodeVectors(s: string): Float32Array {
+export function decodeVectors(s: string): Float32Array {
   const buf = Buffer.from(s, "base64");
   // Copy into a fresh buffer: the pooled Buffer's byteOffset may not be 4-byte aligned.
   return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -515,7 +515,7 @@ export function buildRagQuery(messages: ChatMessage[], input: string): string {
 }
 
 /** Join two adjacent chunks, deduplicating the split overlap when it survived intact. */
-function joinAdjacent(a: string, b: string): string {
+export function joinAdjacent(a: string, b: string): string {
   const max = Math.min(a.length, b.length, CHUNK_OVERLAP_CHARS + 100);
   for (let k = max; k >= 40; k--) {
     if (a.endsWith(b.slice(0, k))) return a + b.slice(k);

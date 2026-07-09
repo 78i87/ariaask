@@ -28,19 +28,37 @@
   color: var(--md-sys-color-on-secondary-container);
 }
 
-.create-nb__calibration {
+.create-nb__level,
+.create-nb__materials {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-top: 6px;
-  padding-top: 14px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
+  gap: 10px;
 }
 
-.create-nb__calibration-label {
+.create-nb__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--md-sys-color-on-surface-variant);
 }
 
-.create-nb__optional {
-  font-weight: 400;
+.create-nb__links {
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+  border-radius: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.create-nb__links:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  border-color: transparent;
+}
+
+.create-nb__hint {
+  color: var(--md-sys-color-on-surface-variant);
 }

@@ -12,6 +12,7 @@ import type { CoachSessionManager } from "../domain/coach-session.js";
 import type { AppServerClient } from "../appserver/client.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
 import { createReadingSession, isGenerationOrphaned } from "../domain/reading.js";
+import { awaitLinkIngestion, ingestLinks, parseLinks } from "../domain/links.js";
 import { toReadingSummary, type ReadingLevel } from "../domain/store.js";
 import type { UsageStore } from "../domain/usage.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
@@ -179,6 +180,15 @@ export function notebookRoutes(
       if (nb.intake) void sessions.ensureIntakeQuestions(nb);
       void ensureRagIndex(store, settings, nb);
 
+      // Pasted links download in the background; the coach kickoff waits for
+      // them (bounded) so its greeting knows the materials.
+      const links = typeof body.links === "string" ? parseLinks(body.links) : [];
+      if (links.length > 0) {
+        void ingestLinks(store, settings, nb.id, links, {
+          onSource: () => sessions.broadcastSourcesUpdated(nb.id),
+        });
+      }
+
       res.status(201).json({ notebook: toSummary(nb), warnings });
     },
   );
@@ -345,6 +355,10 @@ export function notebookRoutes(
       // The live thread's instructions can't change — the student learns about
       // these on the next turn via a hidden note (see session.ts).
       nb.pendingNewSources = [...(nb.pendingNewSources ?? []), ...sourceFiles.map((f) => f.storedName)];
+      // Same for the coach's pinned manifest (its own note list — see coach-session.ts).
+      if (nb.coach?.kickoffDone) {
+        nb.coach.pendingSourceNotes = [...(nb.coach.pendingSourceNotes ?? []), ...sourceFiles.map((f) => f.originalName)].slice(-10);
+      }
       await store.save(nb);
       // An explicit upload is also the user's signal to retry a failed embedder.
       void ensureRagIndex(store, settings, nb, { retryNow: true });
@@ -522,7 +536,14 @@ export function notebookRoutes(
       res.status(202).json({ turnId: null });
       return;
     }
-    const result = await coach.startTurn(nb.id, { kickoff: true });
+    // Give pasted links a chance to land so the greeting knows the materials.
+    const { stillRunning } = await awaitLinkIngestion(nb.id, 45_000);
+    // Re-check after the wait: another tab may have kicked off meanwhile.
+    if (state.kickoffDone || coach.getState(nb.id).turnActive) {
+      res.status(202).json({ turnId: null });
+      return;
+    }
+    const result = await coach.startTurn(nb.id, { kickoff: true, sourcesPending: stillRunning });
     res.status(202).json({ turnId: result.turnId });
   });
 

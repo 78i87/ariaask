@@ -156,7 +156,7 @@ export function parseDiscoveredSources(raw: string, max: number): DiscoveredSour
   return out.length > 0 ? out : null;
 }
 
-function canonicalUrl(u: URL): URL {
+export function canonicalUrl(u: URL): URL {
   const next = new URL(u.toString());
   next.hash = "";
   next.username = "";
@@ -337,7 +337,7 @@ function decodeText(bytes: Buffer, contentType: string): string {
   }
 }
 
-function cleanTitle(title: string, fallback: string): string {
+export function cleanTitle(title: string, fallback: string): string {
   return title.replace(/\s+/g, " ").trim().slice(0, 140) || fallback;
 }
 
@@ -355,7 +355,7 @@ function stripMediaMarkdown(text: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
-function markdownWithSource(title: string, url: string, text: string): string {
+export function markdownWithSource(title: string, url: string, text: string): string {
   const body = text.trim();
   if (/^#\s+.+/.test(body)) {
     // Replacement FUNCTION: a "$1"/"$&" in the URL must stay literal.
@@ -364,7 +364,7 @@ function markdownWithSource(title: string, url: string, text: string): string {
   return `# ${title}\n\nSource: ${url}\n\n${body}\n`;
 }
 
-function truncateWords(text: string, url: string): string {
+export function truncateWords(text: string, url: string): string {
   if (approxWordCount(text) <= MAX_KEEP_WORDS) return text;
   // Slice the ORIGINAL string at the cap'th word — split/join would collapse
   // newlines and flatten the document's structure.

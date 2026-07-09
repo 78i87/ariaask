@@ -2,155 +2,213 @@
  * Technique-name annotation for coach messages: known study-technique terms
  * get wrapped as `[term](#tech-slug)` so the markdown renderer can turn them
  * into highlighted, hoverable chips (like the guided-reading highlights, but
- * in chat). Tips are one-line distillations of the kb/ docs.
+ * in chat). Each entry carries WHY the technique works and WHEN to reach for
+ * it — one-line distillations of the kb/ docs, shown in the hover tooltip.
  */
 
 export interface TechniqueInfo {
   slug: string;
+  /** Human-readable name shown as the tooltip title. */
+  label: string;
   /** Word-boundary, case-insensitive alternatives that name the technique. */
   pattern: string;
-  tip: string;
+  /** Why it works / what it buys you. */
+  why: string;
+  /** When to reach for it (trigger conditions / learning stage). */
+  when: string;
 }
 
 // Longer/more specific patterns first — first match wins per slug per message.
 export const TECHNIQUES: TechniqueInfo[] = [
   {
     slug: "deep-processing",
+    label: "Deep processing loop",
     pattern:
       "pause[,–-]?\\s*simplify[,–-]?\\s*compare[,–-]?\\s*connect(?:[,–-]?\\s*(?:group[,–-]?\\s*)?(?:and\\s+)?judge)?|deep[- ]processing(?: loop)?",
-    tip: "The core encoding habit: stop consuming, re-say it plainly, compare it to what you know, link it to the big picture, then judge what matters most.",
+    why: "Memory forms in the ~15–30s working-memory window — processing information the moment you meet it (re-say it plainly, compare, link it, judge what matters) is what encodes it.",
+    when: "On every key piece of information while reading or listening — especially dense, confusing, or exam-likely ideas.",
   },
   {
     slug: "closed-book-summarization",
+    label: "Closed-book summarization",
     pattern: "closed[- ]book summar\\w+|sneaky plagiarism",
-    tip: "Summarize from memory (book closed) and restructure it so the original author wouldn't recognize it — retrieval plus reorganization.",
+    why: "Summarizing from memory is free retrieval, and restructuring (not shortening) forces you to reorganize the ideas — both strengthen the network.",
+    when: "Consolidating after a reading or lecture; condensing notes before an exam; whenever you're tempted to 'summarize' with the book open.",
   },
   {
     slug: "distraction-cheat-sheet",
+    label: "Distraction cheat sheet",
     pattern: "distraction cheat[- ]?sheet",
-    tip: "Keep paper beside you during a focus session and log everything that pulls you out — then eliminate the distractors one by one.",
+    why: "You can't remove distractors you haven't named — logging each flow-break reveals your personal list, including 'someone might interrupt me' type distractors people never fix.",
+    when: "First step whenever focus sessions keep breaking down; repeat until the list stops growing.",
   },
   {
     slug: "delayed-note-taking",
+    label: "Delayed note-taking",
     pattern: "delayed note[- ]?taking",
-    tip: "Listen/read longer before writing anything, so your brain has to organize instead of transcribe. Then write less, structurally.",
+    why: "Widening the gap between hearing and writing pushes the brain out of transcription into organizing mode — the organizing is the learning.",
+    when: "Lectures and reading whenever you catch yourself copying continuously; the on-ramp to mind mapping.",
   },
   {
     slug: "worked-examples",
+    label: "Worked examples → practice",
     pattern: "worked[- ]examples?(?:\\s*(?:→|->|then)\\s*(?:faded )?practice)?",
-    tip: "Study solved examples while a problem type is new; the moment they feel obvious, switch to solving problems yourself — the benefit reverses with skill.",
+    why: "Novices learn a problem type fastest by studying solved examples (no working memory wasted on blind search) — but the effect reverses once the basics click.",
+    when: "First exposure to a new problem type; switch to solving problems yourself the moment examples feel obvious.",
   },
   {
     slug: "practice-problems",
+    label: "Practice problems / past papers",
     pattern: "practice (?:problems|questions|papers)|past[- ]papers?",
-    tip: "Solve under realistic conditions, then study exactly what your misses reveal — align practice with how you'll be tested.",
+    why: "Solving under realistic conditions tests the knowledge in the exact form you'll need it, and every miss is a precise gap to study.",
+    when: "After the basics are in place, through exam/performance prep — matched to the level and format you'll be tested at.",
   },
   {
     slug: "retrieval",
+    label: "Retrieval practice (free recall)",
     pattern: "free recall|active recall|retrieval practice|brain[- ]?dump",
-    tip: "Pull knowledge out of memory without looking — the pulling itself strengthens it, and the gaps it exposes are your study plan.",
+    why: "Pulling knowledge out of memory strengthens it far more than re-reading, and the gaps it exposes are your study plan. Free recall beats cued recall for transfer.",
+    when: "Continuously — end of each week on that week's material, end of month on the month's. Exam results should never be a surprise.",
   },
   {
     slug: "spaced-repetition",
+    label: "Flashcards & spaced repetition",
     pattern: "spaced? repetition|spaced retrieval|spacing effect|flashcards?|anki",
-    tip: "Spaced drills for exact, isolated facts. Powerful but narrow — a last resort after encoding, never the whole system.",
+    why: "Spacing reviews out fights the forgetting curve efficiently — for exact, isolated facts. Cards can't build understanding, and every card is future review debt.",
+    when: "Last resort, after encoding: the residue of genuinely arbitrary facts (terminology, formulas, doses). Never as the whole system.",
   },
   {
     slug: "interleaving",
+    label: "Interleaving",
     pattern: "interleav\\w+",
-    tip: "Hit the same topic from different cognitive angles (answer questions, write questions, write the answer key, teach) instead of repeating one method.",
+    why: "Hitting the same topic from different cognitive angles keeps knowledge from locking onto one cue or format — that's what survives curveball questions.",
+    when: "Review passes: never repeat the same method twice (answer questions → write questions → write the answer key → teach it).",
   },
   {
     slug: "mind-mapping",
+    label: "Mind mapping (GRINDE)",
     pattern: "mind[- ]?map\\w*|GRINDE|chunk[- ]?map\\w*",
-    tip: "Nonlinear notes that group, relate and connect ideas (GRINDE: Grouped, Relational, Interconnected, Nonverbal, Directional, Emphasized). The thinking builds the map; the map is a by-product.",
+    why: "Knowledge lives in networks, not lists — the grouping, relating and judging you do while building the map IS the encoding (the map itself is a by-product).",
+    when: "Conceptual material with many related parts: systems, theories, multi-lecture topics; also planning essays.",
   },
   {
     slug: "pacer",
+    label: "PACER reading framework",
     pattern: "PACER",
-    tip: "Classify what you read — Procedural, Analogous, Conceptual, Evidence, Reference — and digest each differently: practice it, critique it, map it, or just store it.",
+    why: "Different information types need different digestion — practicing procedures, critiquing analogies, mapping concepts, and merely storing reference details stops you wasting deep effort on shallow facts.",
+    when: "Any reading session: classify each piece as Procedural / Analogous / Conceptual / Evidence / Reference and act accordingly.",
   },
   {
     slug: "perrio",
+    label: "PERRIO system",
     pattern: "PERRIO",
-    tip: "The whole-system frame: Priming, Encoding, Reference, Retrieval, Interleaving, Overlearning. Fix the weakest slot, not the loudest.",
+    why: "Learning is a pipeline — Priming, Encoding, Reference, Retrieval, Interleaving, Overlearning — and results are set by the weakest slot, not the strongest.",
+    when: "Diagnosing a whole study system: find the empty or weak slot before optimizing anything else.",
   },
   {
     slug: "priming",
+    label: "Priming (pre-study)",
     pattern: "priming|pre[- ]?stud\\w+|scoping",
-    tip: "A quick big-picture pass before real studying — map the main ideas so new details have somewhere to attach.",
+    why: "The brain keeps what it can place — a quick big-picture pass builds the shelf so new details have somewhere to land instead of being discarded.",
+    when: "Before any lecture, chapter, or new topic — 5–10 minutes of skimming structure and listing the main ideas.",
   },
   {
     slug: "teach-back",
+    label: "Teach-back",
     pattern: "teach[- ]?back|teach it back|learn(?:ing)? by teaching",
-    tip: "Explain it from memory to a student (Aria, here) and field their questions — the fastest way to find what you can't actually explain.",
+    why: "Teaching forces free retrieval, ruthless simplification, and a coherent structure at once — the fastest way to find what you can't actually explain.",
+    when: "After first exposure, when understanding feels 'probably fine' — press Teach it back and teach Aria; also great pre-exam consolidation.",
   },
   {
     slug: "ladder-method",
+    label: "Ladder method",
     pattern: "ladder method",
-    tip: "Several low-effort passes over the whole topic, taking only what feels easy each time — the scaffold from pass one makes pass two cheap.",
+    why: "Several low-effort passes beat one grinding pass: each pass's scaffold makes the previously-hard parts cheap, and no session ever feels heavy.",
+    when: "Dense material, tired days, or any topic that triggers 'there's so much here' procrastination.",
   },
   {
     slug: "thinner-layers",
+    label: "Thinner layers",
     pattern: "thinner layers",
-    tip: "When overwhelmed, don't chop the topic into isolated pieces — connect the easiest ideas first and layer detail onto the growing structure.",
+    why: "Chopping a topic into isolated pieces destroys the connections that make it learnable; layering — easiest links first, detail on top — keeps the big picture intact.",
+    when: "Overwhelm: many concepts that obviously relate but you can't see how (multi-lecture blocks, big chapters).",
   },
   {
     slug: "analogy-critique",
+    label: "Analogy & critique",
     pattern: "analog(?:y|ies)(?: critique)?",
-    tip: "Build an analogy to something you know, then stress-test where it breaks — the critique is where most of the learning happens.",
+    why: "Building an analogy forces deep comparison with what you know; critiquing where it breaks forces re-examining the real structure — that critique is where most of the learning is.",
+    when: "Abstract or mechanism-heavy concepts; whenever you 'sort of get it' but couldn't explain it.",
   },
   {
     slug: "peer-testing",
+    label: "Peer testing",
     pattern: "peer testing|practice (?:exams?|tests?) for (?:each other|friends)",
-    tip: "Make practice exams for each other from memory, swap, and discuss where your answers diverge — the differences mark deep gaps.",
+    why: "Writing an exam from memory is retrieval plus judgment; swapping with friends multiplies practice papers, and answer disagreements mark deep, nuanced gaps.",
+    when: "Group study and exam prep with 2–4 people on the same material — structured, with roles.",
   },
   {
     slug: "error-log",
+    label: "Error log",
     pattern: "error log",
-    tip: "Record each mistake with its type and cause, build a targeted drill for it, and retest later — 'silly mistakes' are real gaps.",
+    why: "'Silly mistakes' are almost always real gaps — labeling each error's cause and drilling it turns your mistakes into a targeted syllabus.",
+    when: "Whenever the same kinds of mistakes repeat in practice work, math, coding, or exams.",
   },
   {
     slug: "learning-log",
+    label: "Learning log",
     pattern: "learning log",
-    tip: "One short entry per study block: goal, strategy, result/gap, next move. Change strategy only when the bottleneck changes.",
+    why: "You can only change 1–2 habits at a time; logging goal → strategy → result → next move stops practice from being random and compounds improvement.",
+    when: "One 1–3 minute entry per study block; change strategy only when the bottleneck changes.",
   },
   {
     slug: "cognitive-load",
+    label: "Cognitive load",
     pattern: "cognitive load",
-    tip: "Mental effort. Learning needs it high but within capacity — studying that feels easy is a red flag; feeling stuck means overload, not stupidity.",
+    why: "All effective learning is effortful — low load means passive studying (a red flag), while overload (stuck, fog) produces nothing either. The zone just past comfort is where learning happens.",
+    when: "Use it as a dashboard: bored/autopilot → make the work harder; stuck/rereading → shrink what you're holding and pause intake.",
   },
   {
     slug: "desirable-difficulty",
+    label: "Desirable difficulty",
     pattern: "desirable difficult\\w+",
-    tip: "The productive struggle just past your comfort zone — effort is the mechanism of learning, not a sign the method is failing.",
+    why: "Productive struggle is the mechanism of learning, not a malfunction — people who mistake effort for ineffectiveness retreat to comfortable, useless methods.",
+    when: "Whenever a good technique 'feels hard' or you're tempted to make learning easier; aim for meaningful mistakes, not comfort.",
   },
   {
     slug: "overlearning",
+    label: "Overlearning",
     pattern: "overlearning",
-    tip: "Drilling beyond the required standard for speed and fluency. Optional — only worth it for elite bars, and never the first move.",
+    why: "Drilling past the required standard buys speed and effortless fluency — at a heavy time cost that's wasted if encoding is still weak.",
+    when: "Only for elite bars (top-percentile exams, performance under pressure), and only as the LAST slot of the system.",
   },
   {
     slug: "encoding",
+    label: "Encoding",
     pattern: "encoding",
-    tip: "Organizing new information into a connected structure during the first exposure — what actually creates memory. Weak encoding is what repetition tries (expensively) to patch.",
+    why: "Memory and understanding are by-products of organized networks — encode well the first time and the forgetting curve flattens, cancelling most future review.",
+    when: "The long-game skill to build after enablers and retrieval are in place; the fix when you 'forget everything despite constant review'.",
   },
   {
     slug: "focus-training",
+    label: "Focus training",
     pattern: "focus (?:muscle|training)|mindfulness meditation",
-    tip: "Daily reps of noticing your mind drift and bringing it back (10–15 min of mindfulness). Trains focus-on-command over ~a month.",
+    why: "Focus is a trainable snap-back reflex, not willpower — daily reps of noticing drift and returning shrink your re-entry time until focus comes on command.",
+    when: "10–15 min of mindfulness daily, after external distractors are removed; expect the payoff after ~a month, compounding for years.",
   },
   {
     slug: "attention-management",
+    label: "Attention management",
     pattern: "attention management",
-    tip: "Manage where your mind is, not the clock: intentional attention handoffs between tasks, and use dead time (commutes, queues) for attention-only work.",
+    why: "'No time' is usually misdirected attention — humans barely sense time, and schedules break, but deciding where your mind goes at each transition doesn't.",
+    when: "When schedules never stick, and for mobilizing dead space (commutes, queues) with attention-only work like planning or review.",
   },
 ];
 
-const TIP_BY_SLUG = new Map(TECHNIQUES.map((t) => [t.slug, t.tip]));
+const BY_SLUG = new Map(TECHNIQUES.map((t) => [t.slug, t]));
 
-export function techniqueTip(slug: string): string | undefined {
-  return TIP_BY_SLUG.get(slug);
+export function techniqueInfo(slug: string): TechniqueInfo | undefined {
+  return BY_SLUG.get(slug);
 }
 
 /** Fenced blocks and inline code must never be rewritten. */

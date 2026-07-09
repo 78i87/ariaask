@@ -15,6 +15,7 @@ import { useNotebooks } from "../lib/useNotebooks";
 import { useTheme } from "../lib/theme";
 import type { Notebook } from "../lib/types";
 import { CoachChatView } from "./coach/CoachChatView";
+import { CoachActionsContext, type CoachActions } from "./coach/coachActions";
 import { CreateNotebookDialog } from "./home/CreateNotebookDialog";
 import { ReadingDialog } from "./reading/ReadingDialog";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
@@ -42,11 +43,59 @@ export function CoachShell() {
   const [readingOpen, setReadingOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const accountAnchor = useRef<HTMLButtonElement>(null);
   const [accountOpen, setAccountOpen] = useState(false);
 
   const email = state.phase === "signed-in" ? state.email : undefined;
   const current = useMemo(() => notebooks?.find((n) => n.id === id) ?? null, [notebooks, id]);
+
+  // Live source updates: link ingestion, uploads from other tabs, and online
+  // discovery all announce on the notebook's teach-back SSE channel — keep
+  // the sources chip and dialogs fresh without manual refreshes.
+  useEffect(() => {
+    if (!id) return;
+    setDiscovering(false);
+    const es = new EventSource(api.notebookEventsUrl(id));
+    const onRefresh = () => void refresh();
+    es.addEventListener("sources-updated", onRefresh);
+    es.addEventListener("discover-completed", (e) => {
+      onRefresh();
+      setDiscovering(false);
+      try {
+        const data = JSON.parse((e as MessageEvent).data) as { added?: unknown[]; failures?: unknown[] };
+        const n = data.added?.length ?? 0;
+        snackbar.show(n > 0 ? `Found ${n} source${n === 1 ? "" : "s"} online` : "The search found no usable sources");
+      } catch {
+        /* refresh already happened */
+      }
+    });
+    es.addEventListener("state", (e) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data) as { discoveryRunning?: boolean };
+        if (typeof data.discoveryRunning === "boolean") setDiscovering(data.discoveryRunning);
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => es.close();
+  }, [id, refresh, snackbar]);
+
+  const coachActions = useMemo<CoachActions>(
+    () => ({
+      openAddSources: () => setSourcesOpen(true),
+      findSources: () => {
+        if (!id) return;
+        setDiscovering(true);
+        const query = current?.topic ?? current?.title ?? "";
+        void api.discoverSources(id, query ? { query } : {}).catch((err) => {
+          setDiscovering(false);
+          snackbar.show(err instanceof Error ? err.message : "Couldn't start the search");
+        });
+      },
+    }),
+    [id, current, snackbar],
+  );
 
   // "/" (or a stale id) lands on the most recent project once the list loads.
   useEffect(() => {
@@ -167,7 +216,9 @@ export function CoachShell() {
                 </button>
               </div>
             </header>
-            <CoachChatView notebookId={current.id} />
+            <CoachActionsContext.Provider value={coachActions}>
+              <CoachChatView notebookId={current.id} />
+            </CoachActionsContext.Provider>
           </>
         ) : notebooks === null ? (
           <div className="shell__empty">
@@ -204,7 +255,6 @@ export function CoachShell() {
           setCreateOpen(false);
           navigate(`/learn/${nb.id}`);
         }}
-        coachFirst
       />
 
       {current && <ReadingDialog open={readingOpen} notebook={current} onClose={() => setReadingOpen(false)} />}
@@ -214,13 +264,15 @@ export function CoachShell() {
           open={sourcesOpen}
           notebookId={current.id}
           topicSuggestion={current.topic ?? current.title}
-          discovering={false}
+          discovering={discovering}
           kickoffRunning={false}
           intakePending={false}
           onClose={() => setSourcesOpen(false)}
           onAdded={() => void refresh()}
           onDiscover={(query) => {
+            setDiscovering(true);
             void api.discoverSources(current.id, { query }).catch((err) => {
+              setDiscovering(false);
               snackbar.show(err instanceof Error ? err.message : "Couldn't start the search");
             });
           }}

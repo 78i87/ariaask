@@ -129,6 +129,14 @@ export interface CoachState {
    * a fresh thread with a catch-up). Absent on pre-feature threads = "guided".
    */
   appliedMode?: string;
+  /**
+   * originalNames of sources added AFTER the coach's pinned manifest was
+   * baked (uploads, discovery, link ingestion) — consumed as one hidden
+   * preamble line on the next coach turn, then cleared. The coach-side
+   * analogue of Aria's pendingNewSources (deliberately separate: session.ts
+   * consumes and clears that one).
+   */
+  pendingSourceNotes?: string[];
   createdAt: string;
   updatedAt: string;
   messages: CoachMessage[];

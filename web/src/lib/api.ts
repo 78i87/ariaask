@@ -126,6 +126,8 @@ export const api = {
   interruptCoach: (id: string) => request<unknown>(`/api/notebooks/${id}/coach/interrupt`, { method: "POST" }),
   /** Raw URL for the coach EventSource. */
   coachEventsUrl: (id: string) => `/api/notebooks/${id}/coach/events`,
+  /** Raw URL for the notebook (teach-back) EventSource — sources/discovery updates. */
+  notebookEventsUrl: (id: string) => `/api/notebooks/${id}/events`,
 
   listReadings: (id: string) => request<{ sessions: ReadingSessionSummary[] }>(`/api/notebooks/${id}/reading`),
   createReading: (id: string, body: { source: string; level: ReadingLevel }) =>

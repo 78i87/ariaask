@@ -50,7 +50,6 @@
 /* ---------- technique chips (hover for the one-line tip) ---------- */
 
 .tech-term {
-  position: relative;
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
   border-radius: 6px;
@@ -59,30 +58,34 @@
   white-space: nowrap;
 }
 
-.tech-term::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
-  z-index: 30;
+.tech-term:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
+}
+
+/* position: fixed escapes the chat scroller's overflow clipping; placement is
+   measured and clamped in TechTerm (flip below near the top, close on scroll). */
+.tech-tooltip {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   width: max-content;
-  max-width: 280px;
-  padding: 8px 12px;
+  max-width: min(300px, calc(100vw - 16px));
+  padding: 10px 12px;
   border-radius: 10px;
   background: var(--md-sys-color-inverse-surface);
   color: var(--md-sys-color-inverse-on-surface);
   font-size: 12.5px;
   line-height: 1.45;
   white-space: normal;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.tech-term:hover::after,
-.tech-term:focus-within::after {
-  opacity: 1;
+.tech-tooltip__title {
+  font-weight: 700;
 }
 
 /* ---------- quiz cards (```quiz fenced blocks) ---------- */
@@ -154,4 +157,55 @@
 
 .quiz__result--correct {
   color: var(--md-sys-color-primary);
+}
+
+/* ---------- choice buttons (```choices fenced blocks) ---------- */
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.choices__prompt {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.choices__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choices__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.choices__option:hover:not(:disabled) {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.choices__option:disabled {
+  cursor: default;
+}
+
+.choices--inert .choices__option:not(.choices__option--picked) {
+  opacity: 0.5;
+}
+
+.choices__option--picked {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: var(--md-sys-color-primary);
 }

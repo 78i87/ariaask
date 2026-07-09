@@ -117,7 +117,7 @@ export class CoachSessionManager {
    */
   async startTurn(
     notebookId: string,
-    opts: { text?: string; retry?: boolean; kickoff?: boolean; clientMessageId?: string },
+    opts: { text?: string; retry?: boolean; kickoff?: boolean; sourcesPending?: boolean; clientMessageId?: string },
   ): Promise<{ turnId: string | null }> {
     const nb = this.store.get(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -126,7 +126,7 @@ export class CoachSessionManager {
     let retryMsg: { id: string; text: string } | null = null;
     let text: string;
     if (opts.kickoff) {
-      text = buildCoachKickoffPrompt(nb);
+      text = buildCoachKickoffPrompt(nb, { sourcesPending: opts.sourcesPending === true });
     } else if (opts.retry) {
       // Re-answer the last persisted user message without persisting a duplicate.
       retryMsg = [...coach.messages].reverse().find((m) => m.role === "user") ?? null;
@@ -169,13 +169,19 @@ export class CoachSessionManager {
         this.broadcast(session, "message", { id: userMessageId, role: "user", text });
       }
 
-      // Three hidden preambles: the usage profile (adaptive scaffold-fading),
-      // plus two fail-open retrievals (the coach's knowledge base and the
-      // learner's own materials). Skipped for the kickoff turn — a greeting.
+      // Hidden preambles: new-source notes (the pinned manifest can't change),
+      // the usage profile (adaptive scaffold-fading), plus two fail-open
+      // retrievals (the coach's knowledge base and the learner's own
+      // materials). Skipped for the kickoff turn — a greeting.
+      let notesBlock = "";
       let profileBlock = "";
       let kbBlock = "";
       let sourcesBlock = "";
+      const pendingNotes = opts.kickoff ? [] : [...(coach.pendingSourceNotes ?? [])];
       if (!opts.kickoff) {
+        if (pendingNotes.length > 0) {
+          notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. The files are in your working directory. Acknowledge naturally if relevant — never mention this note. The user's message follows.]\n\n`;
+        }
         profileBlock = this.usage.renderProfileBlock();
         const query = buildCoachRagQuery(coach.messages, text);
         [kbBlock, sourcesBlock] = await Promise.all([
@@ -191,7 +197,13 @@ export class CoachSessionManager {
 
       const s = this.settings.get();
       const effort = config.coachEffort ?? s.effort;
-      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
+      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + notesBlock + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
+      if (pendingNotes.length > 0 && coach.pendingSourceNotes) {
+        // Consume exactly what was included; notes landing mid-turn survive.
+        coach.pendingSourceNotes = coach.pendingSourceNotes.filter((n) => !pendingNotes.includes(n));
+        if (coach.pendingSourceNotes.length === 0) delete coach.pendingSourceNotes;
+        await this.store.save(nb);
+      }
       session.catchUpNeeded = false;
       session.turnId = turn.id;
       session.state = "streaming";

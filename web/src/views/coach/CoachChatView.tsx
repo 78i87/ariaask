@@ -5,12 +5,94 @@ import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
-import { annotateTechniques, techniqueTip } from "../../lib/techniques";
+import { annotateTechniques, techniqueInfo } from "../../lib/techniques";
 import { useCoachThread } from "../../lib/useCoachThread";
 import type { CoachChatMessage } from "../../lib/types";
+import { MessageContext, useCoachActions, useMessageInfo } from "./coachActions";
 import { Composer } from "../session/Composer";
 import { ThinkingIndicator } from "../session/ThinkingIndicator";
 import "./CoachChatView.css";
+
+// ---------- technique chips with a viewport-aware floating tooltip ----------
+
+/**
+ * A technique-name chip whose tooltip is position:fixed (escapes the chat
+ * scroller's overflow clipping), measured after render, flipped below the
+ * term near the viewport top, clamped horizontally, and closed on any scroll
+ * (fixed tooltips would otherwise detach from their scrolling term).
+ */
+function TechTerm({ slug, children }: { slug: string; children: ReactNode }) {
+  const info = techniqueInfo(slug);
+  const termRef = useRef<HTMLSpanElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const term = termRef.current?.getBoundingClientRect();
+    const tip = tipRef.current?.getBoundingClientRect();
+    if (!term || !tip) return;
+    const margin = 8;
+    let top = term.top - tip.height - 6;
+    if (top < margin) top = term.bottom + 6; // flip below when clipped by the viewport top / header
+    let left = term.left;
+    left = Math.min(Math.max(left, margin), window.innerWidth - tip.width - margin);
+    setPos({ left, top });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const hide = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    // Capture-phase catches the inner chat scroller's scrolls too.
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!info) return <span className="tech-term">{children}</span>;
+  const tipId = `tech-tip-${slug}`;
+  return (
+    <span
+      ref={termRef}
+      className="tech-term"
+      tabIndex={0}
+      aria-describedby={open ? tipId : undefined}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      {children}
+      {open && (
+        <div
+          ref={tipRef}
+          id={tipId}
+          role="tooltip"
+          className="tech-tooltip"
+          style={pos ? { left: pos.left, top: pos.top, visibility: "visible" } : { left: 0, top: 0, visibility: "hidden" }}
+        >
+          <span className="tech-tooltip__title">{info.label}</span>
+          <span>
+            <strong>Why</strong> — {info.why}
+          </span>
+          <span>
+            <strong>When</strong> — {info.when}
+          </span>
+        </div>
+      )}
+    </span>
+  );
+}
 
 // ---------- interactive quiz blocks (```quiz fenced JSON) ----------
 
@@ -77,6 +159,82 @@ function QuizCard({ quiz }: { quiz: QuizSpec }) {
   );
 }
 
+// ---------- interactive choice buttons (```choices fenced JSON) ----------
+
+interface ChoiceOption {
+  label: string;
+  send?: string;
+  action?: "upload-sources" | "find-sources";
+}
+
+interface ChoicesSpec {
+  prompt?: string;
+  options: ChoiceOption[];
+}
+
+function parseChoices(source: string): ChoicesSpec | null {
+  try {
+    const c = JSON.parse(source) as Partial<ChoicesSpec>;
+    if (!Array.isArray(c.options)) return null;
+    const options = c.options.filter(
+      (o): o is ChoiceOption =>
+        typeof o === "object" &&
+        o !== null &&
+        typeof (o as ChoiceOption).label === "string" &&
+        ((o as ChoiceOption).send === undefined || typeof (o as ChoiceOption).send === "string") &&
+        ((o as ChoiceOption).action === undefined ||
+          (o as ChoiceOption).action === "upload-sources" ||
+          (o as ChoiceOption).action === "find-sources"),
+    );
+    if (options.length === 0 || options.length > 4) return null;
+    return { prompt: typeof c.prompt === "string" ? c.prompt : undefined, options };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clickable decision buttons the coach can emit. Live only while this is the
+ * last coach message and the thread is idle — old blocks deep in the
+ * transcript render dimmed and inert.
+ */
+function ChoicesCard({ choices }: { choices: ChoicesSpec }) {
+  const { interactive, send } = useMessageInfo();
+  const actions = useCoachActions();
+  const [picked, setPicked] = useState<number | null>(null);
+
+  const onPick = (i: number) => {
+    if (!interactive || picked !== null) return;
+    setPicked(i);
+    const opt = choices.options[i]!;
+    if (opt.action === "upload-sources") actions.openAddSources();
+    else if (opt.action === "find-sources") actions.findSources();
+    if (opt.send?.trim()) send(opt.send.trim());
+  };
+
+  const inert = !interactive || picked !== null;
+  return (
+    <div className={`choices${inert ? " choices--inert" : ""}`}>
+      {choices.prompt && <div className="choices__prompt body-medium">{choices.prompt}</div>}
+      <div className="choices__row">
+        {choices.options.map((opt, i) => (
+          <button
+            key={i}
+            type="button"
+            className={`choices__option label-large${picked === i ? " choices__option--picked" : ""}`}
+            disabled={inert}
+            onClick={() => onPick(i)}
+          >
+            {opt.action === "upload-sources" && <Icon name="upload_file" size={16} />}
+            {opt.action === "find-sources" && <Icon name="travel_explore" size={16} />}
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------- markdown renderer with technique chips + quiz cards ----------
 
 function childText(node: ReactNode): string {
@@ -89,12 +247,7 @@ function childText(node: ReactNode): string {
 const COACH_MD_COMPONENTS: Components = {
   a({ href, children }) {
     if (href?.startsWith("#tech-")) {
-      const tip = techniqueTip(href.slice("#tech-".length));
-      return (
-        <span className="tech-term" data-tip={tip}>
-          {children}
-        </span>
-      );
+      return <TechTerm slug={href.slice("#tech-".length)}>{children}</TechTerm>;
     }
     return (
       <a href={href} target="_blank" rel="noreferrer">
@@ -106,9 +259,14 @@ const COACH_MD_COMPONENTS: Components = {
     const child = Array.isArray(children) ? children[0] : children;
     if (isValidElement(child)) {
       const props = child.props as { className?: string; children?: ReactNode };
-      if ((props.className ?? "").includes("language-quiz")) {
+      const cls = props.className ?? "";
+      if (cls.includes("language-quiz")) {
         const quiz = parseQuiz(childText(props.children).trim());
         if (quiz) return <QuizCard quiz={quiz} />;
+      }
+      if (cls.includes("language-choices")) {
+        const choices = parseChoices(childText(props.children).trim());
+        if (choices) return <ChoicesCard choices={choices} />;
       }
     }
     return <pre>{children}</pre>;
@@ -135,12 +293,16 @@ export function CoachAvatar({ pulsing }: { pulsing?: boolean }) {
 
 interface CoachBubbleProps {
   message: CoachChatMessage;
+  /** Interactive blocks (choices) are live only in the last coach message while idle. */
+  interactive: boolean;
+  send: (text: string) => void;
   onCopy: (m: CoachChatMessage) => void;
   /** Rewind-and-resend edit; user messages only. */
   onEdit: (m: CoachChatMessage) => void;
 }
 
-function CoachBubble({ message, onCopy, onEdit }: CoachBubbleProps) {
+function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubbleProps) {
+  const messageInfo = useMemo(() => ({ interactive, send }), [interactive, send]);
   if (message.role === "user") {
     return (
       <div className="msg msg--teacher">
@@ -169,7 +331,9 @@ function CoachBubble({ message, onCopy, onEdit }: CoachBubbleProps) {
           {streaming ? (
             <span className="msg__streaming-text">{message.text}</span>
           ) : (
-            <CoachMarkdown text={message.text} />
+            <MessageContext.Provider value={messageInfo}>
+              <CoachMarkdown text={message.text} />
+            </MessageContext.Provider>
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}
@@ -237,10 +401,12 @@ export function CoachChatView({ notebookId }: { notebookId: string }) {
             </div>
           ) : (
             <>
-              {messages.map((m) => (
+              {messages.map((m, i) => (
                 <CoachBubble
                   key={m.id}
                   message={m}
+                  interactive={i === messages.length - 1 && m.role === "coach" && status === "idle"}
+                  send={send}
                   onCopy={onCopy}
                   onEdit={(msg) => setEditing({ id: msg.id, text: msg.text })}
                 />

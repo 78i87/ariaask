@@ -42,6 +42,15 @@ How you coach:
   The app renders it as a clickable card. Use it when retrieval genuinely helps (after
   they've learned something, before building on it) — never as decoration, and prefer
   options whose wrong answers each embody a real misconception.
+- For genuinely discrete decisions (yes/no, pick-a-path), you may instead offer clickable
+  buttons as a fenced code block with language "choices" containing exactly this JSON:
+  \`\`\`choices
+  {"prompt":"optional one-line question","options":[{"label":"button text","send":"message posted as the user's reply"},{"label":"…","action":"upload-sources"},{"label":"…","action":"find-sources","send":"optional confirmation posted as the user's reply"}]}
+  \`\`\`
+  Rules: at most 4 options, short labels; "send" posts that text as the user's message;
+  "action" triggers an app action — "upload-sources" opens the add-materials dialog,
+  "find-sources" starts an online search for sources. At most ONE interactive block
+  (quiz OR choices) per reply, and only when clicking genuinely beats typing.
 - Match technique to task and stage, and say WHY in one sentence (e.g. flashcards excel
   at exact isolated facts but can't build understanding; worked examples are for novices
   and become counterproductive once the basics click). Watch for stage transitions and
@@ -245,7 +254,7 @@ export function buildCoachInstructions(nb: Notebook, mode: CoachMode): string {
  * Aria kickoff there is no buffering or belief machinery — the reply streams
  * to the UI like any other coach message.
  */
-export function buildCoachKickoffPrompt(nb: Notebook): string {
+export function buildCoachKickoffPrompt(nb: Notebook, opts: { sourcesPending?: boolean } = {}): string {
   const subject = nb.topic ?? nb.title;
   const hasSources = nb.sourceFiles.length > 0;
   const intake = nb.coachIntake;
@@ -264,11 +273,37 @@ recommend first (typically: what exactly they want to be able to DO with this, w
 currently stand with it, and any deadline). If the project name or materials already make
 some of that obvious, don't ask about it — instead propose a concrete first move and ask
 them to confirm or correct your read.`;
+
+  // Three-way source posture: has materials / materials still downloading /
+  // none — the last one drives the clickable sources ask.
+  let sourcesPart: string;
+  if (hasSources) {
+    sourcesPart = "";
+  } else if (opts.sourcesPending) {
+    sourcesPart = `
+
+Their pasted links are still downloading into the project — mention in one clause that
+you'll dig into their materials once they've landed. Do NOT include a choices block.`;
+  } else {
+    sourcesPart = `
+
+They have NO study materials in the project yet. Learning goes far better with real
+materials, so before the calibration questions, say in one sentence what would help most
+for this subject (if it sounds like a university course: lecture slides, the syllabus,
+past papers from their course portal; otherwise: official docs, a textbook chapter, a
+good article or two). Then END the message with EXACTLY this block (verbatim, as the
+last thing in your reply):
+
+\`\`\`choices
+{"prompt":"How do you want to handle materials?","options":[{"label":"I have materials to add","action":"upload-sources"},{"label":"Find sources for me online","action":"find-sources","send":"Yes — find me sources online."},{"label":"No materials — just coach me","send":"No materials for now — just coach me."}]}
+\`\`\``;
+  }
+
   return `[SYSTEM: This is the start of the coaching relationship. The user has just created a
 learning project${subject ? ` called "${subject}"` : ""}${hasSources ? ", and has already added study materials (see your working directory)" : ""}.
 
 Greet them briefly as their learning coach — one or two sentences, no lecture about
-learning science. ${calibration} Keep the whole message short.]`;
+learning science. ${calibration} Keep the whole message short.${sourcesPart}]`;
 }
 
 /**

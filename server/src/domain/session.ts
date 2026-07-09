@@ -521,6 +521,9 @@ export class SessionManager {
           signal: controller.signal,
           onSource: (fresh, file) => {
             fresh.pendingNewSources = [...(fresh.pendingNewSources ?? []), file.storedName];
+            if (fresh.coach?.kickoffDone) {
+              fresh.coach.pendingSourceNotes = [...(fresh.coach.pendingSourceNotes ?? []), file.originalName].slice(-10);
+            }
             addedNames.push(file.storedName);
             this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
           },
@@ -1343,5 +1346,16 @@ export class SessionManager {
   private broadcast(session: NotebookSession, event: string, data: unknown): void {
     const id = ++session.seq;
     for (const c of session.clients) c.send(event, data, id);
+  }
+
+  /**
+   * Public sources-updated ping for pipelines outside this manager (creation-
+   * time link ingestion): tells attached clients (incl. the coach shell's
+   * notebook-events subscription) to refetch the notebook's sources.
+   */
+  broadcastSourcesUpdated(notebookId: string): void {
+    const nb = this.store.get(notebookId);
+    if (!nb) return;
+    this.broadcast(this.ensureSession(notebookId), "sources-updated", { notebook: toSummary(nb) });
   }
 }

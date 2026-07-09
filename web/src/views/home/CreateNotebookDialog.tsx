@@ -23,6 +23,9 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated, coach
   const [topic, setTopic] = useState("");
   const [title, setTitle] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [goal, setGoal] = useState("");
+  const [current, setCurrent] = useState("");
+  const [deadline, setDeadline] = useState("");
   const [creating, setCreating] = useState(false);
   const snackbar = useSnackbar();
 
@@ -33,6 +36,9 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated, coach
     setTopic("");
     setTitle("");
     setFiles([]);
+    setGoal("");
+    setCurrent("");
+    setDeadline("");
   };
 
   const close = () => {
@@ -47,7 +53,12 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated, coach
     try {
       const form = new FormData();
       form.set("type", mode);
-      if (coachFirst) form.set("coachFirst", "1");
+      if (coachFirst) {
+        form.set("coachFirst", "1");
+        if (goal.trim()) form.set("goal", goal.trim());
+        if (current.trim()) form.set("current", current.trim());
+        if (deadline.trim()) form.set("deadline", deadline.trim());
+      }
       if (title.trim()) form.set("title", title.trim());
       if (mode === "topic") {
         form.set("topic", topic.trim());
@@ -116,6 +127,27 @@ export function CreateNotebookDialog({ open, onClose, onCreate, onCreated, coach
         onChange={setTitle}
         supportingText="Leave blank to name it automatically"
       />
+
+      {coachFirst && (
+        <div className="create-nb__calibration">
+          <span className="create-nb__calibration-label label-large">
+            Help your coach calibrate <span className="create-nb__optional">(optional — skips the first questions)</span>
+          </span>
+          <TextField
+            label="What do you want to be able to do?"
+            value={goal}
+            onChange={setGoal}
+            supportingText="e.g. pass the final, build a small app, explain it in interviews"
+          />
+          <TextField
+            label="Where are you starting from?"
+            value={current}
+            onChange={setCurrent}
+            supportingText="e.g. total beginner, took the intro course, rusty"
+          />
+          <TextField label="Any deadline?" value={deadline} onChange={setDeadline} supportingText="e.g. exam on June 20" />
+        </div>
+      )}
     </Dialog>
   );
 }

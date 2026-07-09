@@ -12,10 +12,12 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@mozilla/readability": "^0.6.0",
+    "@napi-rs/canvas": "^1.0.2",
     "express": "^5.1.0",
     "jsdom": "^26.1.0",
     "multer": "^2.0.1",
     "pdf-parse": "1.1.1",
+    "pdfjs-dist": "^6.1.200",
     "turndown": "^7.2.4"
   },
   "devDependencies": {

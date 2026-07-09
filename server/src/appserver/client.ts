@@ -145,6 +145,8 @@ export class AppServerClient extends EventEmitter {
     timeoutMs?: number;
     /** Codex config overrides for the throwaway thread (e.g. { web_search: "live" }). */
     config?: Record<string, unknown>;
+    /** Host-readable image files attached after the prompt (localImage inputs). */
+    images?: string[];
     /** Aborting interrupts the ephemeral turn server-side and rejects promptly. */
     signal?: AbortSignal;
   }): Promise<string> {
@@ -216,7 +218,10 @@ export class AppServerClient extends EventEmitter {
     try {
       this.turnStart({
         threadId,
-        input: [{ type: "text", text: opts.prompt, text_elements: [] }],
+        input: [
+          { type: "text", text: opts.prompt, text_elements: [] },
+          ...(opts.images ?? []).map((path) => ({ type: "localImage" as const, path })),
+        ],
         model: opts.model,
         effort: opts.effort,
       })

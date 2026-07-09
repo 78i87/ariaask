@@ -248,6 +248,12 @@ export interface Notebook {
   cyraThreads?: CyraThread[];
   /** The learning-coach conversation. Absent = never opened in the coach shell. */
   coach?: CoachState;
+  /**
+   * Calibration answers gathered at project creation (coach shell). All
+   * optional; woven into the coach's pinned context and kickoff so the coach
+   * doesn't re-ask what's already answered.
+   */
+  coachIntake?: { goal?: string; current?: string; deadline?: string };
   /** Guided readings of PDF sources (see reading.ts). Absent = none yet. */
   readingSessions?: ReadingSession[];
   /**

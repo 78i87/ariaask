@@ -36,15 +36,24 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
   const [level, setLevel] = useState<ReadingLevel>("beginner");
   const [levelNudge, setLevelNudge] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  /** The new-reading form stays hidden behind its button while there are readings to continue. */
+  const [showNew, setShowNew] = useState(false);
 
   const pdfs = notebook.sourceFiles.filter((f) => f.storedName.toLowerCase().endsWith(".pdf") && f.extractedName);
 
   useEffect(() => {
     if (!open) return;
     setSessions(null);
+    setShowNew(false);
     api.listReadings(notebook.id).then(
-      (res) => setSessions([...res.sessions].reverse()),
-      () => setSessions([]),
+      (res) => {
+        setSessions([...res.sessions].reverse());
+        if (res.sessions.length === 0) setShowNew(true); // nothing to continue — go straight to the form
+      },
+      () => {
+        setSessions([]);
+        setShowNew(true);
+      },
     );
     // Scaffold fading (kb: scaffolds-to-independence): after ~5 uses of a
     // level, default the picker one step lighter and say why. The user can
@@ -108,9 +117,11 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
           <Button variant="text" onClick={onClose} disabled={creating}>
             Cancel
           </Button>
-          <Button onClick={() => void create()} disabled={!source || creating}>
-            {creating ? <ProgressIndicator size={18} /> : "Start reading"}
-          </Button>
+          {showNew && (
+            <Button onClick={() => void create()} disabled={!source || creating}>
+              {creating ? <ProgressIndicator size={18} /> : "Start reading"}
+            </Button>
+          )}
         </>
       }
     >
@@ -146,6 +157,13 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
         )
       )}
 
+      {!showNew ? (
+        <div className="rdd__section">
+          <Button variant="text" icon="add" onClick={() => setShowNew(true)}>
+            New guided reading
+          </Button>
+        </div>
+      ) : (
       <div className="rdd__section">
         <span className="rdd__label label-large">New guided reading</span>
         {pdfs.length === 0 ? (
@@ -187,6 +205,7 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
           </>
         )}
       </div>
+      )}
     </Dialog>
   );
 }

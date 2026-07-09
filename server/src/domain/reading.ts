@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AppServerClient } from "../appserver/client.js";
@@ -5,6 +6,7 @@ import { config } from "../config.js";
 import { HttpError } from "../lib/errors.js";
 import { extractPdfPageTexts } from "./extract.js";
 import { extractJsonObject } from "./learning.js";
+import { renderPdfPageImages } from "./pdf-images.js";
 import type { Notebook, NotebookStore, ReadingAnnotation, ReadingAnnotationKind, ReadingLevel, ReadingSession } from "./store.js";
 import type { SettingsStore } from "./settings.js";
 
@@ -29,6 +31,9 @@ const KINDS: ReadingAnnotationKind[] = ["pause", "simplify", "compare", "connect
 const BATCH_CHAR_BUDGET = 45_000;
 const ONE_SHOT_TIMEOUT_MS = 180_000;
 const MAX_ANNOTATIONS = 60;
+/** Page-image caps: enough for a paper or deck section, bounded for huge docs. */
+const MAX_IMAGE_PAGES = 24;
+const MAX_IMAGES_PER_BATCH = 12;
 
 /** Annotation density guidance per level (kb: scaffolds-to-independence). */
 const LEVEL_RULES: Record<ReadingLevel, string> = {
@@ -75,17 +80,35 @@ should act, and write a prompt for each. Rules:
 Output JSON only — no prose, no code fences:
 {"annotations":[{"page":<1-based page number>,"anchor":"<exact quote>","kind":"<kind>","prompt":"<prompt>"}],"afterReading":["<suggestion>", ...]}`;
 
-function buildBatchPrompt(nb: Notebook, level: ReadingLevel, pages: string[], startPage: number, batch: string[]): string {
+function buildBatchPrompt(
+  nb: Notebook,
+  level: ReadingLevel,
+  pages: string[],
+  startPage: number,
+  batch: string[],
+  imageCount: number,
+): string {
   const pageBlocks = batch
     .map((text, i) => `--- PAGE ${startPage + i} ---\n${text.trim() || "(no extractable text on this page)"}`)
     .join("\n\n");
   const context = nb.topic ?? nb.title;
+  const imagesNote =
+    imageCount > 0
+      ? `
+
+Attached are rendered images of pages ${startPage}-${startPage + imageCount - 1}, in order. Use
+them to SEE what text extraction drops: figures, diagrams, charts, equations, slide layouts.
+When a visual deserves the learner's attention, add an annotation about it — the prompt should
+address the visual ("the diagram of X on this page…"), the kind is usually connect, judge or
+apply, and the anchor must still be an exact quote of nearby text (the figure caption, or the
+closest distinctive line on that page) since highlights attach to text.`
+      : "";
   return `${READING_PROMPT_HEADER}
 
 ${LEVEL_RULES[level]}
 
 The learner is studying: ${context}.
-This batch covers pages ${startPage}-${startPage + batch.length - 1} of ${pages.length}. Annotate ONLY these pages.
+This batch covers pages ${startPage}-${startPage + batch.length - 1} of ${pages.length}. Annotate ONLY these pages.${imagesNote}
 
 ${pageBlocks}`;
 }
@@ -227,31 +250,69 @@ async function runGeneration(
     });
     if (current.length > 0) batches.push({ startPage: currentStart, texts: current });
 
+    // Page images give the model eyes for figures/diagrams/slides; fail-open,
+    // capped, and cleaned up after the calls land.
+    const wantedPages = batches.flatMap((b) => b.texts.map((_, i) => b.startPage + i)).slice(0, MAX_IMAGE_PAGES);
+    const { dir: imageDir, images } = await renderPdfPageImages(
+      path.join(store.sourcesDir(notebookId), storedName),
+      wantedPages,
+    );
+
     const s = settings.get();
     const t0 = Date.now();
     const annotations: ReadingAnnotation[] = [];
-    const afterReading: string[] = [];
-    for (const batch of batches) {
-      const raw = await client.runOneShotTurn({
-        prompt: buildBatchPrompt(nb, level, pages, batch.startPage, batch.texts),
-        model: s.model,
-        effort: config.readingEffort,
-        cwd: store.sourcesDir(notebookId),
-        timeoutMs: ONE_SHOT_TIMEOUT_MS,
-      });
-      const parsed = parseBatchOutput(raw, pages, batch.startPage, batch.texts.length);
-      annotations.push(...parsed.annotations);
-      // afterReading from the last batch wins (it has seen the document's end);
-      // earlier batches' suggestions are kept only if the last batch offers none.
-      if (parsed.afterReading.length > 0) {
-        afterReading.splice(0, afterReading.length, ...parsed.afterReading);
+    const afterByBatch: string[][] = batches.map(() => []);
+
+    try {
+      // Batches run CONCURRENTLY (independent ephemeral one-shots), and each
+      // batch's annotations persist as soon as it lands — the reading view
+      // polls, so prompts appear incrementally instead of all at the end.
+      const results = await Promise.allSettled(
+        batches.map(async (batch, bi) => {
+          const batchImages = batch.texts
+            .map((_, i) => images.get(batch.startPage + i))
+            .filter((p): p is string => p !== undefined)
+            .slice(0, MAX_IMAGES_PER_BATCH);
+          const run = (withImages: boolean) =>
+            client.runOneShotTurn({
+              prompt: buildBatchPrompt(nb, level, pages, batch.startPage, batch.texts, withImages ? batchImages.length : 0),
+              model: s.model,
+              effort: config.readingEffort,
+              cwd: store.sourcesDir(notebookId),
+              timeoutMs: ONE_SHOT_TIMEOUT_MS,
+              images: withImages ? batchImages : undefined,
+            });
+          let raw: string;
+          try {
+            raw = await run(batchImages.length > 0);
+          } catch (err) {
+            if (batchImages.length === 0) throw err;
+            // Image inputs are newer protocol surface — degrade to text-only
+            // rather than failing the batch.
+            console.error(`[aria] reading: batch with images failed, retrying text-only:`, err instanceof Error ? err.message : err);
+            raw = await run(false);
+          }
+          const parsed = parseBatchOutput(raw, pages, batch.startPage, batch.texts.length);
+          annotations.push(...parsed.annotations);
+          afterByBatch[bi] = parsed.afterReading;
+          annotations.sort((a, b) => a.page - b.page);
+          await finish({ annotations: annotations.slice(0, MAX_ANNOTATIONS) }); // incremental delivery
+        }),
+      );
+      if (results.every((r) => r.status === "rejected")) {
+        const first = results[0] as PromiseRejectedResult | undefined;
+        throw first?.reason instanceof Error ? first.reason : new Error("annotation pass failed");
       }
-      if (annotations.length >= MAX_ANNOTATIONS) break;
+    } finally {
+      await fs.rm(imageDir, { recursive: true, force: true }).catch(() => {});
     }
+
+    // The last batch's suggestions win (it has seen the document's end).
+    const afterReading = [...afterByBatch].reverse().find((a) => a.length > 0) ?? [];
 
     annotations.sort((a, b) => a.page - b.page);
     console.log(
-      `[aria] reading: ${annotations.length} annotation(s) across ${pages.length} page(s) for session ${sessionId} in ${Date.now() - t0}ms`,
+      `[aria] reading: ${annotations.length} annotation(s) across ${pages.length} page(s) (${images.size} page image(s)) for session ${sessionId} in ${Date.now() - t0}ms`,
     );
     if (annotations.length === 0 && afterReading.length === 0) {
       await finish({ status: "failed", error: "The coach couldn't prepare this reading. Try again." });

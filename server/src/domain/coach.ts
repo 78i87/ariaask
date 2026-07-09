@@ -30,6 +30,18 @@ How you coach:
 - Recommend ONE concrete next action per reply — the technique, exactly how to do it on
   their material, and the one mistake most likely to ruin it. Name the technique so they
   can build a vocabulary. Offer an alternative only when the choice genuinely matters.
+- Every next action must be self-explanatory. Say in one plain clause why it's worth
+  doing; never issue a cryptic labeled instruction (a bare tag like "edge-case check"
+  means nothing to the user). If they would have to ask "why are you asking me that?",
+  rewrite it before sending.
+- To check understanding interactively, you may include at most ONE quiz per reply as a
+  fenced code block with language "quiz" containing exactly this JSON shape:
+  \`\`\`quiz
+  {"question":"…","options":["…","…","…"],"answerIndex":0,"explanation":"one sentence shown after they answer"}
+  \`\`\`
+  The app renders it as a clickable card. Use it when retrieval genuinely helps (after
+  they've learned something, before building on it) — never as decoration, and prefer
+  options whose wrong answers each embody a real misconception.
 - Match technique to task and stage, and say WHY in one sentence (e.g. flashcards excel
   at exact isolated facts but can't build understanding; worked examples are for novices
   and become counterproductive once the basics click). Watch for stage transitions and
@@ -218,6 +230,10 @@ export function buildCoachInstructions(nb: Notebook, mode: CoachMode): string {
   if (nb.topic ?? nb.title) {
     text += `\n\nWhat they are working on learning: ${nb.topic ?? nb.title}.`;
   }
+  const intake = nb.coachIntake;
+  if (intake?.goal) text += `\nWhat they want to be able to do: ${intake.goal}.`;
+  if (intake?.current) text += `\nWhere they said they're starting from: ${intake.current}.`;
+  if (intake?.deadline) text += `\nTheir deadline: ${intake.deadline}.`;
   if (nb.sourceFiles.length > 0) {
     text += COACH_SOURCES_CONTEXT(sourcesManifest(nb.sourceFiles));
   }
@@ -232,15 +248,27 @@ export function buildCoachInstructions(nb: Notebook, mode: CoachMode): string {
 export function buildCoachKickoffPrompt(nb: Notebook): string {
   const subject = nb.topic ?? nb.title;
   const hasSources = nb.sourceFiles.length > 0;
+  const intake = nb.coachIntake;
+  const answered = [
+    intake?.goal ? `what they want to be able to do ("${intake.goal}")` : null,
+    intake?.current ? `where they're starting from ("${intake.current}")` : null,
+    intake?.deadline ? `their deadline ("${intake.deadline}")` : null,
+  ].filter((s): s is string => s !== null);
+  const calibration =
+    answered.length > 0
+      ? `They already answered at creation: ${answered.join("; ")}. Do NOT re-ask those — if
+anything important is still missing, ask for just that; otherwise propose a concrete first
+move based on what they said and ask them to confirm or correct your read.`
+      : `Then calibrate: ask the one or two questions whose answers most change what you'd
+recommend first (typically: what exactly they want to be able to DO with this, where they
+currently stand with it, and any deadline). If the project name or materials already make
+some of that obvious, don't ask about it — instead propose a concrete first move and ask
+them to confirm or correct your read.`;
   return `[SYSTEM: This is the start of the coaching relationship. The user has just created a
 learning project${subject ? ` called "${subject}"` : ""}${hasSources ? ", and has already added study materials (see your working directory)" : ""}.
 
 Greet them briefly as their learning coach — one or two sentences, no lecture about
-learning science. Then calibrate: ask the one or two questions whose answers most change
-what you'd recommend first (typically: what exactly they want to be able to DO with this,
-where they currently stand with it, and any deadline). If the project name or materials
-already make some of that obvious, don't ask about it — instead propose a concrete first
-move and ask them to confirm or correct your read. Keep the whole message short.]`;
+learning science. ${calibration} Keep the whole message short.]`;
 }
 
 /**

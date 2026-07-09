@@ -1,15 +1,129 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
+import { isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
+import { annotateTechniques, techniqueTip } from "../../lib/techniques";
 import { useCoachThread } from "../../lib/useCoachThread";
 import type { CoachChatMessage } from "../../lib/types";
 import { Composer } from "../session/Composer";
 import { ThinkingIndicator } from "../session/ThinkingIndicator";
 import "./CoachChatView.css";
+
+// ---------- interactive quiz blocks (```quiz fenced JSON) ----------
+
+interface QuizSpec {
+  question: string;
+  options: string[];
+  answerIndex: number;
+  explanation?: string;
+}
+
+function parseQuiz(source: string): QuizSpec | null {
+  try {
+    const q = JSON.parse(source) as Partial<QuizSpec>;
+    if (
+      typeof q.question !== "string" ||
+      !Array.isArray(q.options) ||
+      q.options.length < 2 ||
+      !q.options.every((o) => typeof o === "string") ||
+      typeof q.answerIndex !== "number" ||
+      q.answerIndex < 0 ||
+      q.answerIndex >= q.options.length
+    ) {
+      return null;
+    }
+    return q as QuizSpec;
+  } catch {
+    return null;
+  }
+}
+
+/** A click-to-answer check-for-understanding card the coach can emit. */
+function QuizCard({ quiz }: { quiz: QuizSpec }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const answered = picked !== null;
+  return (
+    <div className="quiz">
+      <div className="quiz__question body-large">
+        <Icon name="psychology" size={18} />
+        {quiz.question}
+      </div>
+      {quiz.options.map((opt, i) => {
+        const state = !answered ? "" : i === quiz.answerIndex ? " quiz__option--correct" : i === picked ? " quiz__option--wrong" : " quiz__option--dim";
+        return (
+          <button
+            key={i}
+            type="button"
+            className={`quiz__option body-medium${state}`}
+            disabled={answered}
+            onClick={() => setPicked(i)}
+          >
+            {answered && i === quiz.answerIndex && <Icon name="check" size={16} />}
+            {answered && i === picked && i !== quiz.answerIndex && <Icon name="close" size={16} />}
+            {opt}
+          </button>
+        );
+      })}
+      {answered && (
+        <div className={`quiz__result body-medium${picked === quiz.answerIndex ? " quiz__result--correct" : ""}`}>
+          {picked === quiz.answerIndex ? "Right. " : "Not quite. "}
+          {quiz.explanation ?? ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- markdown renderer with technique chips + quiz cards ----------
+
+function childText(node: ReactNode): string {
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(childText).join("");
+  if (isValidElement(node)) return childText((node.props as { children?: ReactNode }).children);
+  return "";
+}
+
+const COACH_MD_COMPONENTS: Components = {
+  a({ href, children }) {
+    if (href?.startsWith("#tech-")) {
+      const tip = techniqueTip(href.slice("#tech-".length));
+      return (
+        <span className="tech-term" data-tip={tip}>
+          {children}
+        </span>
+      );
+    }
+    return (
+      <a href={href} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    );
+  },
+  pre({ children }) {
+    const child = Array.isArray(children) ? children[0] : children;
+    if (isValidElement(child)) {
+      const props = child.props as { className?: string; children?: ReactNode };
+      if ((props.className ?? "").includes("language-quiz")) {
+        const quiz = parseQuiz(childText(props.children).trim());
+        if (quiz) return <QuizCard quiz={quiz} />;
+      }
+    }
+    return <pre>{children}</pre>;
+  },
+};
+
+/** Coach markdown with technique-name chips (hover for the tip) and quiz cards. */
+function CoachMarkdown({ text }: { text: string }) {
+  const annotated = useMemo(() => annotateTechniques(text), [text]);
+  return (
+    <Markdown remarkPlugins={[remarkGfm]} components={COACH_MD_COMPONENTS}>
+      {annotated}
+    </Markdown>
+  );
+}
 
 export function CoachAvatar({ pulsing }: { pulsing?: boolean }) {
   return (
@@ -55,7 +169,7 @@ function CoachBubble({ message, onCopy, onEdit }: CoachBubbleProps) {
           {streaming ? (
             <span className="msg__streaming-text">{message.text}</span>
           ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+            <CoachMarkdown text={message.text} />
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}

@@ -46,3 +46,112 @@
 .msg__bubble--coach blockquote {
   border-left-color: var(--md-sys-color-secondary);
 }
+
+/* ---------- technique chips (hover for the one-line tip) ---------- */
+
+.tech-term {
+  position: relative;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-radius: 6px;
+  padding: 0 5px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+.tech-term::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.tech-term:hover::after,
+.tech-term:focus-within::after {
+  opacity: 1;
+}
+
+/* ---------- quiz cards (```quiz fenced blocks) ---------- */
+
+.quiz {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.quiz__question {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 600;
+}
+
+.quiz__question .m3-icon {
+  color: var(--md-sys-color-secondary);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.quiz__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.quiz__option:hover:not(:disabled) {
+  background: var(--md-sys-color-surface-container);
+}
+
+.quiz__option:disabled {
+  cursor: default;
+}
+
+.quiz__option--correct {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.quiz__option--wrong {
+  border-color: var(--md-sys-color-error);
+  color: var(--md-sys-color-error);
+}
+
+.quiz__option--dim {
+  opacity: 0.55;
+}
+
+.quiz__result {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.quiz__result--correct {
+  color: var(--md-sys-color-primary);
+}

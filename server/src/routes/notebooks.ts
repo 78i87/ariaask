@@ -165,6 +165,11 @@ export function notebookRoutes(
         // call generating intake questions.
         nb.createdVia = "coach";
         ensureCoachState(nb);
+        const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 300) : undefined);
+        const goal = clip(body.goal);
+        const current = clip(body.current);
+        const deadline = clip(body.deadline);
+        if (goal || current || deadline) nb.coachIntake = { goal, current, deadline };
       } else if (!config.intakeDisabled) {
         nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
       }

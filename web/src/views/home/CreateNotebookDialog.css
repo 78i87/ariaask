@@ -27,3 +27,20 @@
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
+
+.create-nb__calibration {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.create-nb__calibration-label {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.create-nb__optional {
+  font-weight: 400;
+}

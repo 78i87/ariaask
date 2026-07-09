@@ -122,14 +122,19 @@ export interface ThreadResumeResponse {
 
 // ---------- turns ----------
 
-// source: v2/UserInput.ts (text variant; other variants unused by Aria)
+// source: v2/UserInput.ts (text + localImage variants; others unused by Aria)
 export interface TextUserInput {
   type: "text";
   text: string;
   /** UI-defined spans within `text`; always [] for Aria. */
   text_elements: unknown[];
 }
-export type UserInput = TextUserInput;
+/** A host-readable image file attached to the turn (used by guided reading for page renders). */
+export interface LocalImageUserInput {
+  type: "localImage";
+  path: string;
+}
+export type UserInput = TextUserInput | LocalImageUserInput;
 
 // source: ReasoningEffort.ts
 export type ReasoningEffort = string;

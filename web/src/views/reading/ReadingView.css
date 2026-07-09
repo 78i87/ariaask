@@ -120,18 +120,23 @@
 
 /* ---------- highlights (kind-tinted, visible under transparent text) ---------- */
 
+/* The box-shadow fattens the highlight beyond the glyph box — text-layer
+   spans hug the font metrics tightly, which reads as a too-thin marker line
+   (especially on slide-deck PDFs). */
 .rd-hl {
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: 3px;
+  background: var(--hl);
+  box-shadow: 0 0 0 3.5px var(--hl);
 }
 
-.rd-hl--pause     { background: rgba(255, 179, 0, 0.32); }
-.rd-hl--simplify  { background: rgba(66, 165, 245, 0.30); }
-.rd-hl--compare   { background: rgba(171, 71, 188, 0.28); }
-.rd-hl--connect   { background: rgba(38, 166, 154, 0.30); }
-.rd-hl--judge     { background: rgba(239, 83, 80, 0.28); }
-.rd-hl--apply     { background: rgba(124, 179, 66, 0.32); }
-.rd-hl--technique { background: rgba(141, 110, 99, 0.30); }
+.rd-hl--pause     { --hl: rgba(255, 179, 0, 0.32); }
+.rd-hl--simplify  { --hl: rgba(66, 165, 245, 0.30); }
+.rd-hl--compare   { --hl: rgba(171, 71, 188, 0.28); }
+.rd-hl--connect   { --hl: rgba(38, 166, 154, 0.30); }
+.rd-hl--judge     { --hl: rgba(239, 83, 80, 0.28); }
+.rd-hl--apply     { --hl: rgba(124, 179, 66, 0.32); }
+.rd-hl--technique { --hl: rgba(141, 110, 99, 0.30); }
 
 .rd-hl--selected {
   outline: 2px solid var(--md-sys-color-primary);

@@ -14,8 +14,11 @@ excerpts into each coach turn.
 - `techniques/` — one doc per technique. The coach's recommendation menu.
 - `guides/` — synthesis guides: `technique-selection.md` (task × stage → technique,
   the most load-bearing doc) and `skill-acquisition.md` (RAIL).
-- `transcripts/` — cleaned full video transcripts (retrieval depth; timestamps and
-  filler removed).
+- `transcripts/` — cleaned full video transcripts (extra retrieval depth). **Gitignored
+  and not published** — these are verbatim transcripts of copyrighted videos, kept only
+  in local checkouts. The distilled docs above are the extracted, original-writing
+  version of everything coachable in them, so the coach works fully without the
+  transcripts; they just add verbatim texture to retrieval on a machine that has them.
 
 ## Doc schema
 

@@ -3,3 +3,6 @@ data/
 dist/
 *.log
 .DS_Store
+
+# Verbatim video transcripts — kept locally for KB retrieval depth, not published (copyright).
+kb/transcripts/

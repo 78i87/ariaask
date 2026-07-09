@@ -70,22 +70,48 @@
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 10px;
   width: max-content;
-  max-width: min(300px, calc(100vw - 16px));
-  padding: 10px 12px;
-  border-radius: 10px;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 16px 18px;
+  border-radius: 16px;
   background: var(--md-sys-color-inverse-surface);
   color: var(--md-sys-color-inverse-on-surface);
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-family: var(--aria-font-sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  letter-spacing: 0.1px;
   white-space: normal;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .tech-tooltip__title {
+  font-size: 14.5px;
   font-weight: 700;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--md-sys-color-inverse-on-surface) 22%, transparent);
+}
+
+/* Aligned eyebrow labels keep the three rows scannable at a glance. */
+.tech-tooltip__row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.tech-tooltip__eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--md-sys-color-inverse-primary);
+}
+
+.tech-tooltip__text strong {
+  font-weight: 700;
+  color: var(--md-sys-color-inverse-primary);
 }
 
 /* ---------- quiz cards (```quiz fenced blocks) ---------- */

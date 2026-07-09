@@ -15,6 +15,11 @@ import "./CoachChatView.css";
 
 // ---------- technique chips with a viewport-aware floating tooltip ----------
 
+/** Render the `**bold**` markers the technique one-liners use for key words. */
+function emphasize(text: string): ReactNode[] {
+  return text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
+}
+
 /**
  * A technique-name chip whose tooltip is position:fixed (escapes the chat
  * scroller's overflow clipping), measured after render, flipped below the
@@ -39,6 +44,8 @@ function TechTerm({ slug, children }: { slug: string; children: ReactNode }) {
     const margin = 8;
     let top = term.top - tip.height - 6;
     if (top < margin) top = term.bottom + 6; // flip below when clipped by the viewport top / header
+    // Final clamp: on short viewports even the flipped side can overflow.
+    top = Math.min(Math.max(top, margin), Math.max(window.innerHeight - tip.height - margin, margin));
     let left = term.left;
     left = Math.min(Math.max(left, margin), window.innerWidth - tip.width - margin);
     setPos({ left, top });
@@ -82,11 +89,17 @@ function TechTerm({ slug, children }: { slug: string; children: ReactNode }) {
           style={pos ? { left: pos.left, top: pos.top, visibility: "visible" } : { left: 0, top: 0, visibility: "hidden" }}
         >
           <span className="tech-tooltip__title">{info.label}</span>
-          <span>
-            <strong>Why</strong> — {info.why}
+          <span className="tech-tooltip__row">
+            <span className="tech-tooltip__eyebrow">What</span>
+            <span className="tech-tooltip__text">{emphasize(info.what)}</span>
           </span>
-          <span>
-            <strong>When</strong> — {info.when}
+          <span className="tech-tooltip__row">
+            <span className="tech-tooltip__eyebrow">Why</span>
+            <span className="tech-tooltip__text">{emphasize(info.why)}</span>
+          </span>
+          <span className="tech-tooltip__row">
+            <span className="tech-tooltip__eyebrow">When</span>
+            <span className="tech-tooltip__text">{emphasize(info.when)}</span>
           </span>
         </div>
       )}

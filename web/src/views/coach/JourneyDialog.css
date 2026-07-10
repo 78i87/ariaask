@@ -103,3 +103,94 @@
 .jrn__add {
   margin-top: 4px;
 }
+
+/* ---------- study plan section ---------- */
+
+.jrn__plan {
+  margin-bottom: 16px;
+}
+
+.jrn__plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.jrn__plan-head .jrn__section-label {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.jrn__plan-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--md-sys-color-surface-container-highest);
+  overflow: hidden;
+}
+
+.jrn__plan-fill {
+  height: 100%;
+  background: var(--md-sys-color-primary);
+  transition: width 0.3s ease;
+}
+
+.jrn__task {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--md-sys-shape-corner-medium);
+}
+
+.jrn__task--next {
+  background: var(--md-sys-color-surface-container);
+}
+
+.jrn__task--done .jrn__task-title,
+.jrn__task--done .jrn__task-detail {
+  text-decoration: line-through;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.jrn__task-check {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: none;
+  color: var(--md-sys-color-on-primary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.jrn__task--done .jrn__task-check {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-primary);
+}
+
+.jrn__task-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.jrn__task-detail {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.jrn__task .m3-button {
+  flex-shrink: 0;
+}
+
+.jrn__plan-hint {
+  margin-bottom: 12px;
+}

@@ -175,6 +175,25 @@ export interface DueTopic {
   entryCount: number;
 }
 
+/** One step of a study plan — one study block's worth of work. */
+export interface StudyPlanTask {
+  id: string;
+  title: string;
+  detail: string;
+  topic?: string;
+  status: "pending" | "done";
+  completedAt?: string;
+}
+
+/** The project's study plan (one per project; re-confirming replaces it). */
+export interface StudyPlan {
+  id: string;
+  source: "coach" | "user";
+  createdAt: string;
+  updatedAt: string;
+  tasks: StudyPlanTask[];
+}
+
 /** A due topic with its project, for the cross-project sidebar strip. */
 export interface GlobalDueTopic {
   notebookId: string;

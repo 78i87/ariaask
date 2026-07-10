@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "../../components/Button";
 import { Chip } from "../../components/Chip";
 import { Dialog } from "../../components/Dialog";
+import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { TextField } from "../../components/TextField";
 import { useSnackbar } from "../../components/Snackbar";
@@ -16,6 +17,10 @@ interface JourneyDialogProps {
   onClose: () => void;
   /** Start a spaced return on this topic in the coach chat. */
   onQuickReturn: (topic: string) => void;
+  /** Start working on a plan task in the coach chat. */
+  onStartTask: (position: number, title: string) => void;
+  /** Ask the coach to draft a study plan in the chat. */
+  onRequestPlan: () => void;
 }
 
 interface EntryDraft {
@@ -66,14 +71,34 @@ const FIELD_ROWS: { key: keyof EntryDraft; label: string }[] = [
  * (the "folders" of a project), due-return chips on top, inline edit, and a
  * deliberately buried manual add form — the coach normally drafts entries.
  */
-export function JourneyDialog({ open, notebookId, onClose, onQuickReturn }: JourneyDialogProps) {
-  const { entries, due, refresh } = useJourney();
+export function JourneyDialog({ open, notebookId, onClose, onQuickReturn, onStartTask, onRequestPlan }: JourneyDialogProps) {
+  const { entries, due, plan, refresh, setTaskStatus } = useJourney();
   const snackbar = useSnackbar();
   const [filter, setFilter] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EntryDraft>(EMPTY_DRAFT);
   const [adding, setAdding] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LearningLogEntry | null>(null);
+  const [planDeleteOpen, setPlanDeleteOpen] = useState(false);
+
+  const nextTaskIdx = plan?.tasks.findIndex((t) => t.status === "pending") ?? -1;
+  const doneCount = plan?.tasks.filter((t) => t.status === "done").length ?? 0;
+
+  const toggleTask = (taskId: string, done: boolean) => {
+    void setTaskStatus(taskId, done ? "done" : "pending").catch((err) =>
+      snackbar.show(err instanceof Error ? err.message : "Couldn't update the task"),
+    );
+  };
+
+  const confirmPlanDelete = async () => {
+    setPlanDeleteOpen(false);
+    try {
+      await api.deletePlan(notebookId);
+      refresh();
+    } catch (err) {
+      snackbar.show(err instanceof Error ? err.message : "Couldn't delete the plan");
+    }
+  };
 
   const sorted = useMemo(() => [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [entries]);
   const topics = useMemo(() => {
@@ -154,6 +179,49 @@ export function JourneyDialog({ open, notebookId, onClose, onQuickReturn }: Jour
           </Button>
         }
       >
+        {plan && plan.tasks.length > 0 ? (
+          <section className="jrn__plan">
+            <div className="jrn__plan-head">
+              <span className="jrn__section-label label-medium">
+                Study plan · {doneCount} of {plan.tasks.length} done
+              </span>
+              <div className="jrn__plan-bar" role="progressbar" aria-valuemin={0} aria-valuemax={plan.tasks.length} aria-valuenow={doneCount}>
+                <div className="jrn__plan-fill" style={{ width: `${(doneCount / plan.tasks.length) * 100}%` }} />
+              </div>
+              <IconButton icon="delete" ariaLabel="Delete plan" onClick={() => setPlanDeleteOpen(true)} />
+            </div>
+            {plan.tasks.map((t, i) => (
+              <div key={t.id} className={`jrn__task${t.status === "done" ? " jrn__task--done" : ""}${i === nextTaskIdx ? " jrn__task--next" : ""}`}>
+                <button
+                  type="button"
+                  className="jrn__task-check"
+                  aria-label={t.status === "done" ? `Mark "${t.title}" not done` : `Mark "${t.title}" done`}
+                  onClick={() => toggleTask(t.id, t.status !== "done")}
+                >
+                  {t.status === "done" && <Icon name="check" size={14} />}
+                </button>
+                <div className="jrn__task-body">
+                  <span className="jrn__task-title body-medium">
+                    {i + 1}. {t.title}
+                  </span>
+                  {t.detail && <span className="jrn__task-detail body-medium">{t.detail}</span>}
+                </div>
+                {i === nextTaskIdx && (
+                  <Button variant="text" onClick={() => onStartTask(i + 1, t.title)}>
+                    Start
+                  </Button>
+                )}
+              </div>
+            ))}
+          </section>
+        ) : (
+          <div className="jrn__plan-hint">
+            <Button variant="text" icon="checklist" onClick={onRequestPlan}>
+              Ask your coach for a study plan
+            </Button>
+          </div>
+        )}
+
         {due.length > 0 && (
           <div className="jrn__due">
             <span className="jrn__section-label label-medium">Worth a quick return</span>
@@ -257,6 +325,27 @@ export function JourneyDialog({ open, notebookId, onClose, onQuickReturn }: Jour
             </Button>
           </div>
         )}
+      </Dialog>
+
+      <Dialog
+        open={planDeleteOpen}
+        onClose={() => setPlanDeleteOpen(false)}
+        icon="delete"
+        headline="Delete the study plan?"
+        actions={
+          <>
+            <Button variant="text" onClick={() => setPlanDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button destructive onClick={() => void confirmPlanDelete()}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <span className="body-medium">
+          All {plan?.tasks.length ?? 0} tasks go with it ({doneCount} done). Your log entries stay.
+        </span>
       </Dialog>
 
       <Dialog

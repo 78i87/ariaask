@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
-import type { LearningLogEntry, NotebookStore, SourceFile } from "../domain/store.js";
+import type { LearningLogEntry, NotebookStore, SourceFile, StudyPlanTask } from "../domain/store.js";
 import { ensureCoachState, sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
 import { SESSION_GAP_MS, computeDueTopics } from "../domain/journey.js";
 import type { SessionManager } from "../domain/session.js";
@@ -720,6 +720,82 @@ export function notebookRoutes(
     const before = nb.learningLog?.length ?? 0;
     nb.learningLog = (nb.learningLog ?? []).filter((e) => e.id !== req.params.eid);
     if (nb.learningLog.length === before) throw new HttpError(404, "log_entry_not_found");
+    await store.save(nb);
+    res.status(204).end();
+  });
+
+  // ---------- Study plan (journey.ts) ----------
+
+  router.get("/:id/plan", (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    res.json({ plan: nb.studyPlan ?? null });
+  });
+
+  // Create or replace the plan. Idempotent on the plan id ("plan:<messageId>"
+  // for coach-drafted plans) so re-confirming the same in-chat card is a no-op.
+  router.post("/:id/plan", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const body = (req.body ?? {}) as { id?: unknown; source?: unknown; tasks?: unknown };
+    const planId = typeof body.id === "string" && body.id.trim() ? body.id.trim().slice(0, 100) : randomUUID();
+    if (nb.studyPlan && nb.studyPlan.id === planId) {
+      res.json({ plan: nb.studyPlan });
+      return;
+    }
+    const clip = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const rawTasks = Array.isArray(body.tasks) ? body.tasks : [];
+    const tasks: StudyPlanTask[] = [];
+    for (const raw of rawTasks.slice(0, 30)) {
+      const t = (raw ?? {}) as Record<string, unknown>;
+      const title = clip(t.title, 120);
+      if (!title) continue;
+      const topic = clip(t.topic, 120);
+      tasks.push({
+        id: randomUUID(),
+        title,
+        detail: clip(t.detail, 400),
+        ...(topic ? { topic } : {}),
+        status: "pending",
+      });
+    }
+    if (tasks.length === 0) throw new HttpError(400, "missing_tasks", "A plan needs at least one task");
+    const now = new Date().toISOString();
+    nb.studyPlan = {
+      id: planId,
+      source: body.source === "coach" ? "coach" : "user",
+      createdAt: now,
+      updatedAt: now,
+      tasks,
+    };
+    await store.save(nb);
+    usage.recordUse("study-plan");
+    res.status(201).json({ plan: nb.studyPlan });
+  });
+
+  // Tick a task off (or back on) — the completion signal that advances the plan.
+  router.patch("/:id/plan/tasks/:tid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const task = nb.studyPlan?.tasks.find((t) => t.id === req.params.tid);
+    if (!nb.studyPlan || !task) throw new HttpError(404, "plan_task_not_found");
+    const body = (req.body ?? {}) as { status?: unknown };
+    if (body.status !== "pending" && body.status !== "done") {
+      throw new HttpError(400, "invalid_status", 'status must be "pending" or "done"');
+    }
+    task.status = body.status;
+    if (body.status === "done") task.completedAt = new Date().toISOString();
+    else delete task.completedAt;
+    nb.studyPlan.updatedAt = new Date().toISOString();
+    await store.save(nb);
+    res.json({ plan: nb.studyPlan });
+  });
+
+  router.delete("/:id/plan", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (!nb.studyPlan) throw new HttpError(404, "plan_not_found");
+    delete nb.studyPlan;
     await store.save(nb);
     res.status(204).end();
   });

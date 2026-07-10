@@ -1,4 +1,4 @@
-import type { CoachMessage, LearningLogEntry, Notebook } from "./store.js";
+import type { CoachMessage, LearningLogEntry, Notebook, StudyPlanTask } from "./store.js";
 
 /**
  * The study-journey layer: sessions, the learning log, and loose spaced
@@ -94,6 +94,46 @@ const describeGap = (ms: number): string => {
   return days === 1 ? "1 day" : `${days} days`;
 };
 
+/** The next pending task with its 1-based position, or null. */
+export function nextPlanTask(nb: Notebook): { task: StudyPlanTask; position: number; total: number } | null {
+  const tasks = nb.studyPlan?.tasks ?? [];
+  const idx = tasks.findIndex((t) => t.status === "pending");
+  if (idx < 0) return null;
+  return { task: tasks[idx]!, position: idx + 1, total: tasks.length };
+}
+
+/**
+ * The hidden [PLAN] preamble for coach turns: compact plan state so the coach
+ * always knows where the learner is and what comes next. "" when no plan.
+ */
+export function renderPlanBlock(nb: Notebook): string {
+  const plan = nb.studyPlan;
+  if (!plan || plan.tasks.length === 0) return "";
+  const done = plan.tasks.filter((t) => t.status === "done").length;
+  const next = nextPlanTask(nb);
+  const lines: string[] = [];
+  lines.push(
+    `[PLAN — the user never sees this block. This project's study plan: ${done} of ${plan.tasks.length} tasks done.`,
+  );
+  if (next) {
+    lines.push(`Next up: task ${next.position} — "${next.task.title}": ${next.task.detail}`);
+    const upcoming = plan.tasks
+      .filter((t) => t.status === "pending")
+      .slice(1, 3)
+      .map((t) => `"${t.title}"`);
+    if (upcoming.length > 0) lines.push(`Then: ${upcoming.join("; ")}.`);
+    lines.push(
+      `When they finish a task's work in conversation, remind them ONCE to tick it off in the Journey panel. If they ask to restructure the plan, emit a revised \`\`\`plan block with the full task list.`,
+    );
+  } else {
+    lines.push(
+      `Every task is done — congratulate them once, then coach consolidation (spaced retrieval on weak topics) or offer a follow-up plan.`,
+    );
+  }
+  lines.push(`Never mention this block. The user's message follows.]`);
+  return lines.join("\n") + "\n\n";
+}
+
 /**
  * The hidden [SESSION] preamble for a coach turn that opens a new study block
  * (previous message more than SESSION_GAP_MS ago). Carries what the model
@@ -140,6 +180,12 @@ export function buildSessionBlock(
       `Topics due for a spaced return: ${due
         .map((d) => `"${d.topic}" (${d.daysSince} days since, ${d.entryCount} ${d.entryCount === 1 ? "entry" : "entries"})`)
         .join(", ")}.`,
+    );
+  }
+  const next = nextPlanTask(nb);
+  if (next) {
+    lines.push(
+      `Their study plan's next task: "${next.task.title}" (task ${next.position} of ${next.total}) — offer it as one of today's target options.`,
     );
   }
   if (prevUnlogged) {

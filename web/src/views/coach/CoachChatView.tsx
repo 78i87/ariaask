@@ -6,9 +6,10 @@ import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
 import { annotateTechniques } from "../../lib/techniques";
-import { GOAL_PREFIX, WRAP_UP_MESSAGE, CONTINUE_MESSAGE, quickReturnMessage } from "../../lib/journeyMessages";
+import { GOAL_PREFIX, WRAP_UP_MESSAGE, CONTINUE_MESSAGE, quickReturnMessage, startTaskMessage } from "../../lib/journeyMessages";
 import { TechTerm, TechText } from "./TechTerm";
 import { LogEntryCard, parseLog } from "./LogEntryCard";
+import { PlanCard, parsePlan } from "./PlanCard";
 import { useJourney } from "./journeyContext";
 import { useCoachThread, type CoachStatus } from "../../lib/useCoachThread";
 import type { CoachChatMessage } from "../../lib/types";
@@ -195,6 +196,10 @@ const COACH_MD_COMPONENTS: Components = {
         const log = parseLog(childText(props.children).trim());
         if (log) return <LogEntryCard spec={log} />;
       }
+      if (cls.includes("language-plan")) {
+        const plan = parsePlan(childText(props.children).trim());
+        if (plan) return <PlanCard spec={plan} />;
+      }
     }
     return <pre>{children}</pre>;
   },
@@ -222,7 +227,7 @@ const CLIENT_SESSION_GAP_MS = 4 * 60 * 60 * 1000; // mirrors journey.ts SESSION_
  * into a welcome-back strip with due-topic returns and a continue button.
  */
 function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; status: CoachStatus; send: (text: string) => void }) {
-  const { entries, due } = useJourney();
+  const { entries, due, plan } = useJourney();
   const [now, setNow] = useState(() => Date.now());
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
@@ -243,6 +248,8 @@ function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; 
     const lastEntry = sorted[sorted.length - 1];
     const days = Math.round(gap / 86_400_000);
     const agoLabel = gap < 86_400_000 ? "earlier today" : days <= 1 ? "yesterday" : `${days} days ago`;
+    const nextIdx = plan?.tasks.findIndex((t) => t.status === "pending") ?? -1;
+    const nextTask = nextIdx >= 0 ? plan!.tasks[nextIdx]! : null;
     return (
       <div className="sbar sbar--return">
         <div className="sbar__info">
@@ -252,6 +259,17 @@ function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; 
           {lastEntry?.nextMove && <span className="sbar__next body-medium">Next move was: {lastEntry.nextMove}</span>}
         </div>
         <div className="sbar__actions">
+          {nextTask && (
+            <button
+              type="button"
+              className="sbar__chip sbar__chip--primary label-medium"
+              title={nextTask.detail || nextTask.title}
+              onClick={() => send(startTaskMessage(nextIdx + 1, nextTask.title))}
+            >
+              <Icon name="checklist" size={16} />
+              Next up: {nextTask.title}
+            </button>
+          )}
           {due.map((d) => (
             <button
               key={d.topic}
@@ -263,7 +281,11 @@ function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; 
               {d.topic} · {d.daysSince}d
             </button>
           ))}
-          <button type="button" className="sbar__chip sbar__chip--primary label-medium" onClick={() => send(CONTINUE_MESSAGE)}>
+          <button
+            type="button"
+            className={`sbar__chip label-medium${nextTask ? "" : " sbar__chip--primary"}`}
+            onClick={() => send(CONTINUE_MESSAGE)}
+          >
             Pick up where you left off
           </button>
         </div>

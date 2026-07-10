@@ -13,8 +13,8 @@ import { useAuth } from "../lib/auth";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useNotebooks } from "../lib/useNotebooks";
 import { useTheme } from "../lib/theme";
-import type { DueTopic, GlobalDueTopic, LearningLogEntry, Notebook } from "../lib/types";
-import { quickReturnMessage } from "../lib/journeyMessages";
+import type { DueTopic, GlobalDueTopic, LearningLogEntry, Notebook, StudyPlan } from "../lib/types";
+import { PLAN_REQUEST_MESSAGE, quickReturnMessage, startTaskMessage } from "../lib/journeyMessages";
 import { CoachChatView } from "./coach/CoachChatView";
 import { CoachActionsContext, type CoachActions } from "./coach/coachActions";
 import { JourneyContext, type Journey } from "./coach/journeyContext";
@@ -109,6 +109,7 @@ export function CoachShell() {
   // with the Journey dialog and the chat's in-message log cards.
   const [logEntries, setLogEntries] = useState<LearningLogEntry[]>([]);
   const [dueTopics, setDueTopics] = useState<DueTopic[]>([]);
+  const [studyPlan, setStudyPlan] = useState<StudyPlan | null>(null);
   const [globalDue, setGlobalDue] = useState<GlobalDueTopic[]>([]);
   const refreshJourney = useCallback(() => {
     api.getGlobalDue().then((res) => setGlobalDue(res.due), () => {});
@@ -120,10 +121,12 @@ export function CoachShell() {
       },
       () => {},
     );
+    api.getPlan(id).then((res) => setStudyPlan(res.plan), () => {});
   }, [id]);
   useEffect(() => {
     setLogEntries([]);
     setDueTopics([]);
+    setStudyPlan(null);
     refreshJourney();
   }, [refreshJourney]);
 
@@ -131,6 +134,7 @@ export function CoachShell() {
     () => ({
       entries: logEntries,
       due: dueTopics,
+      plan: studyPlan,
       refresh: refreshJourney,
       addEntry: async (body) => {
         if (!id) throw new Error("No project selected");
@@ -139,18 +143,30 @@ export function CoachShell() {
         setDueTopics(res.due);
         return res.entry;
       },
+      savePlan: async (body) => {
+        if (!id) throw new Error("No project selected");
+        const res = await api.savePlan(id, body);
+        setStudyPlan(res.plan);
+        return res.plan;
+      },
+      setTaskStatus: async (taskId, taskStatus) => {
+        if (!id) throw new Error("No project selected");
+        const res = await api.updatePlanTask(id, taskId, taskStatus);
+        setStudyPlan(res.plan);
+      },
     }),
-    [id, logEntries, dueTopics, refreshJourney],
+    [id, logEntries, dueTopics, studyPlan, refreshJourney],
   );
 
-  /** Journey due-chip tap: post the canonical retrieval opener into the coach chat. */
-  const startQuickReturn = (topic: string) => {
+  /** Post a canonical journey message into the coach chat and close the dialog. */
+  const sendJourneyMessage = (text: string) => {
     if (!id) return;
     setJourneyOpen(false);
     void api
-      .sendCoachMessage(id, { text: quickReturnMessage(topic), clientMessageId: crypto.randomUUID() })
+      .sendCoachMessage(id, { text, clientMessageId: crypto.randomUUID() })
       .catch((err) => snackbar.show(err instanceof Error ? err.message : "Couldn't reach the coach"));
   };
+  const startQuickReturn = (topic: string) => sendJourneyMessage(quickReturnMessage(topic));
 
   // "/" (or a stale id) lands on the most recent project once the list loads.
   useEffect(() => {
@@ -359,6 +375,8 @@ export function CoachShell() {
             notebookId={current.id}
             onClose={() => setJourneyOpen(false)}
             onQuickReturn={startQuickReturn}
+            onStartTask={(position, title) => sendJourneyMessage(startTaskMessage(position, title))}
+            onRequestPlan={() => sendJourneyMessage(PLAN_REQUEST_MESSAGE)}
           />
         </JourneyContext.Provider>
       )}

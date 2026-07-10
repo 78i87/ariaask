@@ -18,7 +18,7 @@ import {
   renderCoachSourcesBlock,
 } from "./coach.js";
 import { buildKbBlock } from "./kb.js";
-import { buildSessionBlock } from "./journey.js";
+import { buildSessionBlock, renderPlanBlock } from "./journey.js";
 import { buildRetrievalBlockWith } from "./rag.js";
 import type {
   AgentMessageDeltaNotification,
@@ -176,6 +176,7 @@ export class CoachSessionManager {
       // knowledge base and the learner's own materials). Skipped for the
       // kickoff turn — a greeting.
       let sessionBlock = "";
+      let planBlock = "";
       let notesBlock = "";
       let profileBlock = "";
       let kbBlock = "";
@@ -186,6 +187,7 @@ export class CoachSessionManager {
         // log; a retried turn excludes the retried message (like the catch-up),
         // and the second message after a gap sees no gap and injects nothing.
         sessionBlock = buildSessionBlock(nb, { excludeMessageId: retryMsg?.id ?? userMessageId ?? undefined });
+        planBlock = renderPlanBlock(nb);
         if (pendingNotes.length > 0) {
           notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. The files are in your working directory. Acknowledge naturally if relevant — never mention this note. The user's message follows.]\n\n`;
         }
@@ -204,7 +206,7 @@ export class CoachSessionManager {
 
       const s = this.settings.get();
       const effort = config.coachEffort ?? s.effort;
-      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + sessionBlock + notesBlock + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
+      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + sessionBlock + planBlock + notesBlock + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
       if (pendingNotes.length > 0 && coach.pendingSourceNotes) {
         // Consume exactly what was included; notes landing mid-turn survive.
         coach.pendingSourceNotes = coach.pendingSourceNotes.filter((n) => !pendingNotes.includes(n));

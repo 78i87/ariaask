@@ -17,6 +17,7 @@ import type {
   CoachMode,
   SettingsResponse,
   SourceFile,
+  StudyPlan,
   Usage,
 } from "./types";
 
@@ -155,6 +156,13 @@ export const api = {
   deleteLogEntry: (id: string, eid: string) =>
     request<void>(`/api/notebooks/${id}/log/${eid}`, { method: "DELETE" }),
   getGlobalDue: () => request<{ due: GlobalDueTopic[] }>("/api/journey/due"),
+
+  getPlan: (id: string) => request<{ plan: StudyPlan | null }>(`/api/notebooks/${id}/plan`),
+  savePlan: (id: string, body: { id?: string; source?: "coach" | "user"; tasks: { title: string; detail?: string; topic?: string }[] }) =>
+    request<{ plan: StudyPlan }>(`/api/notebooks/${id}/plan`, json(body)),
+  updatePlanTask: (id: string, tid: string, status: "pending" | "done") =>
+    request<{ plan: StudyPlan }>(`/api/notebooks/${id}/plan/tasks/${tid}`, { ...json({ status }), method: "PATCH" }),
+  deletePlan: (id: string) => request<void>(`/api/notebooks/${id}/plan`, { method: "DELETE" }),
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,

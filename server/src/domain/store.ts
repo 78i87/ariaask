@@ -227,6 +227,34 @@ export interface LearningLogEntry {
   updatedAt?: string;
 }
 
+/**
+ * One step of a study plan — one study block's worth of work (see
+ * journey.ts). Tasks are sequenced by dependency; `topic` ties completed work
+ * back into the learning log's topic space.
+ */
+export interface StudyPlanTask {
+  id: string;
+  title: string;
+  /** What to do and with which technique/material. */
+  detail: string;
+  topic?: string;
+  status: "pending" | "done";
+  completedAt?: string;
+}
+
+/**
+ * A coach-drafted (or user-built) study plan for the project's broad goal.
+ * One plan per notebook; re-confirming a new ```plan block replaces it.
+ */
+export interface StudyPlan {
+  /** "plan:<coachMessageId>" for coach-drafted (dedupe key), randomUUID for manual. */
+  id: string;
+  source: "coach" | "user";
+  createdAt: string;
+  updatedAt: string;
+  tasks: StudyPlanTask[];
+}
+
 /** Lazily initialize a notebook's coach conversation (caller persists). */
 export function ensureCoachState(nb: Notebook): CoachState {
   if (!nb.coach) {
@@ -289,6 +317,8 @@ export interface Notebook {
   readingSessions?: ReadingSession[];
   /** The learning log (see journey.ts). Absent = no entries yet. */
   learningLog?: LearningLogEntry[];
+  /** The study plan (see journey.ts). Absent = none drafted yet. */
+  studyPlan?: StudyPlan;
   /**
    * "coach" = created from the coach shell: Aria intake init is deferred until
    * the teach-back view is first opened (GET /:id), so a project that never

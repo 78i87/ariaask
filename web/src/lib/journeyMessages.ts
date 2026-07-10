@@ -16,3 +16,10 @@ export const quickReturnMessage = (topic: string): string =>
 
 /** Plain re-entry after a break; the server injects the [SESSION] ritual regardless. */
 export const CONTINUE_MESSAGE = "I'm back — let's pick up where we left off.";
+
+/** Asks the coach to turn the project's goal + materials into a ```plan block. */
+export const PLAN_REQUEST_MESSAGE = "Draft me a study plan for this project — use my goal and materials.";
+
+/** Starts a plan task — the coach coaches them through THAT task. */
+export const startTaskMessage = (position: number, title: string): string =>
+  `Let's work on task ${position}: "${title}".`;

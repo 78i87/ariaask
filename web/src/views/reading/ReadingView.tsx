@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { GlobalWorkerOptions, TextLayer, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -8,8 +8,10 @@ import { IconButton } from "../../components/IconButton";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import { useNotebooks } from "../../lib/useNotebooks";
 import type { ReadingAnnotation, ReadingAnnotationKind, ReadingSession } from "../../lib/types";
+import { TechText } from "../coach/TechTerm";
 import "./ReadingView.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -27,6 +29,34 @@ const KIND_LABELS: Record<ReadingAnnotationKind, string> = {
 /** Whether the prompt expects the learner to produce something jottable. */
 const RESPONDABLE: Set<ReadingAnnotationKind> = new Set(["simplify", "compare", "connect", "judge", "apply"]);
 
+// ---------- floating-gutter layout constants ----------
+
+/** Body width below which we don't even reserve gutters for floating cards. */
+const BREAK_WIDE = 1180;
+/** Width kept free on each side of the page for a card column. */
+const GUTTER_RESERVE = 320;
+const CARD_W = 280;
+/** Minimum measured gutter for the floating tier to engage. */
+const GUTTER_MIN = 312;
+/** Vertical gap between stacked cards in a gutter. */
+const CARD_GAP = 12;
+/** Connector dot's distance outside the page edge. */
+const EDGE_GAP = 10;
+/** Where the connector line attaches on the card's edge (below its top). */
+const ATTACH_Y = 18;
+
+interface FloatLine {
+  id: string;
+  d: string;
+  dotX: number;
+  dotY: number;
+}
+
+interface FloatLayout {
+  cards: Record<string, { left: number; top: number }>;
+  lines: FloatLine[];
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -38,6 +68,9 @@ function escapeRegExp(s: string): string {
  * text can differ slightly from the server-side extraction.
  */
 function markAnchor(container: HTMLElement, ann: ReadingAnnotation): boolean {
+  // Idempotent: an anchor whose spans are already marked IS found — re-runs
+  // (late-generation passes, session state changes) must not re-flag it.
+  if (container.querySelector(`[data-ann="${ann.id}"]`)) return true;
   const spans = Array.from(container.querySelectorAll<HTMLElement>(":scope > span, :scope span"));
   if (spans.length === 0) return false;
   const pieces = spans.map((s) => s.textContent ?? "");
@@ -84,9 +117,12 @@ interface PageState {
 
 /**
  * Guided reading of one PDF source: pdf.js pages (canvas + text layer) with
- * annotation highlights, and a rail of the coach's prompts. Scaffolding
- * amount came from the session's level at generation time; here we only
- * render what the server produced and persist the learner's responses.
+ * annotation highlights, and the coach's prompts. On wide screens the document
+ * sits centered with prompt cards floating in the side gutters, each tied to
+ * its highlight by a faint connector line; narrower screens fall back to a
+ * side rail, then a stacked layout. Scaffolding amount came from the session's
+ * level at generation time; here we only render what the server produced and
+ * persist the learner's responses.
  */
 export function ReadingView() {
   const { id, rid } = useParams<{ id: string; rid: string }>();
@@ -102,13 +138,22 @@ export function ReadingView() {
   const [selected, setSelected] = useState<string | null>(null);
   /** Annotation ids whose anchor couldn't be located in the text layer. */
   const [unanchored, setUnanchored] = useState<Set<string>>(new Set());
+  /** Wide tier: cards float in the page gutters instead of the rail. */
+  const [floating, setFloating] = useState(false);
+  const [layout, setLayout] = useState<FloatLayout | null>(null);
 
   const pagesRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
   const renderingRef = useRef(new Set<number>());
   const sessionRef = useRef<ReadingSession | null>(null);
   sessionRef.current = session;
+
+  const wideViewport = useMediaQuery(`(min-width: ${BREAK_WIDE}px)`);
+  const wideRef = useRef(wideViewport);
+  wideRef.current = wideViewport;
+  const floatingRef = useRef(false);
 
   const notebook = useMemo(() => notebooks?.find((n) => n.id === id) ?? null, [notebooks, id]);
   const sourceName = useMemo(() => {
@@ -166,14 +211,21 @@ export function ReadingView() {
   }, [id, session?.source]);
 
   // Measure pages at scale 1, pick a fit-width scale, set placeholder sizes.
+  // On wide screens with prompts (existing or incoming) the fit reserves a
+  // card gutter on each side so the document doesn't jump when cards appear.
   useEffect(() => {
     if (!pdf) return;
     let cancelled = false;
     void (async () => {
       const first = await pdf.getPage(1);
       const base = first.getViewport({ scale: 1 });
-      const containerWidth = pagesRef.current?.clientWidth ?? 800;
-      const s = Math.min(Math.max((containerWidth - 32) / base.width, 0.5), 2.5);
+      const scroller = pagesRef.current;
+      const bodyWidth = scroller?.parentElement?.clientWidth ?? 800;
+      const sess = sessionRef.current;
+      const reserve =
+        bodyWidth >= BREAK_WIDE && (sess?.status === "generating" || (sess?.annotations.length ?? 0) > 0);
+      const avail = (reserve ? bodyWidth : scroller?.clientWidth ?? 800) - 32 - (reserve ? GUTTER_RESERVE * 2 : 0);
+      const s = Math.min(Math.max(avail / base.width, 0.5), 2.5);
       const states: PageState[] = [];
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = i === 1 ? first : await pdf.getPage(i);
@@ -193,17 +245,20 @@ export function ReadingView() {
     const current = sessionRef.current;
     if (!current) return;
     const missing: string[] = [];
+    const found: string[] = [];
     for (const ann of current.annotations) {
       if (ann.page !== pageNum) continue;
-      if (!markAnchor(textLayerDiv, ann)) missing.push(ann.id);
+      if (markAnchor(textLayerDiv, ann)) found.push(ann.id);
+      else missing.push(ann.id);
     }
-    if (missing.length > 0) {
-      setUnanchored((prev) => {
-        const next = new Set(prev);
-        for (const m of missing) next.add(m);
-        return next;
-      });
-    }
+    setUnanchored((prev) => {
+      const changed = missing.some((m) => !prev.has(m)) || found.some((f) => prev.has(f));
+      if (!changed) return prev;
+      const next = new Set(prev);
+      for (const f of found) next.delete(f); // a later pass finding it heals an earlier miss
+      for (const m of missing) next.add(m);
+      return next;
+    });
   }, []);
 
   const renderPage = useCallback(
@@ -267,9 +322,14 @@ export function ReadingView() {
     return () => observer.disconnect();
   }, [pages.length, renderPage]);
 
-  // Late annotations (generation finishing after pages rendered) get applied on arrival.
+  // Late annotations (generation finishing after pages rendered) get applied
+  // on arrival. Keyed on status + count, NOT session identity — response
+  // saves recreate the session object and must not re-trigger this pass.
+  const annotationCount = session?.annotations.length ?? 0;
+  const sessionStatus = session?.status;
   useEffect(() => {
-    if (!session || session.status !== "ready") return;
+    if (sessionStatus !== "ready" && sessionStatus !== "generating") return;
+    if (annotationCount === 0) return;
     const root = pagesRef.current;
     if (!root) return;
     root.querySelectorAll<HTMLElement>(".textLayer").forEach((layer) => {
@@ -277,15 +337,207 @@ export function ReadingView() {
       const pageNum = Number(host?.dataset.page);
       if (Number.isFinite(pageNum)) applyAnnotations(pageNum, layer);
     });
-  }, [session, applyAnnotations]);
+  }, [sessionStatus, annotationCount, applyAnnotations]);
 
-  // Highlight click → select the annotation and scroll its card into view.
+  // ---------- floating layout pass ----------
+
+  /** Card wrapper elements by annotation id, for height measurement + resize observation. */
+  const cardEls = useRef(new Map<string, HTMLElement>());
+  const resizeObsRef = useRef<ResizeObserver | null>(null);
+  const layoutRafRef = useRef(0);
+  const layoutSigRef = useRef("");
+
+  /**
+   * Measure highlights and card heights, then place cards in the gutters:
+   * alternate sides, head-aligned to the highlight (the connector attaches
+   * ATTACH_Y below the card top), a top-down sweep to resolve overlaps and a
+   * bottom-up relaxation so nothing spills past the stage. Also decides
+   * whether the floating tier is on at all, from the measured gutter width.
+   */
+  const performLayout = useCallback(() => {
+    const stage = stageRef.current;
+    const current = sessionRef.current;
+    if (!stage || !current) return;
+    const anns = current.annotations;
+    const pageEls = Array.from(stage.querySelectorAll<HTMLElement>(".rd-page"));
+    const stageRect = stage.getBoundingClientRect();
+
+    let shouldFloat = false;
+    if (wideRef.current && anns.length > 0 && pageEls.length > 0) {
+      // Judge the gutter against the width the stage WOULD have with the rail
+      // unmounted — measuring the current stage would make the decision
+      // depend on which tier is showing (the rail eats 340px, so floating
+      // could never engage from the rail tier).
+      const scroller = pagesRef.current;
+      const scrollbar = scroller ? scroller.offsetWidth - scroller.clientWidth : 0;
+      const prospectiveW = scroller?.parentElement
+        ? scroller.parentElement.clientWidth - scrollbar - 32
+        : stageRect.width;
+      const gutter = (prospectiveW - pageEls[0]!.getBoundingClientRect().width) / 2;
+      shouldFloat = gutter >= GUTTER_MIN;
+    }
+    if (shouldFloat !== floatingRef.current) {
+      floatingRef.current = shouldFloat;
+      setFloating(shouldFloat);
+      if (shouldFloat) {
+        // Let the rail unmount and the cards mount first — the layout effect
+        // re-runs this pass against the post-flip geometry, so cards never
+        // flash at rail-tier coordinates.
+        layoutSigRef.current = "";
+        setLayout(null);
+        return;
+      }
+    }
+    if (!shouldFloat) {
+      layoutSigRef.current = "";
+      setLayout(null);
+      return;
+    }
+
+    const pageRect = pageEls[0]!.getBoundingClientRect();
+    const stageTop = stageRect.top;
+    const pageLeftX = pageRect.left - stageRect.left;
+    const pageRightX = pageLeftX + pageRect.width;
+    const stageH = stageRect.height;
+
+    interface Item {
+      ann: ReadingAnnotation;
+      anchorCY: number;
+      noLine: boolean;
+      h: number;
+      top: number;
+      side: "left" | "right";
+    }
+    const items: Item[] = [];
+    for (const ann of anns) {
+      const span = stage.querySelector(`[data-ann="${CSS.escape(ann.id)}"]`);
+      let anchorCY: number;
+      let noLine = false;
+      if (span) {
+        const r = span.getBoundingClientRect();
+        anchorCY = r.top + r.height / 2 - stageTop;
+      } else {
+        // Page not rendered yet, or the quote never anchored: estimate near
+        // the top of its page and skip the line (nothing to point at).
+        const pageEl = pageEls[ann.page - 1];
+        if (!pageEl) continue;
+        const pr = pageEl.getBoundingClientRect();
+        anchorCY = pr.top - stageTop + Math.min(80, pr.height * 0.1);
+        noLine = true;
+      }
+      const h = cardEls.current.get(ann.id)?.offsetHeight ?? 160;
+      items.push({ ann, anchorCY, noLine, h, top: 0, side: "left" });
+    }
+    items.sort((a, b) => a.anchorCY - b.anchorCY || a.ann.page - b.ann.page);
+    items.forEach((it, i) => (it.side = i % 2 === 0 ? "left" : "right"));
+
+    for (const side of ["left", "right"] as const) {
+      const col = items.filter((it) => it.side === side);
+      // Head-align: the card's line-attachment point sits at the highlight's
+      // center, so a growing textarea only pushes neighbors below.
+      let prevBottom = -Infinity;
+      for (const it of col) {
+        it.top = Math.max(it.anchorCY - ATTACH_Y, prevBottom + CARD_GAP, 8);
+        prevBottom = it.top + it.h;
+      }
+      // Bottom-up relaxation: pull cards up if the sweep pushed any past the end.
+      let nextTop = stageH - 8;
+      for (let i = col.length - 1; i >= 0; i--) {
+        const it = col[i]!;
+        const maxTop = nextTop - it.h;
+        if (it.top > maxTop) it.top = Math.max(8, maxTop);
+        nextTop = it.top - CARD_GAP;
+      }
+    }
+
+    const cards: FloatLayout["cards"] = {};
+    const lines: FloatLine[] = [];
+    for (const it of items) {
+      const left = Math.round(
+        it.side === "left"
+          ? Math.max(4, pageLeftX - EDGE_GAP - 8 - CARD_W)
+          : Math.min(stageRect.width - CARD_W - 4, pageRightX + EDGE_GAP + 8),
+      );
+      const top = Math.round(it.top);
+      cards[it.ann.id] = { left, top };
+      if (it.noLine) continue;
+      const dotX = Math.round(it.side === "left" ? pageLeftX - EDGE_GAP : pageRightX + EDGE_GAP);
+      const dotY = Math.round(it.anchorCY);
+      const startX = it.side === "left" ? left + CARD_W : left;
+      const startY = top + ATTACH_Y;
+      // Cubic bezier with horizontal tangents at both ends, card edge → dot.
+      const dx = (dotX - startX) / 2;
+      const d = `M ${startX} ${startY} C ${Math.round(startX + dx)} ${startY}, ${Math.round(dotX - dx)} ${dotY}, ${dotX} ${dotY}`;
+      lines.push({ id: it.ann.id, d, dotX, dotY });
+    }
+
+    const next: FloatLayout = { cards, lines };
+    const sig = JSON.stringify(next);
+    if (sig === layoutSigRef.current) return; // equality guard: no churn, no loops
+    layoutSigRef.current = sig;
+    setLayout(next);
+  }, []);
+
+  /** rAF-coalesced: many triggers (resize, renders, healing) → one measure pass. */
+  const requestLayout = useCallback(() => {
+    if (layoutRafRef.current) return;
+    layoutRafRef.current = requestAnimationFrame(() => {
+      layoutRafRef.current = 0;
+      performLayout();
+    });
+  }, [performLayout]);
+
+  // Reset the guard after cancelling: StrictMode runs this cleanup between
+  // its double-mount, and a stale id would block every later requestLayout.
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(layoutRafRef.current);
+      layoutRafRef.current = 0;
+    },
+    [],
+  );
+
+  const annotations = session?.annotations;
+  useLayoutEffect(() => {
+    requestLayout();
+  }, [pages, scale, annotations, unanchored, wideViewport, floating, requestLayout]);
+
+  // One observer covers the stage (width changes) and every card (textarea
+  // growth, content changes). Positions come from the layout pass, so moved
+  // cards don't re-fire it — only real size changes do.
+  const hasSession = session !== null;
+  useEffect(() => {
+    const ro = new ResizeObserver(() => requestLayout());
+    resizeObsRef.current = ro;
+    if (stageRef.current) ro.observe(stageRef.current);
+    cardEls.current.forEach((el) => ro.observe(el));
+    return () => {
+      ro.disconnect();
+      resizeObsRef.current = null;
+    };
+  }, [hasSession, floating, requestLayout]);
+
+  const setCardEl = useCallback((annId: string, el: HTMLElement | null) => {
+    const prev = cardEls.current.get(annId);
+    if (prev) resizeObsRef.current?.unobserve(prev);
+    if (el) {
+      cardEls.current.set(annId, el);
+      resizeObsRef.current?.observe(el);
+    } else {
+      cardEls.current.delete(annId);
+    }
+  }, []);
+
+  // Highlight click → select the annotation; in the rail tiers also scroll its
+  // card into view (floating cards already sit beside their highlight).
   // (An onClick prop, not an addEventListener effect: the pages container only
-  // exists once the session has loaded, so a mount-time effect would miss it.)
+  // exists once the session has loaded, so a mount-time effect would miss it.
+  // Floating-card clicks bubble here too but have no [data-ann] ancestor.)
   const onPagesClick = (e: React.MouseEvent) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>("[data-ann]");
     if (!target?.dataset.ann) return;
     setSelected(target.dataset.ann);
+    if (floating) return;
     railRef.current
       ?.querySelector(`[data-card="${target.dataset.ann}"]`)
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -390,6 +642,27 @@ export function ReadingView() {
 
   const generating = session.status === "generating";
   const byPage = session.annotations;
+  const total = byPage.length;
+  const done = byPage.filter((a) => a.resolved).length;
+
+  const afterBlock = session.afterReading.length > 0 && (
+    <div className={`rd__after${floating ? " rd__after--stage" : ""}`}>
+      <div className="rd__rail-header title-small">
+        <Icon name="checklist" size={18} />
+        After you finish
+      </div>
+      <ul className="rd__after-list body-medium">
+        {session.afterReading.map((s, i) => (
+          <li key={i}>
+            <TechText text={s} />
+          </li>
+        ))}
+      </ul>
+      <Button icon="send" onClick={finishWithCoach}>
+        Take this to your coach
+      </Button>
+    </div>
+  );
 
   return (
     <div className="rd">
@@ -399,10 +672,26 @@ export function ReadingView() {
           <span className="title-medium">{sourceName}</span>
           <span className="rd__subtitle label-medium">
             Guided reading · {session.level}
-            {generating ? " · the coach is still marking key passages…" : ` · ${session.annotations.length} prompts`}
+            {generating
+              ? " · the coach is still marking key passages…"
+              : total > 0
+                ? ` · ${done} of ${total} done`
+                : ""}
           </span>
         </div>
         {generating && <ProgressIndicator size={22} />}
+        {total > 0 && (
+          <div
+            className="rd__progress"
+            role="progressbar"
+            aria-label="Prompts completed"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={done}
+          >
+            <div className="rd__progress-fill" style={{ width: `${(done / total) * 100}%` }} />
+          </div>
+        )}
       </header>
 
       <div className="rd__body">
@@ -413,60 +702,87 @@ export function ReadingView() {
               <span className="body-medium">Opening the document…</span>
             </div>
           )}
-          {pages.map((p, i) => (
-            <div key={i} className="rd-page" style={{ width: p.width, height: p.height }}>
-              <div className="rd-page__host" data-page={i + 1} style={{ width: p.width, height: p.height }} />
-              <span className="rd-page__num label-medium">{i + 1}</span>
-            </div>
-          ))}
+          <div className="rd__stage" ref={stageRef}>
+            {floating && layout && (
+              <svg className="rd__overlay" aria-hidden="true">
+                {layout.lines.map((l) => (
+                  <g key={l.id} className={`rd-line${selected === l.id ? " rd-line--selected" : ""}`}>
+                    <path d={l.d} />
+                    <circle cx={l.dotX} cy={l.dotY} r={3} />
+                  </g>
+                ))}
+              </svg>
+            )}
+            {pages.map((p, i) => (
+              <div key={i} className="rd-page" style={{ width: p.width, height: p.height }}>
+                <div className="rd-page__host" data-page={i + 1} style={{ width: p.width, height: p.height }} />
+                <span className="rd-page__num label-medium">{i + 1}</span>
+              </div>
+            ))}
+            {floating && afterBlock}
+            {floating &&
+              byPage.map((ann) => {
+                const pos = layout?.cards[ann.id];
+                return (
+                  <div
+                    key={ann.id}
+                    className="rd-float"
+                    ref={(el) => setCardEl(ann.id, el)}
+                    style={
+                      pos
+                        ? { left: pos.left, top: pos.top, visibility: "visible" }
+                        : { left: 0, top: 0, visibility: "hidden" }
+                    }
+                  >
+                    <AnnotationCard
+                      ann={ann}
+                      compact
+                      selected={selected === ann.id}
+                      unanchored={unanchored.has(ann.id)}
+                      onJump={() => jumpToAnnotation(ann)}
+                      onResolve={(resolved) => patchAnnotation(ann.id, { resolved })}
+                      onSaveResponse={(text) => patchAnnotation(ann.id, { userResponse: text })}
+                      onDiscuss={(draft) => discussWithCoach(ann, draft)}
+                    />
+                  </div>
+                );
+              })}
+          </div>
         </div>
 
-        <aside className="rd__rail" ref={railRef}>
-          <div className="rd__rail-header title-small">
-            <Icon name="psychology" size={18} />
-            Coach prompts
-          </div>
-          {generating && byPage.length === 0 && (
-            <p className="rd__rail-empty body-medium">
-              Read on — prompts will appear here once the coach has been through the document.
-            </p>
-          )}
-          {!generating && byPage.length === 0 && (
-            <p className="rd__rail-empty body-medium">
-              No in-document prompts at this level — find the key passages yourself, then use the
-              after-reading steps below.
-            </p>
-          )}
-          {byPage.map((ann) => (
-            <AnnotationCard
-              key={ann.id}
-              ann={ann}
-              selected={selected === ann.id}
-              unanchored={unanchored.has(ann.id)}
-              onJump={() => jumpToAnnotation(ann)}
-              onResolve={(resolved) => patchAnnotation(ann.id, { resolved })}
-              onSaveResponse={(text) => patchAnnotation(ann.id, { userResponse: text })}
-              onDiscuss={(draft) => discussWithCoach(ann, draft)}
-            />
-          ))}
-
-          {session.afterReading.length > 0 && (
-            <div className="rd__after">
-              <div className="rd__rail-header title-small">
-                <Icon name="checklist" size={18} />
-                After you finish
-              </div>
-              <ul className="rd__after-list body-medium">
-                {session.afterReading.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ul>
-              <Button icon="send" onClick={finishWithCoach}>
-                Take this to your coach
-              </Button>
+        {!floating && (
+          <aside className="rd__rail" ref={railRef}>
+            <div className="rd__rail-header title-small">
+              <Icon name="psychology" size={18} />
+              Coach prompts
             </div>
-          )}
-        </aside>
+            {generating && byPage.length === 0 && (
+              <p className="rd__rail-empty body-medium">
+                Read on — prompts will appear here once the coach has been through the document.
+              </p>
+            )}
+            {!generating && byPage.length === 0 && (
+              <p className="rd__rail-empty body-medium">
+                No in-document prompts at this level — find the key passages yourself, then use the
+                after-reading steps below.
+              </p>
+            )}
+            {byPage.map((ann) => (
+              <AnnotationCard
+                key={ann.id}
+                ann={ann}
+                selected={selected === ann.id}
+                unanchored={unanchored.has(ann.id)}
+                onJump={() => jumpToAnnotation(ann)}
+                onResolve={(resolved) => patchAnnotation(ann.id, { resolved })}
+                onSaveResponse={(text) => patchAnnotation(ann.id, { userResponse: text })}
+                onDiscuss={(draft) => discussWithCoach(ann, draft)}
+              />
+            ))}
+
+            {afterBlock}
+          </aside>
+        )}
       </div>
     </div>
   );
@@ -476,15 +792,19 @@ interface AnnotationCardProps {
   ann: ReadingAnnotation;
   selected: boolean;
   unanchored: boolean;
+  /** Floating-gutter cards start slim (one-line response box) until engaged. */
+  compact?: boolean;
   onJump: () => void;
   onResolve: (resolved: boolean) => void;
   onSaveResponse: (text: string) => void;
   onDiscuss: (draft: string) => void;
 }
 
-function AnnotationCard({ ann, selected, unanchored, onJump, onResolve, onSaveResponse, onDiscuss }: AnnotationCardProps) {
+function AnnotationCard({ ann, selected, unanchored, compact, onJump, onResolve, onSaveResponse, onDiscuss }: AnnotationCardProps) {
   const [draft, setDraft] = useState(ann.userResponse ?? "");
+  const [editing, setEditing] = useState(false);
   const respondable = RESPONDABLE.has(ann.kind);
+  const slim = Boolean(compact) && !editing && draft.trim() === "";
 
   return (
     <div
@@ -499,15 +819,19 @@ function AnnotationCard({ ann, selected, unanchored, onJump, onResolve, onSaveRe
       <blockquote className="rd-card__anchor body-medium">
         “{ann.anchor}”{unanchored && <span className="rd-card__unanchored label-medium"> (couldn't locate on the page)</span>}
       </blockquote>
-      <p className="rd-card__prompt body-large">{ann.prompt}</p>
+      <p className="rd-card__prompt body-large">
+        <TechText text={ann.prompt} />
+      </p>
       {respondable && (
         <textarea
           className="rd-card__response body-medium"
           placeholder="Work it out here — in your own words…"
-          rows={2}
+          rows={slim ? 1 : compact ? 3 : 2}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onFocus={() => setEditing(true)}
           onBlur={() => {
+            setEditing(false);
             if (draft !== (ann.userResponse ?? "")) onSaveResponse(draft);
           }}
         />

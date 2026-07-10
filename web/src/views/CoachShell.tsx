@@ -17,6 +17,7 @@ import type { Notebook } from "../lib/types";
 import { CoachChatView } from "./coach/CoachChatView";
 import { CoachActionsContext, type CoachActions } from "./coach/coachActions";
 import { CreateNotebookDialog } from "./home/CreateNotebookDialog";
+import { SourcesDialog } from "./coach/SourcesDialog";
 import { ReadingDialog } from "./reading/ReadingDialog";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { SettingsDialog } from "./settings/SettingsDialog";
@@ -39,8 +40,11 @@ export function CoachShell() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sourcesHubOpen, setSourcesHubOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [readingOpen, setReadingOpen] = useState(false);
+  /** Set by the sources hub: open the new-reading form preselected to this source. */
+  const [readingPreselect, setReadingPreselect] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -197,7 +201,7 @@ export function CoachShell() {
               {narrow && <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />}
               <h1 className="shell__title title-medium">{current.title}</h1>
               <div className="shell__header-actions">
-                <button type="button" className="shell__chip label-large" onClick={() => setSourcesOpen(true)}>
+                <button type="button" className="shell__chip label-large" onClick={() => setSourcesHubOpen(true)}>
                   <Icon name="library_books" size={18} />
                   <span className="shell__chip-label">Sources</span>
                   {current.sourceFiles.length > 0 && <span className="shell__chip-count">{current.sourceFiles.length}</span>}
@@ -257,7 +261,35 @@ export function CoachShell() {
         }}
       />
 
-      {current && <ReadingDialog open={readingOpen} notebook={current} onClose={() => setReadingOpen(false)} />}
+      {current && (
+        <ReadingDialog
+          open={readingOpen}
+          notebook={current}
+          preselectSource={readingPreselect ?? undefined}
+          onClose={() => {
+            setReadingOpen(false);
+            setReadingPreselect(null);
+          }}
+        />
+      )}
+
+      {current && (
+        <SourcesDialog
+          open={sourcesHubOpen}
+          notebook={current}
+          onClose={() => setSourcesHubOpen(false)}
+          onAddMaterials={() => {
+            setSourcesHubOpen(false);
+            setSourcesOpen(true);
+          }}
+          onNewReading={(storedName) => {
+            setSourcesHubOpen(false);
+            setReadingPreselect(storedName);
+            setReadingOpen(true);
+          }}
+          onRefresh={() => void refresh()}
+        />
+      )}
 
       {current && (
         <AddSourcesDialog

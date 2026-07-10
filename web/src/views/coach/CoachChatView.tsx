@@ -5,107 +5,14 @@ import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
-import { annotateTechniques, techniqueInfo } from "../../lib/techniques";
+import { annotateTechniques } from "../../lib/techniques";
+import { TechTerm, TechText } from "./TechTerm";
 import { useCoachThread } from "../../lib/useCoachThread";
 import type { CoachChatMessage } from "../../lib/types";
 import { MessageContext, useCoachActions, useMessageInfo } from "./coachActions";
 import { Composer } from "../session/Composer";
 import { ThinkingIndicator } from "../session/ThinkingIndicator";
 import "./CoachChatView.css";
-
-// ---------- technique chips with a viewport-aware floating tooltip ----------
-
-/** Render the `**bold**` markers the technique one-liners use for key words. */
-function emphasize(text: string): ReactNode[] {
-  return text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
-}
-
-/**
- * A technique-name chip whose tooltip is position:fixed (escapes the chat
- * scroller's overflow clipping), measured after render, flipped below the
- * term near the viewport top, clamped horizontally, and closed on any scroll
- * (fixed tooltips would otherwise detach from their scrolling term).
- */
-function TechTerm({ slug, children }: { slug: string; children: ReactNode }) {
-  const info = techniqueInfo(slug);
-  const termRef = useRef<HTMLSpanElement>(null);
-  const tipRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
-    const term = termRef.current?.getBoundingClientRect();
-    const tip = tipRef.current?.getBoundingClientRect();
-    if (!term || !tip) return;
-    const margin = 8;
-    let top = term.top - tip.height - 6;
-    if (top < margin) top = term.bottom + 6; // flip below when clipped by the viewport top / header
-    // Final clamp: on short viewports even the flipped side can overflow.
-    top = Math.min(Math.max(top, margin), Math.max(window.innerHeight - tip.height - margin, margin));
-    let left = term.left;
-    left = Math.min(Math.max(left, margin), window.innerWidth - tip.width - margin);
-    setPos({ left, top });
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const hide = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    // Capture-phase catches the inner chat scroller's scrolls too.
-    window.addEventListener("scroll", hide, true);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("scroll", hide, true);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  if (!info) return <span className="tech-term">{children}</span>;
-  const tipId = `tech-tip-${slug}`;
-  return (
-    <span
-      ref={termRef}
-      className="tech-term"
-      tabIndex={0}
-      aria-describedby={open ? tipId : undefined}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
-    >
-      {children}
-      {open && (
-        <div
-          ref={tipRef}
-          id={tipId}
-          role="tooltip"
-          className="tech-tooltip"
-          style={pos ? { left: pos.left, top: pos.top, visibility: "visible" } : { left: 0, top: 0, visibility: "hidden" }}
-        >
-          <span className="tech-tooltip__title">{info.label}</span>
-          <span className="tech-tooltip__row">
-            <span className="tech-tooltip__eyebrow">What</span>
-            <span className="tech-tooltip__text">{emphasize(info.what)}</span>
-          </span>
-          <span className="tech-tooltip__row">
-            <span className="tech-tooltip__eyebrow">Why</span>
-            <span className="tech-tooltip__text">{emphasize(info.why)}</span>
-          </span>
-          <span className="tech-tooltip__row">
-            <span className="tech-tooltip__eyebrow">When</span>
-            <span className="tech-tooltip__text">{emphasize(info.when)}</span>
-          </span>
-        </div>
-      )}
-    </span>
-  );
-}
 
 // ---------- interactive quiz blocks (```quiz fenced JSON) ----------
 
@@ -320,7 +227,7 @@ function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubble
     return (
       <div className="msg msg--teacher">
         <div className="msg__col msg__col--teacher">
-          <div className="msg__bubble msg__bubble--coach-user body-large">{message.text}</div>
+          <div className="msg__bubble msg__bubble--coach-user body-large"><TechText text={message.text} /></div>
           <div className="msg__actions">
             <button type="button" className="msg-action" onClick={() => onCopy(message)}>
               <Icon name="content_copy" size={16} />

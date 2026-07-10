@@ -15,11 +15,28 @@
 }
 
 .rd__header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+/* Completion progress: a thin bar riding the header's bottom edge. */
+.rd__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+}
+
+.rd__progress-fill {
+  height: 100%;
+  background: var(--md-sys-color-primary);
+  border-radius: 0 2px 2px 0;
+  transition: width 0.3s ease;
 }
 
 .rd__title {
@@ -56,6 +73,83 @@
   flex-direction: column;
   align-items: center;
   gap: 16px;
+  background: var(--md-sys-color-surface-container-low);
+}
+
+/* ---------- floating tier (wide screens) ---------- */
+
+/* Positioning context for gutter cards + the connector overlay; pages stack
+   inside it, so cards and lines scroll with the document for free. */
+.rd__stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+/* No viewBox: SVG user units are CSS pixels, 1:1 with the layout pass. */
+.rd__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.rd-line path {
+  fill: none;
+  stroke: var(--md-sys-color-outline-variant);
+  stroke-width: 1.5;
+  opacity: 0.45;
+}
+
+.rd-line circle {
+  fill: var(--md-sys-color-outline-variant);
+  opacity: 0.8;
+}
+
+.rd-line--selected path {
+  stroke: var(--md-sys-color-primary);
+  stroke-width: 2;
+  opacity: 0.9;
+}
+
+.rd-line--selected circle {
+  fill: var(--md-sys-color-primary);
+  opacity: 1;
+}
+
+/* Gutter card wrapper. Positions come from the layout pass — deliberately no
+   transition: the SVG lines can't animate along, so moves must stay in sync. */
+.rd-float {
+  position: absolute;
+  width: 280px;
+  z-index: 2;
+}
+
+.rd-float .rd-card {
+  background: var(--md-sys-color-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+}
+
+/* Compact cards: let rows=1 rule until the learner engages. */
+.rd-float .rd-card__response {
+  min-height: 0;
+}
+
+/* After-reading suggestions as an in-flow card after the last page (extends
+   the stage, so gutter cards near the end always have room). */
+.rd__after--stage {
+  position: relative;
+  z-index: 2;
+  width: min(640px, 100%);
+  margin-top: 4px;
+  padding: 16px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
   background: var(--md-sys-color-surface-container-low);
 }
 

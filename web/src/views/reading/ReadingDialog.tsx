@@ -21,6 +21,8 @@ interface ReadingDialogProps {
   open: boolean;
   notebook: Notebook;
   onClose: () => void;
+  /** Jump straight to the new-reading form with this source picked (sources hub flow). */
+  preselectSource?: string;
 }
 
 /**
@@ -28,7 +30,7 @@ interface ReadingDialogProps {
  * source + scaffolding level and create one. Levels implement the
  * scaffolds-fade-toward-independence progression from the knowledge base.
  */
-export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
+export function ReadingDialog({ open, notebook, onClose, preselectSource }: ReadingDialogProps) {
   const navigate = useNavigate();
   const snackbar = useSnackbar();
   const [sessions, setSessions] = useState<ReadingSessionSummary[] | null>(null);
@@ -44,7 +46,7 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
   useEffect(() => {
     if (!open) return;
     setSessions(null);
-    setShowNew(false);
+    setShowNew(Boolean(preselectSource));
     api.listReadings(notebook.id).then(
       (res) => {
         setSessions([...res.sessions].reverse());
@@ -75,10 +77,10 @@ export function ReadingDialog({ open, notebook, onClose }: ReadingDialogProps) {
       },
       () => {},
     );
-    setSource((prev) => prev ?? pdfs[0]?.storedName ?? null);
+    setSource(preselectSource ?? pdfs[0]?.storedName ?? null);
     // pdfs derives from notebook, stable while open
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, notebook.id]);
+  }, [open, notebook.id, preselectSource]);
 
   const sourceName = (storedName: string) =>
     notebook.sourceFiles.find((f) => f.storedName === storedName)?.originalName ?? storedName;

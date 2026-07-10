@@ -186,17 +186,30 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 
-/* ---------- pdf.js text layer (minimal required styles) ---------- */
+/* ---------- pdf.js text layer ----------
+   Adapted from pdfjs-dist/web/pdf_viewer.css. The font-size and transform
+   rules are REQUIRED: TextLayer computes --font-height and --scale-x per span
+   and relies on this stylesheet to apply them — without these rules spans
+   render at the inherited font size (up to ~40% over-wide), so highlights
+   spill past their quote and across column gaps. */
 
 .textLayer {
+  color-scheme: only light;
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
   text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
 }
 
 .textLayer span,
@@ -208,6 +221,28 @@
   transform-origin: 0% 0%;
 }
 
+/* Per-span metrics calibration (line spans only — .rd-hl--inline highlight
+   wrappers nested inside them must stay in the inline flow, untransformed). */
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent):not(.rd-hl--inline) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer span.rd-hl--inline {
+  position: static;
+  font-size: inherit;
+  transform: none;
+}
+
 .textLayer span::selection {
   background: color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent);
 }
@@ -217,7 +252,8 @@
 /* The box-shadow fattens the highlight beyond the glyph box — text-layer
    spans hug the font metrics tightly, which reads as a too-thin marker line
    (especially on slide-deck PDFs). */
-.rd-hl {
+.rd-hl,
+.textLayer span.rd-hl {
   cursor: pointer;
   border-radius: 3px;
   background: var(--hl);

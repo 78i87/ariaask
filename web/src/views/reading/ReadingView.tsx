@@ -62,6 +62,34 @@ function escapeRegExp(s: string): string {
 }
 
 /**
+ * Highlight one span's share of a matched quote. Boundary spans where the
+ * quote starts/ends mid-line get an inline wrapper around just the matched
+ * substring, so the highlight hugs the quote instead of painting the whole
+ * line. Falls back to whole-span marking when the span's content is already
+ * split by an earlier annotation's wrapper.
+ */
+function markSpanRange(el: HTMLElement, ann: ReadingAnnotation, localStart: number, localEnd: number, len: number): void {
+  const wholeSpan = localStart <= 0 && localEnd >= len;
+  const textNode = el.firstChild;
+  if (!wholeSpan && el.childNodes.length === 1 && textNode?.nodeType === Node.TEXT_NODE) {
+    const range = document.createRange();
+    range.setStart(textNode, Math.max(0, localStart));
+    range.setEnd(textNode, Math.min(localEnd, len));
+    const wrap = document.createElement("span");
+    wrap.className = `rd-hl rd-hl--inline rd-hl--${ann.kind}`;
+    wrap.dataset.ann = ann.id;
+    try {
+      range.surroundContents(wrap);
+      return;
+    } catch {
+      /* fall through to whole-span marking */
+    }
+  }
+  el.dataset.ann = ann.id;
+  el.classList.add("rd-hl", `rd-hl--${ann.kind}`);
+}
+
+/**
  * Locate the annotation's anchor quote in a rendered text layer and mark the
  * covering spans. Matching is whitespace-tolerant (exact words joined by any
  * whitespace), with a looser punctuation-tolerant fallback — pdf.js text-layer
@@ -71,7 +99,9 @@ function markAnchor(container: HTMLElement, ann: ReadingAnnotation): boolean {
   // Idempotent: an anchor whose spans are already marked IS found — re-runs
   // (late-generation passes, session state changes) must not re-flag it.
   if (container.querySelector(`[data-ann="${ann.id}"]`)) return true;
-  const spans = Array.from(container.querySelectorAll<HTMLElement>(":scope > span, :scope span"));
+  // Line spans only: markedContent wrappers would duplicate their children's
+  // text in the join, and highlight wrappers aren't part of the line grid.
+  const spans = Array.from(container.querySelectorAll<HTMLElement>('span[role="presentation"]'));
   if (spans.length === 0) return false;
   const pieces = spans.map((s) => s.textContent ?? "");
   const full = pieces.join(" ").toLowerCase();
@@ -83,7 +113,9 @@ function markAnchor(container: HTMLElement, ann: ReadingAnnotation): boolean {
   const loose = looseWords.length > 0 ? new RegExp(looseWords.map(escapeRegExp).join("[^\\p{L}\\p{N}]+"), "u") : null;
 
   let match = strict.exec(full);
-  if (!match && loose) match = loose.exec(full.replace(/[^\p{L}\p{N} ]+/gu, " "));
+  // Length-preserving strip (char-for-char, no run collapsing) so the loose
+  // match's indices still line up with the span offsets below.
+  if (!match && loose) match = loose.exec(full.replace(/[^\p{L}\p{N} ]/gu, " "));
   if (!match) return false;
 
   // Map the match range back to span indices ([offset, offset+len) per piece, +1 joiner).
@@ -98,8 +130,7 @@ function markAnchor(container: HTMLElement, ann: ReadingAnnotation): boolean {
     if (spanEnd > start && spanStart < end && len > 0) {
       const el = spans[i]!;
       if (!el.dataset.ann) {
-        el.dataset.ann = ann.id;
-        el.classList.add("rd-hl", `rd-hl--${ann.kind}`);
+        markSpanRange(el, ann, start - spanStart, end - spanStart, len);
         marked = true;
       }
     }
@@ -283,6 +314,11 @@ export function ReadingView() {
         textLayerDiv.className = "textLayer";
         textLayerDiv.style.setProperty("--scale-factor", String(scale));
         textLayerDiv.style.setProperty("--total-scale-factor", String(scale));
+        // Attach BEFORE render: pdf.js calibrates each span's scaleX by
+        // measuring text in place, and a detached div measures as zero —
+        // leaving spans uncalibrated (up to ~40% over-wide), which made
+        // highlights spill past the quote and across column gaps.
+        host.replaceChildren(canvas, textLayerDiv);
         const textLayer = new TextLayer({
           textContentSource: page.streamTextContent(),
           container: textLayerDiv,
@@ -290,7 +326,6 @@ export function ReadingView() {
         });
         await textLayer.render();
 
-        host.replaceChildren(canvas, textLayerDiv);
         applyAnnotations(pageNum, textLayerDiv);
         setPages((prev) => prev.map((p, i) => (i === pageNum - 1 ? { ...p, rendered: true } : p)));
       } catch (err) {
@@ -407,15 +442,22 @@ export function ReadingView() {
       h: number;
       top: number;
       side: "left" | "right";
+      /** Column the highlight sits in — cards go to the near gutter. */
+      sideHint: "left" | "right" | null;
     }
     const items: Item[] = [];
     for (const ann of anns) {
       const span = stage.querySelector(`[data-ann="${CSS.escape(ann.id)}"]`);
       let anchorCY: number;
       let noLine = false;
+      let sideHint: Item["sideHint"] = null;
       if (span) {
         const r = span.getBoundingClientRect();
         anchorCY = r.top + r.height / 2 - stageTop;
+        // Two-column pages: a highlight clearly left/right of the page center
+        // wants its card in the near gutter (full-width lines stay neutral).
+        const relX = (r.left + r.width / 2 - stageRect.left - pageLeftX) / pageRect.width;
+        sideHint = relX < 0.44 ? "left" : relX > 0.56 ? "right" : null;
       } else {
         // Page not rendered yet, or the quote never anchored: estimate near
         // the top of its page and skip the line (nothing to point at).
@@ -426,10 +468,17 @@ export function ReadingView() {
         noLine = true;
       }
       const h = cardEls.current.get(ann.id)?.offsetHeight ?? 160;
-      items.push({ ann, anchorCY, noLine, h, top: 0, side: "left" });
+      items.push({ ann, anchorCY, noLine, h, top: 0, side: "left", sideHint });
     }
     items.sort((a, b) => a.anchorCY - b.anchorCY || a.ann.page - b.ann.page);
-    items.forEach((it, i) => (it.side = i % 2 === 0 ? "left" : "right"));
+    // Hinted items take their column's gutter; neutral ones fill the lighter side.
+    let leftCount = 0;
+    let rightCount = 0;
+    for (const it of items) {
+      it.side = it.sideHint ?? (leftCount <= rightCount ? "left" : "right");
+      if (it.side === "left") leftCount++;
+      else rightCount++;
+    }
 
     for (const side of ["left", "right"] as const) {
       const col = items.filter((it) => it.side === side);

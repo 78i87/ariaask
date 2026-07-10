@@ -7,6 +7,7 @@ import { IconButton } from "../../components/IconButton";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
+import { readingEligible } from "../../lib/types";
 import type { Notebook, ReadingSessionSummary, SourceFile } from "../../lib/types";
 import { sourceIcon } from "../session/SourcesPanel";
 import { SourcePreviewDialog } from "../session/SourcePreviewDialog";
@@ -23,7 +24,7 @@ interface SourcesDialogProps {
   onRefresh: () => void;
 }
 
-const readable = (f: SourceFile) => f.storedName.toLowerCase().endsWith(".pdf") && f.extractedName !== null;
+
 
 /**
  * The project's sources hub: every source listed with preview, original link,
@@ -100,7 +101,7 @@ export function SourcesDialog({ open, notebook, onClose, onAddMaterials, onNewRe
         ) : (
           <div className="srcs__list">
             {notebook.sourceFiles.map((f) => {
-              const existing = readable(f) ? readingFor(f.storedName) : undefined;
+              const existing = readingEligible(f) ? readingFor(f.storedName) : undefined;
               return (
                 <div key={f.storedName} className="srcs__row">
                   <button type="button" className="srcs__open" onClick={() => setPreview(f)} title="Preview">
@@ -115,7 +116,7 @@ export function SourcesDialog({ open, notebook, onClose, onAddMaterials, onNewRe
                       <Icon name="open_in_new" size={18} />
                     </a>
                   )}
-                  {readable(f) &&
+                  {readingEligible(f) &&
                     (readings === null ? (
                       <span className="srcs__spinner">
                         <ProgressIndicator size={18} />

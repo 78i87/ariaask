@@ -8,7 +8,9 @@ import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { Segmented } from "../../components/Segmented";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
+import { readingEligible } from "../../lib/types";
 import type { Notebook, ReadingLevel, ReadingSessionSummary } from "../../lib/types";
+import { sourceIcon } from "../session/SourcesPanel";
 import "./ReadingDialog.css";
 
 const LEVEL_HINTS: Record<ReadingLevel, string> = {
@@ -41,7 +43,7 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
   /** The new-reading form stays hidden behind its button while there are readings to continue. */
   const [showNew, setShowNew] = useState(false);
 
-  const pdfs = notebook.sourceFiles.filter((f) => f.storedName.toLowerCase().endsWith(".pdf") && f.extractedName);
+  const readables = notebook.sourceFiles.filter(readingEligible);
 
   useEffect(() => {
     if (!open) return;
@@ -77,8 +79,8 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
       },
       () => {},
     );
-    setSource(preselectSource ?? pdfs[0]?.storedName ?? null);
-    // pdfs derives from notebook, stable while open
+    setSource(preselectSource ?? readables[0]?.storedName ?? null);
+    // readables derives from notebook, stable while open
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, notebook.id, preselectSource]);
 
@@ -168,14 +170,14 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
       ) : (
       <div className="rdd__section">
         <span className="rdd__label label-large">New guided reading</span>
-        {pdfs.length === 0 ? (
+        {readables.length === 0 ? (
           <p className="rdd__empty body-medium">
-            Guided reading works with PDF sources. Add a PDF (a paper, a chapter, lecture notes) via
-            the Sources button first.
+            Guided reading works with PDFs, saved web pages, and text notes. Add a document (a paper,
+            a chapter, a link) via the Sources button first.
           </p>
         ) : (
           <>
-            {pdfs.map((f) => (
+            {readables.map((f) => (
               <button
                 key={f.storedName}
                 type="button"
@@ -184,7 +186,7 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
                 className={`rdd__pdf${source === f.storedName ? " rdd__pdf--selected" : ""}`}
                 onClick={() => setSource(f.storedName)}
               >
-                {source === f.storedName ? <Icon name="check" size={18} /> : <Icon name="picture_as_pdf" size={18} />}
+                {source === f.storedName ? <Icon name="check" size={18} /> : <Icon name={sourceIcon(f)} size={18} />}
                 <span className="body-medium">{f.originalName}</span>
               </button>
             ))}

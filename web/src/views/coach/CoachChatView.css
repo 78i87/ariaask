@@ -56,13 +56,18 @@
 
 /* ---------- session bar (goal pill / wrap-up / welcome-back) ---------- */
 
+/* Solid background + z-index: the sticky composer's ::before fade gradient
+   paints right where this bar sits and would wash it out otherwise. */
 .sbar {
+  position: relative;
+  z-index: 1;
+  background: var(--md-sys-color-surface);
   display: flex;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 4px 16px 0;
+  padding: 4px 16px 2px;
 }
 
 .sbar--return {
@@ -71,9 +76,9 @@
   gap: 6px;
   margin: 0 16px;
   padding: 10px 14px;
-  border: 1px solid var(--md-sys-color-outline-variant);
+  border: 1px solid var(--md-sys-color-outline);
   border-radius: var(--md-sys-shape-corner-large);
-  background: var(--md-sys-color-surface-container-low);
+  background: var(--md-sys-color-surface-container);
 }
 
 .sbar__info {
@@ -112,6 +117,17 @@
 .sbar__chip--primary {
   color: var(--md-sys-color-primary);
   border-color: var(--md-sys-color-primary);
+}
+
+/* Filled variant for the actions that must be findable (wrap-up). */
+.sbar__chip--tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: transparent;
+}
+
+.sbar__chip--tonal:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 10%, var(--md-sys-color-secondary-container));
 }
 
 /* The session goal, minimized to a corner pill; click to adjust. */

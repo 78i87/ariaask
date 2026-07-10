@@ -160,6 +160,11 @@ export interface ReadingAnnotation {
   kind: ReadingAnnotationKind;
   /** The coach's prompt/instruction for this point — a question, never an answer. */
   prompt: string;
+  /**
+   * 1-2 chained follow-up questions applying DIFFERENT deep-processing moves
+   * to the same passage (the loop runs as a whole on each key piece).
+   */
+  followUps?: string[];
   /** The learner's jotted response, if any. */
   userResponse?: string;
   resolved?: boolean;
@@ -172,11 +177,21 @@ export interface ReadingAnnotation {
  */
 export interface ReadingSession {
   id: string;
-  /** SourceFile.storedName of the PDF being read. */
+  /** SourceFile.storedName of the document being read. */
   source: string;
   level: ReadingLevel;
   status: "generating" | "ready" | "failed";
   error?: string;
+  /** Absent = "pdf" (legacy sessions predate prose reading). */
+  docType?: "pdf" | "prose";
+  /**
+   * Prose only: the deterministic pseudo-page split, fixed at creation. The
+   * client renders exactly these pages (so anchors can never drift), and the
+   * reading keeps working even if the source file is later deleted.
+   */
+  textPages?: string[];
+  /** "Before you read" priming questions (kb: priming-pre-study). */
+  priming?: string[];
   annotations: ReadingAnnotation[];
   /** Post-reading suggestions ("what to do afterwards to drill it home"). */
   afterReading: string[];

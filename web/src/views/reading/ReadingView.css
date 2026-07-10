@@ -140,6 +140,121 @@
   min-height: 0;
 }
 
+/* ---------- prose documents (web scrapes, transcripts, notes) ---------- */
+
+/* One pseudo-page of rendered markdown; blocks stack seamlessly into one
+   continuous readable column. */
+.rd-block {
+  width: min(720px, 100%);
+  padding: 8px 40px;
+  background: var(--md-sys-color-surface);
+  line-height: 1.65;
+}
+
+.rd-block:first-of-type {
+  padding-top: 32px;
+  border-radius: 8px 8px 0 0;
+}
+
+.rd-block:last-of-type {
+  padding-bottom: 40px;
+  border-radius: 0 0 8px 8px;
+}
+
+/* Floating tier needs side gutters: shrink the column when cards are (or will
+   be) present on a wide viewport — mirrors the PDF fit-scale reserve. */
+.rd__stage--reserve .rd-block {
+  width: clamp(560px, calc(100% - 664px), 720px);
+}
+
+/* The stage's flex gap would open seams between blocks — collapse it for prose. */
+.rd-block + .rd-block {
+  margin-top: -16px;
+}
+
+.rd-block h1,
+.rd-block h2,
+.rd-block h3 {
+  line-height: 1.25;
+  margin: 1.2em 0 0.5em;
+}
+
+.rd-block h1 {
+  font-size: 1.6em;
+}
+
+.rd-block h2 {
+  font-size: 1.3em;
+}
+
+.rd-block h3 {
+  font-size: 1.15em;
+}
+
+.rd-block p {
+  margin: 0.7em 0;
+}
+
+.rd-block pre {
+  background: var(--md-sys-color-surface-container);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+
+.rd-block code {
+  font-size: 0.9em;
+}
+
+.rd-block blockquote {
+  margin: 0.7em 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.rd-block table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  display: block;
+  overflow-x: auto;
+}
+
+.rd-block th,
+.rd-block td {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  padding: 4px 10px;
+}
+
+.rd-block img {
+  max-width: 100%;
+}
+
+.rd-block a {
+  color: var(--md-sys-color-primary);
+}
+
+/* Prose glyphs fill their line box — the PDF-tuned fatten would look chunky. */
+.rd-block .rd-hl {
+  box-shadow: 0 0 0 2px var(--hl);
+}
+
+/* "Before you read" priming card at the top of the document. */
+.rd__priming {
+  width: min(640px, 100%);
+  margin-bottom: 4px;
+  padding: 16px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+}
+
 /* After-reading suggestions as an in-flow card after the last page (extends
    the stage, so gutter cards near the end always have room). */
 .rd__after--stage {
@@ -384,6 +499,22 @@
 
 .rd-card__prompt {
   margin: 0;
+}
+
+/* Chained loop moves on the same passage (kb: the loop runs as a whole). */
+.rd-card__followup {
+  margin: 0;
+  padding-left: 10px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.rd-card__followup-marker {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--md-sys-color-primary);
+  margin-right: 6px;
 }
 
 .rd-card__response {

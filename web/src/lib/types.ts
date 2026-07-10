@@ -125,10 +125,12 @@ export interface ReadingAnnotation {
   id: string;
   /** 1-based page number. */
   page: number;
-  /** Exact quote from the page; matched against the PDF.js text layer. */
+  /** Exact quote from the page; matched against the rendered document text. */
   anchor: string;
   kind: ReadingAnnotationKind;
   prompt: string;
+  /** Chained follow-up questions applying further loop moves to the passage. */
+  followUps?: string[];
   userResponse?: string;
   resolved?: boolean;
 }
@@ -139,10 +141,23 @@ export interface ReadingSession {
   level: ReadingLevel;
   status: "generating" | "ready" | "failed";
   error?: string;
+  /** Absent = "pdf" (legacy sessions). */
+  docType?: "pdf" | "prose";
+  /** Prose only: the pseudo-page split the view renders from. */
+  textPages?: string[];
+  /** "Before you read" priming questions. */
+  priming?: string[];
   annotations: ReadingAnnotation[];
   afterReading: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** Which sources guided reading accepts: readable PDFs, or markdown/text (web scrapes, transcripts, notes). */
+export function readingEligible(f: SourceFile): boolean {
+  const name = f.storedName.toLowerCase();
+  if (name.endsWith(".pdf")) return f.extractedName !== null;
+  return name.endsWith(".md") || name.endsWith(".txt") || f.mimeType === "text/markdown" || f.mimeType === "text/plain";
 }
 
 export interface ReadingSessionSummary {

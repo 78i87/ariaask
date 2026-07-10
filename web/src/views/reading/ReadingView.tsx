@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { GlobalWorkerOptions, TextLayer, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { Button } from "../../components/Button";
@@ -11,6 +13,7 @@ import { api } from "../../lib/api";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { useNotebooks } from "../../lib/useNotebooks";
 import type { ReadingAnnotation, ReadingAnnotationKind, ReadingSession } from "../../lib/types";
+import { markAnchor, markAnchorProse } from "./anchors";
 import { TechText } from "../coach/TechTerm";
 import "./ReadingView.css";
 
@@ -68,87 +71,15 @@ interface FloatLayout {
   lines: FloatLine[];
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
- * Highlight one span's share of a matched quote. Boundary spans where the
- * quote starts/ends mid-line get an inline wrapper around just the matched
- * substring, so the highlight hugs the quote instead of painting the whole
- * line. Falls back to whole-span marking when the span's content is already
- * split by an earlier annotation's wrapper.
+ * One rendered prose pseudo-page. memo with immutable text is load-bearing,
+ * not an optimization: highlight wrappers are imperative DOM mutations inside
+ * React-owned nodes, and any re-render would reconcile them away — memo keeps
+ * React out after mount (the same contract as the pdf.js text layer).
  */
-function markSpanRange(el: HTMLElement, ann: ReadingAnnotation, localStart: number, localEnd: number, len: number): void {
-  const wholeSpan = localStart <= 0 && localEnd >= len;
-  const textNode = el.firstChild;
-  if (!wholeSpan && el.childNodes.length === 1 && textNode?.nodeType === Node.TEXT_NODE) {
-    const range = document.createRange();
-    range.setStart(textNode, Math.max(0, localStart));
-    range.setEnd(textNode, Math.min(localEnd, len));
-    const wrap = document.createElement("span");
-    wrap.className = `rd-hl rd-hl--inline rd-hl--${ann.kind}`;
-    wrap.dataset.ann = ann.id;
-    try {
-      range.surroundContents(wrap);
-      return;
-    } catch {
-      /* fall through to whole-span marking */
-    }
-  }
-  el.dataset.ann = ann.id;
-  el.classList.add("rd-hl", `rd-hl--${ann.kind}`);
-}
-
-/**
- * Locate the annotation's anchor quote in a rendered text layer and mark the
- * covering spans. Matching is whitespace-tolerant (exact words joined by any
- * whitespace), with a looser punctuation-tolerant fallback — pdf.js text-layer
- * text can differ slightly from the server-side extraction.
- */
-function markAnchor(container: HTMLElement, ann: ReadingAnnotation): boolean {
-  // Idempotent: an anchor whose spans are already marked IS found — re-runs
-  // (late-generation passes, session state changes) must not re-flag it.
-  if (container.querySelector(`[data-ann="${ann.id}"]`)) return true;
-  // Line spans only: markedContent wrappers would duplicate their children's
-  // text in the join, and highlight wrappers aren't part of the line grid.
-  const spans = Array.from(container.querySelectorAll<HTMLElement>('span[role="presentation"]'));
-  if (spans.length === 0) return false;
-  const pieces = spans.map((s) => s.textContent ?? "");
-  const full = pieces.join(" ").toLowerCase();
-
-  const words = ann.anchor.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return false;
-  const strict = new RegExp(words.map(escapeRegExp).join("[\\s\\u00A0]+"));
-  const looseWords = words.map((w) => w.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean);
-  const loose = looseWords.length > 0 ? new RegExp(looseWords.map(escapeRegExp).join("[^\\p{L}\\p{N}]+"), "u") : null;
-
-  let match = strict.exec(full);
-  // Length-preserving strip (char-for-char, no run collapsing) so the loose
-  // match's indices still line up with the span offsets below.
-  if (!match && loose) match = loose.exec(full.replace(/[^\p{L}\p{N} ]/gu, " "));
-  if (!match) return false;
-
-  // Map the match range back to span indices ([offset, offset+len) per piece, +1 joiner).
-  const start = match.index;
-  const end = match.index + match[0].length;
-  let offset = 0;
-  let marked = false;
-  for (let i = 0; i < pieces.length; i++) {
-    const len = pieces[i]!.length;
-    const spanStart = offset;
-    const spanEnd = offset + len;
-    if (spanEnd > start && spanStart < end && len > 0) {
-      const el = spans[i]!;
-      if (!el.dataset.ann) {
-        markSpanRange(el, ann, start - spanStart, end - spanStart, len);
-        marked = true;
-      }
-    }
-    offset = spanEnd + 1; // the " " joiner
-  }
-  return marked;
-}
+const ProseBlock = memo(function ProseBlock({ text }: { text: string }) {
+  return <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>;
+});
 
 interface PageState {
   /** CSS size at the chosen scale. */
@@ -228,10 +159,12 @@ export function ReadingView() {
     };
   }, [id, rid]);
 
-  // ---------- pdf load (independent of generation status) ----------
+  const docType: "pdf" | "prose" = session?.docType === "prose" ? "prose" : "pdf";
+
+  // ---------- pdf load (independent of generation status; pdf docs only) ----------
 
   useEffect(() => {
-    if (!id || !session?.source) return;
+    if (!id || !session?.source || session.docType === "prose") return;
     let cancelled = false;
     const task = getDocument({ url: api.sourceUrl(id, session.source) });
     task.promise.then(
@@ -283,14 +216,15 @@ export function ReadingView() {
     };
   }, [pdf]);
 
-  const applyAnnotations = useCallback((pageNum: number, textLayerDiv: HTMLElement) => {
+  const applyAnnotations = useCallback((pageNum: number, container: HTMLElement) => {
     const current = sessionRef.current;
     if (!current) return;
+    const mark = current.docType === "prose" ? markAnchorProse : markAnchor;
     const missing: string[] = [];
     const found: string[] = [];
     for (const ann of current.annotations) {
       if (ann.page !== pageNum) continue;
-      if (markAnchor(textLayerDiv, ann)) found.push(ann.id);
+      if (mark(container, ann)) found.push(ann.id);
       else missing.push(ann.id);
     }
     setUnanchored((prev) => {
@@ -371,6 +305,8 @@ export function ReadingView() {
   // Late annotations (generation finishing after pages rendered) get applied
   // on arrival. Keyed on status + count, NOT session identity — response
   // saves recreate the session object and must not re-trigger this pass.
+  // For prose this is also the PRIMARY application path: blocks mount with the
+  // session, there is no per-page render callback.
   const annotationCount = session?.annotations.length ?? 0;
   const sessionStatus = session?.status;
   useEffect(() => {
@@ -382,6 +318,10 @@ export function ReadingView() {
       const host = layer.parentElement as HTMLDivElement | null;
       const pageNum = Number(host?.dataset.page);
       if (Number.isFinite(pageNum)) applyAnnotations(pageNum, layer);
+    });
+    root.querySelectorAll<HTMLElement>(".rd-block").forEach((block) => {
+      const pageNum = Number(block.dataset.page);
+      if (Number.isFinite(pageNum)) applyAnnotations(pageNum, block);
     });
   }, [sessionStatus, annotationCount, applyAnnotations]);
 
@@ -405,7 +345,7 @@ export function ReadingView() {
     const current = sessionRef.current;
     if (!stage || !current) return;
     const anns = current.annotations;
-    const pageEls = Array.from(stage.querySelectorAll<HTMLElement>(".rd-page"));
+    const pageEls = Array.from(stage.querySelectorAll<HTMLElement>(".rd-page, .rd-block"));
     const stageRect = stage.getBoundingClientRect();
 
     let shouldFloat = false;
@@ -756,13 +696,18 @@ export function ReadingView() {
 
       <div className="rd__body">
         <div className="rd__pages" ref={pagesRef} onClick={onPagesClick}>
-          {pages.length === 0 && (
+          {docType === "pdf" && pages.length === 0 && (
             <div className="rd__pdf-loading">
               <ProgressIndicator />
               <span className="body-medium">Opening the document…</span>
             </div>
           )}
-          <div className="rd__stage" ref={stageRef}>
+          <div
+            className={`rd__stage${
+              docType === "prose" && wideViewport && (generating || byPage.length > 0) ? " rd__stage--reserve" : ""
+            }`}
+            ref={stageRef}
+          >
             {floating && layout && (
               <svg className="rd__overlay" aria-hidden="true">
                 {layout.lines.map((l) => (
@@ -773,12 +718,34 @@ export function ReadingView() {
                 ))}
               </svg>
             )}
-            {pages.map((p, i) => (
-              <div key={i} className="rd-page" style={{ width: p.width, height: p.height }}>
-                <div className="rd-page__host" data-page={i + 1} style={{ width: p.width, height: p.height }} />
-                <span className="rd-page__num label-medium">{i + 1}</span>
+            {(session.priming?.length ?? 0) > 0 && (
+              <div className="rd__priming">
+                <div className="rd__rail-header title-small">
+                  <Icon name="psychology" size={18} />
+                  Before you read
+                </div>
+                <ul className="rd__after-list body-medium">
+                  {session.priming!.map((q, i) => (
+                    <li key={i}>
+                      <TechText text={q} />
+                    </li>
+                  ))}
+                </ul>
               </div>
-            ))}
+            )}
+            {docType === "pdf" &&
+              pages.map((p, i) => (
+                <div key={i} className="rd-page" style={{ width: p.width, height: p.height }}>
+                  <div className="rd-page__host" data-page={i + 1} style={{ width: p.width, height: p.height }} />
+                  <span className="rd-page__num label-medium">{i + 1}</span>
+                </div>
+              ))}
+            {docType === "prose" &&
+              (session.textPages ?? []).map((text, i) => (
+                <div key={i} className="rd-block" data-page={i + 1}>
+                  <ProseBlock text={text} />
+                </div>
+              ))}
             {floating && afterBlock}
             {floating &&
               byPage.map((ann) => {
@@ -797,6 +764,7 @@ export function ReadingView() {
                     <AnnotationCard
                       ann={ann}
                       compact
+                      pageLabel={docType === "prose" ? `§ ${ann.page}` : `p. ${ann.page}`}
                       selected={selected === ann.id}
                       unanchored={unanchored.has(ann.id)}
                       onJump={() => jumpToAnnotation(ann)}
@@ -831,6 +799,7 @@ export function ReadingView() {
               <AnnotationCard
                 key={ann.id}
                 ann={ann}
+                pageLabel={docType === "prose" ? `§ ${ann.page}` : `p. ${ann.page}`}
                 selected={selected === ann.id}
                 unanchored={unanchored.has(ann.id)}
                 onJump={() => jumpToAnnotation(ann)}
@@ -854,13 +823,15 @@ interface AnnotationCardProps {
   unanchored: boolean;
   /** Floating-gutter cards start slim (one-line response box) until engaged. */
   compact?: boolean;
+  /** "p. 3" for PDFs, "§ 3" for prose pseudo-pages. */
+  pageLabel: string;
   onJump: () => void;
   onResolve: (resolved: boolean) => void;
   onSaveResponse: (text: string) => void;
   onDiscuss: (draft: string) => void;
 }
 
-function AnnotationCard({ ann, selected, unanchored, compact, onJump, onResolve, onSaveResponse, onDiscuss }: AnnotationCardProps) {
+function AnnotationCard({ ann, selected, unanchored, compact, pageLabel, onJump, onResolve, onSaveResponse, onDiscuss }: AnnotationCardProps) {
   const [draft, setDraft] = useState(ann.userResponse ?? "");
   const [editing, setEditing] = useState(false);
   const respondable = RESPONDABLE.has(ann.kind);
@@ -873,7 +844,7 @@ function AnnotationCard({ ann, selected, unanchored, compact, onJump, onResolve,
     >
       <button type="button" className="rd-card__head" onClick={onJump}>
         <span className={`rd-card__kind rd-card__kind--${ann.kind} label-medium`}>{KIND_LABELS[ann.kind]}</span>
-        <span className="rd-card__page label-medium">p. {ann.page}</span>
+        <span className="rd-card__page label-medium">{pageLabel}</span>
         {ann.resolved && <Icon name="check" size={16} className="rd-card__check" />}
       </button>
       <blockquote className="rd-card__anchor body-medium">
@@ -882,6 +853,12 @@ function AnnotationCard({ ann, selected, unanchored, compact, onJump, onResolve,
       <p className="rd-card__prompt body-medium">
         <TechText text={concisePrompt(ann.prompt)} />
       </p>
+      {ann.followUps?.map((f, i) => (
+        <p key={i} className="rd-card__followup body-medium">
+          <span className="rd-card__followup-marker">then</span>
+          <TechText text={f} />
+        </p>
+      ))}
       {respondable && (
         <textarea
           className="rd-card__response body-medium"

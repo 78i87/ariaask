@@ -317,7 +317,7 @@ function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; 
   return (
     <div className="sbar">
       {showWrap && (
-        <button type="button" className="sbar__chip label-medium" onClick={() => send(WRAP_UP_MESSAGE)}>
+        <button type="button" className="sbar__chip sbar__chip--tonal label-medium" onClick={() => send(WRAP_UP_MESSAGE)}>
           <Icon name="checklist" size={16} />
           Wrap up &amp; log
         </button>

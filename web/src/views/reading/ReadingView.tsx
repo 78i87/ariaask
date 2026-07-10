@@ -29,6 +29,17 @@ const KIND_LABELS: Record<ReadingAnnotationKind, string> = {
 /** Whether the prompt expects the learner to produce something jottable. */
 const RESPONDABLE: Set<ReadingAnnotationKind> = new Set(["simplify", "compare", "connect", "judge", "apply"]);
 
+/**
+ * Strip a "Pause here." style lead-in — the card itself is the pause, so the
+ * preamble is pure noise. Newer sessions are generated without it; this keeps
+ * older sessions consistent.
+ */
+function concisePrompt(text: string): string {
+  const stripped = text.replace(/^\s*(?:pause|stop)(?:\s+here)?\s*[.:;,—–-]\s*/i, "");
+  if (stripped === text || stripped.length === 0) return text;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
 // ---------- floating-gutter layout constants ----------
 
 /** Body width below which we don't even reserve gutters for floating cards. */
@@ -868,8 +879,8 @@ function AnnotationCard({ ann, selected, unanchored, compact, onJump, onResolve,
       <blockquote className="rd-card__anchor body-medium">
         “{ann.anchor}”{unanchored && <span className="rd-card__unanchored label-medium"> (couldn't locate on the page)</span>}
       </blockquote>
-      <p className="rd-card__prompt body-large">
-        <TechText text={ann.prompt} />
+      <p className="rd-card__prompt body-medium">
+        <TechText text={concisePrompt(ann.prompt)} />
       </p>
       {respondable && (
         <textarea

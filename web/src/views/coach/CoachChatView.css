@@ -39,6 +39,13 @@
   white-space: pre-wrap;
 }
 
+/* Technique chips share the bubble's container color — restyle them solid so
+   they don't vanish into their own background. */
+.msg__bubble--coach-user .tech-term {
+  background: var(--md-sys-color-secondary);
+  color: var(--md-sys-color-on-secondary);
+}
+
 /* Coach replies reuse the student-bubble markdown styles with secondary accents. */
 .msg__bubble--coach .msg__cursor {
   background: var(--md-sys-color-secondary);

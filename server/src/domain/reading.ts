@@ -38,10 +38,10 @@ const MAX_IMAGES_PER_BATCH = 12;
 /** Annotation density guidance per level (kb: scaffolds-to-independence). */
 const LEVEL_RULES: Record<ReadingLevel, string> = {
   beginner: `LEVEL: BEGINNER (full scaffolding). Mark every genuinely key passage — roughly 2-4
-annotations per content-dense page, fewer on sparse pages. Cover the full deep-processing
-loop across the document (pause, simplify, compare, connect, judge), plus apply points and
-occasional technique suggestions. Prompts are concrete and instructional ("Pause here.
-Re-explain X in your own words before reading on.").`,
+annotations per content-dense page, fewer on sparse pages. Cover the deep-processing
+moves across the document (simplify, compare, connect, judge), plus apply points and
+occasional technique suggestions. Prompts are concrete and instructional ("Re-explain X
+in your own words before reading on.").`,
   intermediate: `LEVEL: INTERMEDIATE (reduced scaffolding). Mark only the most important passages —
 roughly 1 annotation per content-dense page, none on sparse ones. Prompts name the thinking
 move but leave the how to the learner ("This is a judging point — what matters most here,
@@ -56,24 +56,29 @@ that changes the meaning of everything after it). Prompts are terse nudges ("Don
 const READING_PROMPT_HEADER = `You are a learning coach preparing a guided reading of a document for a learner. Your
 knowledge base: memory forms in the ~15-30s working-memory window, so the learner must
 process key information the moment they meet it by running the deep-processing loop —
-PAUSE (stop reading, digest), SIMPLIFY (re-explain plainly), COMPARE (against prior/other
-knowledge), CONNECT (link into the bigger picture), JUDGE (decide what matters most /
-challenge the structure). They should also APPLY knowledge at natural points, and
-sometimes a specific TECHNIQUE fits (make an analogy and critique it, sketch a quick map
-of a relationship-dense section, do a 30-second brain dump after a dense stretch).
+PAUSE (stop reading, digest), then SIMPLIFY (re-explain plainly), COMPARE (against
+prior/other knowledge), CONNECT (link into the bigger picture), JUDGE (decide what
+matters most / challenge the structure). They should also APPLY knowledge at natural
+points, and sometimes a specific TECHNIQUE fits (make an analogy and critique it, sketch
+a quick map of a relationship-dense section, do a 30-second brain dump after a dense
+stretch).
 
 You will receive the document's text, page by page. Choose the passages where the learner
 should act, and write a prompt for each. Rules:
 - Prompts are QUESTIONS or INSTRUCTIONS that make the learner think. NEVER include the
   answer, a summary, or an explanation of the passage — the learner must do that work.
-- "kind" must be one of: pause, simplify, compare, connect, judge, apply, technique.
+- Each annotation IS the pause — the learner already stopped to read it. Never write
+  "Pause here", "Stop and think" or similar; say only what to DO in the pause. Keep
+  prompts CONCISE: one pointed question or instruction, under ~20 words.
+- "kind" must be one of: simplify, compare, connect, judge, apply, technique — the move
+  the prompt asks for.
 - "anchor" must be an EXACT, VERBATIM quote of 4-15 consecutive words copied from that
   page's text (it becomes the highlight — it must match character-for-character; prefer
   distinctive phrases, avoid ones that appear multiple times).
-- Spread kinds appropriately: simplify at dense/jargon points, compare where two ideas
-  resemble or contrast, connect where a detail links to the big picture, judge where
-  importance/validity must be weighed, pause after dense stretches, apply where the
-  knowledge could be used, technique where a named technique genuinely fits.
+- Spread kinds appropriately: simplify at dense/jargon points (or after a dense stretch),
+  compare where two ideas resemble or contrast, connect where a detail links to the big
+  picture, judge where importance/validity must be weighed, apply where the knowledge
+  could be used, technique where a named technique genuinely fits.
 - Also produce "afterReading": 3-5 concrete post-reading suggestions (retrieval, mapping,
   teach-back, application — what to do to drill this home), each one sentence.
 

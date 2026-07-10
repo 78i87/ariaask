@@ -75,6 +75,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
         text: m.text,
         status: "complete" as const,
         interrupted: m.interrupted,
+        createdAt: m.createdAt,
       })),
     );
     return res;
@@ -175,17 +176,19 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       knownIds.current.add(data.id);
       persistedCount.current += 1;
       const role = data.role ?? "coach";
+      // SSE message events carry no timestamp — they just happened.
+      const createdAt = new Date().toISOString();
       if (role === "coach") {
         deltaBuffers.current.clear();
         setMessages((prev) => {
           const withoutStreaming = prev.filter((m) => m.status !== "streaming" && !m.id.startsWith(STREAMING_ID_PREFIX));
           return [
             ...withoutStreaming,
-            { id: data.id, role: "coach", text: data.text, status: "complete", interrupted: data.interrupted },
+            { id: data.id, role: "coach", text: data.text, status: "complete", interrupted: data.interrupted, createdAt },
           ];
         });
       } else {
-        setMessages((prev) => [...prev, { id: data.id, role: "user", text: data.text, status: "complete" }]);
+        setMessages((prev) => [...prev, { id: data.id, role: "user", text: data.text, status: "complete", createdAt }]);
       }
     });
 
@@ -234,7 +237,10 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       if (!trimmed) return;
       const optimisticId = crypto.randomUUID();
       knownIds.current.add(optimisticId);
-      setMessages((prev) => [...prev, { id: optimisticId, role: "user", text: trimmed, status: "complete" }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: optimisticId, role: "user", text: trimmed, status: "complete", createdAt: new Date().toISOString() },
+      ]);
       persistedCount.current += 1;
       setError(null);
       setStatus("waiting");
@@ -263,7 +269,10 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       knownIds.current.add(optimisticId);
       persistedCount.current = kept.length + 1;
       deltaBuffers.current.clear();
-      setMessages([...kept, { id: optimisticId, role: "user", text: trimmed, status: "complete" }]);
+      setMessages([
+        ...kept,
+        { id: optimisticId, role: "user", text: trimmed, status: "complete", createdAt: new Date().toISOString() },
+      ]);
       setError(null);
       setStatus("waiting");
       void api.editCoachMessage(notebookId, messageId, trimmed, optimisticId).then(

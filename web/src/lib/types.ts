@@ -104,6 +104,8 @@ export interface CoachChatMessage {
   text: string;
   status: "complete" | "streaming";
   interrupted?: boolean;
+  /** Absent only on messages that streamed in before the page knew better. */
+  createdAt?: string;
 }
 
 // Mirrors server/src/domain/usage.ts.
@@ -150,6 +152,36 @@ export interface ReadingSessionSummary {
   status: "generating" | "ready" | "failed";
   annotationCount: number;
   createdAt: string;
+}
+
+/** One learning-log entry — the durable record of one study block. */
+export interface LearningLogEntry {
+  id: string;
+  topic: string;
+  goal: string;
+  strategy: string;
+  resultGap: string;
+  nextMove: string;
+  source: "coach" | "user";
+  createdAt: string;
+  updatedAt?: string;
+}
+
+/** A topic loosely due for a spaced return (computed server-side). */
+export interface DueTopic {
+  topic: string;
+  daysSince: number;
+  intervalDays: number;
+  entryCount: number;
+}
+
+/** A due topic with its project, for the cross-project sidebar strip. */
+export interface GlobalDueTopic {
+  notebookId: string;
+  notebookTitle: string;
+  topic: string;
+  daysSince: number;
+  intervalDays: number;
 }
 
 /** Which pane the session view is showing. */

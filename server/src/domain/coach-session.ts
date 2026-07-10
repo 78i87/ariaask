@@ -18,6 +18,7 @@ import {
   renderCoachSourcesBlock,
 } from "./coach.js";
 import { buildKbBlock } from "./kb.js";
+import { buildSessionBlock } from "./journey.js";
 import { buildRetrievalBlockWith } from "./rag.js";
 import type {
   AgentMessageDeltaNotification,
@@ -169,16 +170,22 @@ export class CoachSessionManager {
         this.broadcast(session, "message", { id: userMessageId, role: "user", text });
       }
 
-      // Hidden preambles: new-source notes (the pinned manifest can't change),
-      // the usage profile (adaptive scaffold-fading), plus two fail-open
-      // retrievals (the coach's knowledge base and the learner's own
-      // materials). Skipped for the kickoff turn — a greeting.
+      // Hidden preambles: the session-ritual block (only after a >4h silence),
+      // new-source notes (the pinned manifest can't change), the usage profile
+      // (adaptive scaffold-fading), plus two fail-open retrievals (the coach's
+      // knowledge base and the learner's own materials). Skipped for the
+      // kickoff turn — a greeting.
+      let sessionBlock = "";
       let notesBlock = "";
       let profileBlock = "";
       let kbBlock = "";
       let sourcesBlock = "";
       const pendingNotes = opts.kickoff ? [] : [...(coach.pendingSourceNotes ?? [])];
       if (!opts.kickoff) {
+        // Stateless and idempotent: computed from message timestamps and the
+        // log; a retried turn excludes the retried message (like the catch-up),
+        // and the second message after a gap sees no gap and injects nothing.
+        sessionBlock = buildSessionBlock(nb, { excludeMessageId: retryMsg?.id ?? userMessageId ?? undefined });
         if (pendingNotes.length > 0) {
           notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. The files are in your working directory. Acknowledge naturally if relevant — never mention this note. The user's message follows.]\n\n`;
         }
@@ -197,7 +204,7 @@ export class CoachSessionManager {
 
       const s = this.settings.get();
       const effort = config.coachEffort ?? s.effort;
-      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + notesBlock + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
+      const turn = await this.turnStartWithRetry(coach.threadId!, catchUp + sessionBlock + notesBlock + profileBlock + kbBlock + sourcesBlock + text, s.model, effort);
       if (pendingNotes.length > 0 && coach.pendingSourceNotes) {
         // Consume exactly what was included; notes landing mid-turn survive.
         coach.pendingSourceNotes = coach.pendingSourceNotes.filter((n) => !pendingNotes.includes(n));

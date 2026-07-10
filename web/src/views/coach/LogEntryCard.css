@@ -1,0 +1,85 @@
+.logcard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.logcard__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logcard__head .m3-icon {
+  color: var(--md-sys-color-secondary);
+}
+
+.logcard__row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.logcard__eyebrow {
+  color: var(--md-sys-color-on-surface-variant);
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+}
+
+/* Quiet underline inputs — the card should read as a filled draft, not a form. */
+.logcard__input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  padding: 2px 0;
+}
+
+.logcard__input:hover {
+  border-bottom-color: var(--md-sys-color-outline-variant);
+}
+
+.logcard__input:focus {
+  outline: none;
+  border-bottom-color: var(--md-sys-color-primary);
+}
+
+.logcard__input--topic {
+  font-weight: 600;
+}
+
+.logcard__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.logcard--done {
+  flex-direction: row;
+  align-items: center;
+  padding: 10px 14px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.logcard--done .m3-icon {
+  color: var(--md-sys-color-primary);
+}
+
+.logcard__undo {
+  border: none;
+  background: none;
+  color: var(--md-sys-color-primary);
+  cursor: pointer;
+  padding: 0;
+}

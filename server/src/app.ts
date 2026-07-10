@@ -10,6 +10,7 @@ import type { UsageStore } from "./domain/usage.js";
 import { errorHandler, HttpError } from "./lib/errors.js";
 import { authRoutes, LoginTracker } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
+import { journeyRoutes } from "./routes/journey.js";
 import { notebookRoutes } from "./routes/notebooks.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
@@ -47,6 +48,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.use("/api/notebooks", notebookRoutes(deps.store, deps.sessions, deps.settings, deps.cyra, deps.coach, deps.client, deps.usage));
   app.use("/api/settings", settingsRoutes(deps.settings, deps.client));
   app.use("/api/usage", usageRoutes(deps.usage));
+  app.use("/api/journey", journeyRoutes(deps.store));
 
   app.use("/api", (_req, _res, next) => next(new HttpError(404, "not_found")));
   app.use(errorHandler);

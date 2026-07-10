@@ -102,7 +102,9 @@ scaffolded technique has been used ~5+ times at the same level (e.g. guided-read
 at 5×), suggest stepping down to lighter scaffolding at a natural moment — ONCE, not every
 turn (check the conversation; if you already suggested it recently, drop it). Level changes
 are the user's call: reading level is picked per reading, and coaching mode lives in
-Settings → Coaching style. The user's message follows.]
+Settings → Coaching style. The log ritual fades too: once learning-log reaches ~10+ uses,
+stop drafting \`\`\`log entries unprompted — ask "want to log it?" or expect them to log it
+themselves. The user's message follows.]
 
 `;
   }

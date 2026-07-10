@@ -6,8 +6,11 @@ import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
 import { annotateTechniques } from "../../lib/techniques";
+import { GOAL_PREFIX, WRAP_UP_MESSAGE, CONTINUE_MESSAGE, quickReturnMessage } from "../../lib/journeyMessages";
 import { TechTerm, TechText } from "./TechTerm";
-import { useCoachThread } from "../../lib/useCoachThread";
+import { LogEntryCard, parseLog } from "./LogEntryCard";
+import { useJourney } from "./journeyContext";
+import { useCoachThread, type CoachStatus } from "../../lib/useCoachThread";
 import type { CoachChatMessage } from "../../lib/types";
 import { MessageContext, useCoachActions, useMessageInfo } from "./coachActions";
 import { Composer } from "../session/Composer";
@@ -188,6 +191,10 @@ const COACH_MD_COMPONENTS: Components = {
         const choices = parseChoices(childText(props.children).trim());
         if (choices) return <ChoicesCard choices={choices} />;
       }
+      if (cls.includes("language-log")) {
+        const log = parseLog(childText(props.children).trim());
+        if (log) return <LogEntryCard spec={log} />;
+      }
     }
     return <pre>{children}</pre>;
   },
@@ -200,6 +207,130 @@ function CoachMarkdown({ text }: { text: string }) {
     <Markdown remarkPlugins={[remarkGfm]} components={COACH_MD_COMPONENTS}>
       {annotated}
     </Markdown>
+  );
+}
+
+// ---------- session bar (goal pill + wrap-up / welcome-back strip) ----------
+
+const CLIENT_SESSION_GAP_MS = 4 * 60 * 60 * 1000; // mirrors journey.ts SESSION_GAP_MS
+
+/**
+ * A quiet strip above the composer, derived entirely from message timestamps
+ * and the learning log (model-free). Mid-session it pins the one-line session
+ * goal (the latest "Today's target: …" user message) in the corner and offers
+ * "Wrap up & log" once there's something to log; after a >4h silence it turns
+ * into a welcome-back strip with due-topic returns and a continue button.
+ */
+function SessionBar({ messages, status, send }: { messages: CoachChatMessage[]; status: CoachStatus; send: (text: string) => void }) {
+  const { entries, due } = useJourney();
+  const [now, setNow] = useState(() => Date.now());
+  const [goalEditing, setGoalEditing] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+  useEffect(() => {
+    // The 4h boundary can pass while the tab sits open — re-derive each minute.
+    const t = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const persisted = messages.filter((m) => m.status === "complete" && m.createdAt);
+  if (persisted.length === 0) return null;
+  const lastAt = new Date(persisted[persisted.length - 1]!.createdAt!).getTime();
+  const gap = now - lastAt;
+
+  if (gap > CLIENT_SESSION_GAP_MS) {
+    if (status !== "idle") return null;
+    const sorted = [...entries].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const lastEntry = sorted[sorted.length - 1];
+    const days = Math.round(gap / 86_400_000);
+    const agoLabel = gap < 86_400_000 ? "earlier today" : days <= 1 ? "yesterday" : `${days} days ago`;
+    return (
+      <div className="sbar sbar--return">
+        <div className="sbar__info">
+          <span className="body-medium">
+            <strong>Welcome back</strong> — last session {agoLabel}.
+          </span>
+          {lastEntry?.nextMove && <span className="sbar__next body-medium">Next move was: {lastEntry.nextMove}</span>}
+        </div>
+        <div className="sbar__actions">
+          {due.map((d) => (
+            <button
+              key={d.topic}
+              type="button"
+              className="sbar__chip label-medium"
+              onClick={() => send(quickReturnMessage(d.topic))}
+            >
+              <Icon name="history_edu" size={16} />
+              {d.topic} · {d.daysSince}d
+            </button>
+          ))}
+          <button type="button" className="sbar__chip sbar__chip--primary label-medium" onClick={() => send(CONTINUE_MESSAGE)}>
+            Pick up where you left off
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Active session: walk back to the session start to find the latest goal
+  // message and whether anything is left to log.
+  let goal: string | null = null;
+  let hasUserMsg = false;
+  let sessionStart = lastAt;
+  let prevAt = Number.POSITIVE_INFINITY;
+  for (let i = persisted.length - 1; i >= 0; i--) {
+    const m = persisted[i]!;
+    const at = new Date(m.createdAt!).getTime();
+    if (prevAt !== Number.POSITIVE_INFINITY && prevAt - at > CLIENT_SESSION_GAP_MS) break;
+    prevAt = at;
+    sessionStart = at;
+    if (m.role === "user") {
+      hasUserMsg = true;
+      if (goal === null && m.text.startsWith(GOAL_PREFIX)) goal = m.text.slice(GOAL_PREFIX.length).trim();
+    }
+  }
+  const sessionLogged = entries.some((e) => new Date(e.createdAt).getTime() >= sessionStart);
+  const showWrap = hasUserMsg && !sessionLogged && status === "idle";
+  if (!goal && !showWrap) return null;
+
+  return (
+    <div className="sbar">
+      {showWrap && (
+        <button type="button" className="sbar__chip label-medium" onClick={() => send(WRAP_UP_MESSAGE)}>
+          <Icon name="checklist" size={16} />
+          Wrap up &amp; log
+        </button>
+      )}
+      {goal !== null &&
+        (goalEditing ? (
+          <input
+            className="sbar__goal-edit body-medium"
+            autoFocus
+            value={goalDraft}
+            onChange={(e) => setGoalDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && goalDraft.trim()) {
+                send(GOAL_PREFIX + goalDraft.trim());
+                setGoalEditing(false);
+              }
+              if (e.key === "Escape") setGoalEditing(false);
+            }}
+            onBlur={() => setGoalEditing(false)}
+          />
+        ) : (
+          <button
+            type="button"
+            className="sbar__goal label-medium"
+            title={`Today's target: ${goal} — click to adjust`}
+            onClick={() => {
+              setGoalDraft(goal);
+              setGoalEditing(true);
+            }}
+          >
+            <Icon name="flag" size={14} />
+            <span className="sbar__goal-text">{goal}</span>
+          </button>
+        ))}
+    </div>
   );
 }
 
@@ -222,7 +353,10 @@ interface CoachBubbleProps {
 }
 
 function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubbleProps) {
-  const messageInfo = useMemo(() => ({ interactive, send }), [interactive, send]);
+  const messageInfo = useMemo(
+    () => ({ interactive, send, messageId: message.status === "complete" ? message.id : undefined }),
+    [interactive, send, message.status, message.id],
+  );
   if (message.role === "user") {
     return (
       <div className="msg msg--teacher">
@@ -347,6 +481,8 @@ export function CoachChatView({ notebookId }: { notebookId: string }) {
           )}
         </div>
       </div>
+
+      <SessionBar messages={messages} status={status} send={send} />
 
       {editing && (
         <div className="session__editing">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Dialog } from "../components/Dialog";
@@ -13,9 +13,12 @@ import { useAuth } from "../lib/auth";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useNotebooks } from "../lib/useNotebooks";
 import { useTheme } from "../lib/theme";
-import type { Notebook } from "../lib/types";
+import type { DueTopic, GlobalDueTopic, LearningLogEntry, Notebook } from "../lib/types";
+import { quickReturnMessage } from "../lib/journeyMessages";
 import { CoachChatView } from "./coach/CoachChatView";
 import { CoachActionsContext, type CoachActions } from "./coach/coachActions";
+import { JourneyContext, type Journey } from "./coach/journeyContext";
+import { JourneyDialog } from "./coach/JourneyDialog";
 import { CreateNotebookDialog } from "./home/CreateNotebookDialog";
 import { SourcesDialog } from "./coach/SourcesDialog";
 import { ReadingDialog } from "./reading/ReadingDialog";
@@ -45,6 +48,7 @@ export function CoachShell() {
   const [readingOpen, setReadingOpen] = useState(false);
   /** Set by the sources hub: open the new-reading form preselected to this source. */
   const [readingPreselect, setReadingPreselect] = useState<string | null>(null);
+  const [journeyOpen, setJourneyOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -101,6 +105,53 @@ export function CoachShell() {
     [id, current, snackbar],
   );
 
+  // The current project's learning log + due returns, shared via JourneyContext
+  // with the Journey dialog and the chat's in-message log cards.
+  const [logEntries, setLogEntries] = useState<LearningLogEntry[]>([]);
+  const [dueTopics, setDueTopics] = useState<DueTopic[]>([]);
+  const [globalDue, setGlobalDue] = useState<GlobalDueTopic[]>([]);
+  const refreshJourney = useCallback(() => {
+    api.getGlobalDue().then((res) => setGlobalDue(res.due), () => {});
+    if (!id) return;
+    api.getLog(id).then(
+      (res) => {
+        setLogEntries(res.entries);
+        setDueTopics(res.due);
+      },
+      () => {},
+    );
+  }, [id]);
+  useEffect(() => {
+    setLogEntries([]);
+    setDueTopics([]);
+    refreshJourney();
+  }, [refreshJourney]);
+
+  const journey = useMemo<Journey>(
+    () => ({
+      entries: logEntries,
+      due: dueTopics,
+      refresh: refreshJourney,
+      addEntry: async (body) => {
+        if (!id) throw new Error("No project selected");
+        const res = await api.addLogEntry(id, body);
+        setLogEntries((prev) => (prev.some((e) => e.id === res.entry.id) ? prev : [...prev, res.entry]));
+        setDueTopics(res.due);
+        return res.entry;
+      },
+    }),
+    [id, logEntries, dueTopics, refreshJourney],
+  );
+
+  /** Journey due-chip tap: post the canonical retrieval opener into the coach chat. */
+  const startQuickReturn = (topic: string) => {
+    if (!id) return;
+    setJourneyOpen(false);
+    void api
+      .sendCoachMessage(id, { text: quickReturnMessage(topic), clientMessageId: crypto.randomUUID() })
+      .catch((err) => snackbar.show(err instanceof Error ? err.message : "Couldn't reach the coach"));
+  };
+
   // "/" (or a stale id) lands on the most recent project once the list loads.
   useEffect(() => {
     if (notebooks === null) return;
@@ -136,6 +187,27 @@ export function CoachShell() {
           New learning project
         </Button>
       </div>
+
+      {globalDue.length > 0 && (
+        <div className="shell__due">
+          <span className="shell__due-label label-medium">Worth a quick return</span>
+          {globalDue.map((d) => (
+            <button
+              key={`${d.notebookId}:${d.topic}`}
+              type="button"
+              className="shell__due-chip"
+              onClick={() => navigate(`/learn/${d.notebookId}`)}
+              title={`${d.topic} — ${d.daysSince} days since, in ${d.notebookTitle}`}
+            >
+              <Icon name="history_edu" size={16} />
+              <span className="shell__due-topic label-large">{d.topic}</span>
+              <span className="shell__due-meta label-medium">
+                {d.daysSince}d · {d.notebookTitle}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <nav className="shell__projects" aria-label="Learning projects">
         {notebooks === null && !error && (
@@ -206,6 +278,11 @@ export function CoachShell() {
                   <span className="shell__chip-label">Sources</span>
                   {current.sourceFiles.length > 0 && <span className="shell__chip-count">{current.sourceFiles.length}</span>}
                 </button>
+                <button type="button" className="shell__chip label-large" onClick={() => setJourneyOpen(true)}>
+                  <Icon name="timeline" size={18} />
+                  <span className="shell__chip-label">Journey</span>
+                  {dueTopics.length > 0 && <span className="shell__chip-count">{dueTopics.length}</span>}
+                </button>
                 <button type="button" className="shell__chip label-large" onClick={() => setReadingOpen(true)}>
                   <Icon name="auto_stories" size={18} />
                   <span className="shell__chip-label">Guided reading</span>
@@ -221,7 +298,9 @@ export function CoachShell() {
               </div>
             </header>
             <CoachActionsContext.Provider value={coachActions}>
-              <CoachChatView notebookId={current.id} />
+              <JourneyContext.Provider value={journey}>
+                <CoachChatView notebookId={current.id} />
+              </JourneyContext.Provider>
             </CoachActionsContext.Provider>
           </>
         ) : notebooks === null ? (
@@ -271,6 +350,17 @@ export function CoachShell() {
             setReadingPreselect(null);
           }}
         />
+      )}
+
+      {current && (
+        <JourneyContext.Provider value={journey}>
+          <JourneyDialog
+            open={journeyOpen}
+            notebookId={current.id}
+            onClose={() => setJourneyOpen(false)}
+            onQuickReturn={startQuickReturn}
+          />
+        </JourneyContext.Provider>
       )}
 
       {current && (

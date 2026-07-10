@@ -264,3 +264,53 @@
     padding: 8px 12px;
   }
 }
+
+/* ---------- cross-project due returns (sidebar strip) ---------- */
+
+.shell__due {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+
+.shell__due-label {
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 0 4px;
+}
+
+.shell__due-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell__due-chip:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.shell__due-chip .m3-icon {
+  color: var(--md-sys-color-secondary);
+  flex-shrink: 0;
+}
+
+.shell__due-topic {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__due-meta {
+  margin-left: auto;
+  color: var(--md-sys-color-on-surface-variant);
+  flex-shrink: 0;
+}

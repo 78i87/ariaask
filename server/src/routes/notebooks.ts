@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
-import type { NotebookStore, SourceFile } from "../domain/store.js";
+import type { LearningLogEntry, NotebookStore, SourceFile } from "../domain/store.js";
 import { ensureCoachState, sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
+import { SESSION_GAP_MS, computeDueTopics } from "../domain/journey.js";
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
 import type { CoachSessionManager } from "../domain/coach-session.js";
@@ -651,13 +652,85 @@ export function notebookRoutes(
     res.status(204).end();
   });
 
+  // ---------- Learning log (journey.ts) ----------
+
+  router.get("/:id/log", (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    res.json({ entries: nb.learningLog ?? [], due: computeDueTopics(nb) });
+  });
+
+  router.post("/:id/log", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const clip = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const topic = clip(body.topic, 120);
+    if (!topic) throw new HttpError(400, "missing_topic", "A topic is required");
+    nb.learningLog ??= [];
+    // Coach-drafted cards send id "log:<messageId>" — confirming one twice
+    // (double click, reload) must return the existing entry, not duplicate.
+    const id = typeof body.id === "string" && body.id.trim() ? body.id.trim().slice(0, 100) : randomUUID();
+    const existing = nb.learningLog.find((e) => e.id === id);
+    if (existing) {
+      res.json({ entry: existing, due: computeDueTopics(nb) });
+      return;
+    }
+    const entry: LearningLogEntry = {
+      id,
+      topic,
+      goal: clip(body.goal, 300),
+      strategy: clip(body.strategy, 300),
+      resultGap: clip(body.resultGap, 500),
+      nextMove: clip(body.nextMove, 300),
+      source: body.source === "coach" ? "coach" : "user",
+      createdAt: new Date().toISOString(),
+    };
+    nb.learningLog.push(entry);
+    await store.save(nb);
+    usage.recordUse("learning-log");
+    res.status(201).json({ entry, due: computeDueTopics(nb) });
+  });
+
+  router.patch("/:id/log/:eid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const entry = nb.learningLog?.find((e) => e.id === req.params.eid);
+    if (!entry) throw new HttpError(404, "log_entry_not_found");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const clip = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
+    const topic = clip(body.topic, 120);
+    if (topic) entry.topic = topic;
+    const goal = clip(body.goal, 300);
+    if (goal !== undefined) entry.goal = goal;
+    const strategy = clip(body.strategy, 300);
+    if (strategy !== undefined) entry.strategy = strategy;
+    const resultGap = clip(body.resultGap, 500);
+    if (resultGap !== undefined) entry.resultGap = resultGap;
+    const nextMove = clip(body.nextMove, 300);
+    if (nextMove !== undefined) entry.nextMove = nextMove;
+    entry.updatedAt = new Date().toISOString();
+    await store.save(nb);
+    res.json({ entry, due: computeDueTopics(nb) });
+  });
+
+  router.delete("/:id/log/:eid", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const before = nb.learningLog?.length ?? 0;
+    nb.learningLog = (nb.learningLog ?? []).filter((e) => e.id !== req.params.eid);
+    if (nb.learningLog.length === before) throw new HttpError(404, "log_entry_not_found");
+    await store.save(nb);
+    res.status(204).end();
+  });
+
   router.post("/:id/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
     // A teach-back "use" is a teaching session, not a message: count when the
     // notebook has no messages yet or the last one is more than 4 hours old.
     const nbBefore = store.get(req.params.id);
     const lastMsg = nbBefore?.messages[nbBefore.messages.length - 1];
-    const newSession = !lastMsg || Date.now() - new Date(lastMsg.createdAt).getTime() > 4 * 60 * 60_000;
+    const newSession = !lastMsg || Date.now() - new Date(lastMsg.createdAt).getTime() > SESSION_GAP_MS;
     const result = await sessions.startTurn(
       req.params.id,
       body.text,

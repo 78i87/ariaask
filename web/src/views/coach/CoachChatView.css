@@ -54,6 +54,98 @@
   border-left-color: var(--md-sys-color-secondary);
 }
 
+/* ---------- session bar (goal pill / wrap-up / welcome-back) ---------- */
+
+.sbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 16px 0;
+}
+
+.sbar--return {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.sbar__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sbar__next {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: none;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sbar__chip:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.sbar__chip--primary {
+  color: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
+/* The session goal, minimized to a corner pill; click to adjust. */
+.sbar__goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sbar__goal-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sbar__goal-edit {
+  width: min(320px, 60%);
+  padding: 4px 12px;
+  border: 1px solid var(--md-sys-color-primary);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  outline: none;
+}
+
 /* ---------- quiz cards (```quiz fenced blocks) ---------- */
 
 .quiz {

@@ -3,9 +3,12 @@ import type {
   AuthStatus,
   ChatMessage,
   CyraThreadSummary,
+  DueTopic,
+  GlobalDueTopic,
   Intake,
   IntakeAnswerPayload,
   KnowledgeState,
+  LearningLogEntry,
   Notebook,
   ReadingAnnotation,
   ReadingLevel,
@@ -114,7 +117,7 @@ export const api = {
   getCoach: (id: string) =>
     request<{
       coach: { kickoffDone: boolean };
-      messages: { id: string; role: "user" | "coach"; text: string; interrupted?: boolean }[];
+      messages: { id: string; role: "user" | "coach"; text: string; interrupted?: boolean; createdAt?: string }[];
       turnActive: boolean;
     }>(`/api/notebooks/${id}/coach`),
   coachKickoff: (id: string) => request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/kickoff`, { method: "POST" }),
@@ -140,6 +143,18 @@ export const api = {
     }),
   deleteReading: (id: string, rid: string) =>
     request<void>(`/api/notebooks/${id}/reading/${rid}`, { method: "DELETE" }),
+
+  getLog: (id: string) => request<{ entries: LearningLogEntry[]; due: DueTopic[] }>(`/api/notebooks/${id}/log`),
+  addLogEntry: (id: string, body: Partial<LearningLogEntry> & { topic: string }) =>
+    request<{ entry: LearningLogEntry; due: DueTopic[] }>(`/api/notebooks/${id}/log`, json(body)),
+  updateLogEntry: (id: string, eid: string, patch: Partial<Omit<LearningLogEntry, "id">>) =>
+    request<{ entry: LearningLogEntry; due: DueTopic[] }>(`/api/notebooks/${id}/log/${eid}`, {
+      ...json(patch),
+      method: "PATCH",
+    }),
+  deleteLogEntry: (id: string, eid: string) =>
+    request<void>(`/api/notebooks/${id}/log/${eid}`, { method: "DELETE" }),
+  getGlobalDue: () => request<{ due: GlobalDueTopic[] }>("/api/journey/due"),
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,

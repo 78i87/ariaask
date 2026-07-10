@@ -25,6 +25,11 @@ export const CoachActionsContext = createContext<CoachActions>({
 export interface MessageInfo {
   interactive: boolean;
   send: (text: string) => void;
+  /**
+   * The persisted id of the message this block lives in — the dedupe key for
+   * ```log confirm cards ("log:<messageId>"). Undefined while streaming.
+   */
+  messageId?: string;
 }
 
 export const MessageContext = createContext<MessageInfo>({ interactive: false, send: () => {} });

@@ -204,6 +204,29 @@ export function toReadingSummary(rs: ReadingSession): ReadingSessionSummary {
   };
 }
 
+/**
+ * One learning-log entry — the durable record of one study block (see
+ * journey.ts and kb/guides/learning-log.md: a 1-3 minute feedback tool, one
+ * entry per meaningful study block, strategies never thinking moves). The
+ * `topic` field is how multiple topics live inside one project: folders as a
+ * view over the log, not containers.
+ */
+export interface LearningLogEntry {
+  /**
+   * "log:<coachMessageId>" for coach-drafted entries (dedupe key — confirming
+   * the same in-chat card twice must not duplicate), randomUUID for manual.
+   */
+  id: string;
+  topic: string;
+  goal: string;
+  strategy: string;
+  resultGap: string;
+  nextMove: string;
+  source: "coach" | "user";
+  createdAt: string;
+  updatedAt?: string;
+}
+
 /** Lazily initialize a notebook's coach conversation (caller persists). */
 export function ensureCoachState(nb: Notebook): CoachState {
   if (!nb.coach) {
@@ -264,6 +287,8 @@ export interface Notebook {
   coachIntake?: { goal?: string; current?: string; deadline?: string };
   /** Guided readings of PDF sources (see reading.ts). Absent = none yet. */
   readingSessions?: ReadingSession[];
+  /** The learning log (see journey.ts). Absent = no entries yet. */
+  learningLog?: LearningLogEntry[];
   /**
    * "coach" = created from the coach shell: Aria intake init is deferred until
    * the teach-back view is first opened (GET /:id), so a project that never

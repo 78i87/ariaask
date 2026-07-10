@@ -7,6 +7,7 @@ import type {
   IntakeAnswerPayload,
   KnowledgeState,
   Notebook,
+  CodexCliStatus,
   SettingsResponse,
   SourceFile,
 } from "./types";
@@ -122,6 +123,14 @@ export const api = {
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>
     request<{ settings: AppSettings }>("/api/settings", { ...json(patch), method: "PUT" }),
+
+  getCodexStatus: () => request<CodexCliStatus>("/api/codex/status"),
+  updateCodex: () =>
+    request<CodexCliStatus>("/api/codex/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Aria-Local-Action": "codex-update" },
+      body: "{}",
+    }),
 };
 
 export type { ChatMessage };

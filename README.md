@@ -56,10 +56,14 @@ your uploaded sources but cannot write files or run commands.
 
 The gear button in the top bar opens Settings: model, thinking level, student
 style (reply length + probing intensity), color theme (blue default / purple),
-and account/sign-out. Model and thinking apply to every notebook immediately;
-changing student style restarts the notebook's thread behind the scenes (the
-student re-reads the transcript, so nothing it learned is lost). Settings
-persist in `data/settings.json`.
+Codex CLI status, and account/sign-out. The checked model is persisted as an
+explicit model slug and applies to every notebook immediately; it never silently
+inherits a different model from the global Codex config. On local Aria installs,
+Settings can update the exact active npm- or Homebrew-managed Codex CLI and
+restart the app-server after the new version is verified. Custom CLI paths show
+manual guidance instead. Changing student style restarts the notebook's thread
+behind the scenes (the student re-reads the transcript, so nothing it learned is
+lost). Settings persist in `data/settings.json`.
 
 ## Configuration (optional env vars)
 
@@ -76,6 +80,7 @@ persist in `data/settings.json`.
 
 - `npm run dev` — run backend + frontend together
 - `npm run dev:server` / `npm run dev:web` — run one side
+- `npm test -w @aria/server` — run focused settings and Codex updater tests
 - `npm run typecheck` — typecheck both workspaces
 
 v1 is conversational Q&A only — no scoring, debrief, or quizzes (yet).

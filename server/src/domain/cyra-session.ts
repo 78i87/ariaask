@@ -61,6 +61,7 @@ export class CyraSessionManager {
   ) {
     // Mirrors session.ts:85.
     client.on("crashed", () => this.failAllActiveTurns("Cyra's connection dropped."));
+    client.on("restarting", () => this.failAllActiveTurns("The Codex CLI restarted during this response. Please retry."));
   }
 
   private findThread(notebookId: string, cyraThreadId: string): { nb: Notebook; ct: CyraThread } {

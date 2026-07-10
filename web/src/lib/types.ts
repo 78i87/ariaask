@@ -119,6 +119,17 @@ export interface SettingsResponse {
   models: ModelInfo[];
 }
 
+export interface CodexCliStatus {
+  currentVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean | null;
+  installMethod: "npm" | "homebrew" | null;
+  canUpdate: boolean;
+  state: "idle" | "running" | "succeeded" | "unchanged" | "failed";
+  message?: string;
+  manualCommand?: string;
+}
+
 // Mirrors server/src/domain/knowledge.ts. Server-driven: arrives on
 // GET /api/notebooks/:id (`knowledgeState`) and via the "knowledge-state" SSE
 // event; rendered by the knowledge map pane (KnowledgeMapView).

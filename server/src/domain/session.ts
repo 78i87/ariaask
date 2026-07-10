@@ -113,6 +113,7 @@ export class SessionManager {
     private config: Config,
   ) {
     client.on("crashed", () => this.failAllActiveTurns("The student's connection dropped."));
+    client.on("restarting", () => this.failAllActiveTurns("The Codex CLI restarted during this response. Please retry."));
     // Index builds surface as a status line; nobody attached → nobody to tell.
     setRagBuildListener((notebookId) => {
       const session = this.sessions.get(notebookId);

@@ -9,7 +9,7 @@ import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { setSplitChat, useSplitChat } from "../../lib/splitChat";
 import { useTheme, type Palette } from "../../lib/theme";
-import type { AppSettings, ModelInfo } from "../../lib/types";
+import type { AppSettings, CodexCliStatus, ModelInfo } from "../../lib/types";
 import "./SettingsDialog.css";
 
 const EFFORT_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "X-high" };
@@ -34,11 +34,25 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [codexStatus, setCodexStatus] = useState<CodexCliStatus | null>(null);
+  const [codexLoadState, setCodexLoadState] = useState<"loading" | "ready" | "hidden">("loading");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const requestSeq = useRef(0);
 
   const load = useCallback(async () => {
     setLoadState("loading");
+    setCodexStatus(null);
+    setCodexLoadState("loading");
+    void api
+      .getCodexStatus()
+      .then((status) => {
+        setCodexStatus(status);
+        setCodexLoadState("ready");
+      })
+      .catch(() => {
+        setCodexStatus(null);
+        setCodexLoadState("hidden");
+      });
     try {
       const res = await api.getSettings();
       setSettings(res.settings);
@@ -71,11 +85,37 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     [settings, snackbar],
   );
 
-  const selectedModel =
-    models.find((m) => m.model === settings?.model) ?? models.find((m) => m.isDefault) ?? models[0] ?? null;
+  const selectedModel = models.find((m) => m.model === settings?.model) ?? null;
   const selectedEffort = settings?.effort ?? selectedModel?.defaultReasoningEffort ?? null;
   const effortDescription = selectedModel?.supportedReasoningEfforts.find((e) => e.effort === selectedEffort)
     ?.description;
+  const codexIsUpToDate = Boolean(
+    codexStatus &&
+      (codexStatus.updateAvailable === false ||
+        (codexStatus.state === "succeeded" && codexStatus.updateAvailable !== true)),
+  );
+
+  const updateCodex = useCallback(() => {
+    if (!codexStatus?.canUpdate || codexStatus.state === "running") return;
+    setCodexStatus({ ...codexStatus, state: "running", message: "Updating Codex CLI…" });
+    void api
+      .updateCodex()
+      .then((status) => {
+        setCodexStatus(status);
+        if (status.state === "succeeded") {
+          snackbar.show(status.message ?? "Codex CLI updated");
+          void api.getSettings().then((res) => {
+            setSettings(res.settings);
+            setModels(res.models);
+          });
+        }
+      })
+      .catch(() => {
+        setCodexStatus((current) =>
+          current ? { ...current, state: "failed", message: "Couldn't update the Codex CLI." } : current,
+        );
+      });
+  }, [codexStatus, snackbar]);
 
   return (
     <Dialog
@@ -125,6 +165,47 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   Sign out
                 </Button>
               </div>
+            </section>
+          )}
+
+          {codexLoadState !== "hidden" && (
+            <section className="settings__section">
+              <h3 className="settings__heading label-large">Codex CLI</h3>
+              {codexLoadState === "loading" || !codexStatus ? (
+                <div className="settings__codex-row settings__codex-row--loading">
+                  <div className="settings__codex-info">
+                    <span className="body-large">Checking Codex CLI…</span>
+                    <span className="settings__supporting body-medium">Reading the installed and latest versions.</span>
+                  </div>
+                  <ProgressIndicator size={24} />
+                </div>
+              ) : (
+                <div className="settings__codex-row">
+                  <div className="settings__codex-info">
+                    <span className="body-large">
+                      {codexStatus.currentVersion ? `Version ${codexStatus.currentVersion}` : "Version unavailable"}
+                    </span>
+                    <span className="settings__supporting body-medium">{codexStatus.message}</span>
+                    {codexStatus.manualCommand &&
+                      (!codexStatus.canUpdate || codexStatus.state === "failed" || codexStatus.state === "unchanged") && (
+                        <code className="settings__codex-command">{codexStatus.manualCommand}</code>
+                      )}
+                  </div>
+                  {codexStatus.canUpdate && (
+                    <Button
+                      variant="tonal"
+                      disabled={codexStatus.state === "running" || codexIsUpToDate}
+                      onClick={updateCodex}
+                    >
+                      {codexStatus.state === "running"
+                        ? "Updating…"
+                        : codexIsUpToDate
+                          ? "Up to date"
+                          : "Update Codex CLI"}
+                    </Button>
+                  )}
+                </div>
+              )}
             </section>
           )}
 

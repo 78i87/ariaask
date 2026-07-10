@@ -5,6 +5,7 @@ import { NotebookStore } from "./domain/store.js";
 import { SessionManager } from "./domain/session.js";
 import { CyraSessionManager } from "./domain/cyra-session.js";
 import { SettingsStore } from "./domain/settings.js";
+import { CodexCliUpdater } from "./domain/codex-update.js";
 import { LoginTracker } from "./routes/auth.js";
 import { createApp } from "./app.js";
 
@@ -28,11 +29,21 @@ async function main(): Promise<void> {
 
   const settings = new SettingsStore(config.dataDir, { model: config.envModel, effort: config.envEffort });
   await settings.init();
+  try {
+    const listed = await client.listModels();
+    await settings.reconcileModel(listed.data.filter((model) => !model.hidden));
+  } catch (err) {
+    console.error("[aria] couldn't reconcile the selected model; keeping persisted settings:", err);
+  }
 
+  const codexUpdater = new CodexCliUpdater({
+    codexBin: config.codexBin,
+    restartAppServer: () => client.restart(),
+  });
   const sessions = new SessionManager(client, store, settings, config);
   const cyra = new CyraSessionManager(client, store, settings);
   const logins = new LoginTracker(client);
-  const app = createApp({ config, client, store, sessions, cyra, logins, settings });
+  const app = createApp({ config, client, store, sessions, cyra, logins, settings, codexUpdater });
 
   const server = app.listen(config.port, () => {
     console.log(`[aria] server listening on http://localhost:${config.port}`);

@@ -9,6 +9,8 @@ export interface SourceFile {
   origin?: "research";
   /** Original public URL for server-discovered online sources. */
   originUrl?: string;
+  /** Interview notebooks: "cv" = candidate CV material, "jd" = job description. Absent = ordinary source. */
+  kind?: "cv" | "jd";
 }
 
 export interface DiscoverFailure {
@@ -38,11 +40,18 @@ export interface Intake {
 
 export type IntakeAnswerPayload = Record<string, { value?: string; custom?: string }>;
 
+/** Interview-mode identity, collected at creation. Present only on interview notebooks. */
+export interface NotebookInterview {
+  role: string;
+  company: string | null;
+}
+
 export interface Notebook {
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
+  interview?: NotebookInterview | null;
   sourceFiles: SourceFile[];
   createdAt: string;
   lastTaughtAt: string | null;

@@ -62,10 +62,23 @@ export function deriveCyraTitle(text: string): string {
  * (lost rollout). Mirrors persona.buildCatchUpBlock; callers pass the
  * transcript EXCLUDING the message being sent as the live prompt.
  */
+const CYRA_CATCH_UP_CHAR_BUDGET = 48_000;
+
 export function buildCyraCatchUpBlock(messages: CyraMessage[]): string {
-  const recent = messages.slice(-30);
-  const lines = recent.map((m) => `${m.role === "user" ? "User" : "You"}: ${m.text}`);
-  return `[SYSTEM: your earlier conversation with this user was lost. Here is the transcript so far — everything in it still stands. Do not mention this interruption. The user's next message follows after the transcript.]
+  const kept: CyraMessage[] = [];
+  let total = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    total += message.text.length + 12;
+    if (kept.length > 0 && total > CYRA_CATCH_UP_CHAR_BUDGET) break;
+    kept.unshift(message);
+  }
+  const truncated = kept.length < messages.length;
+  const lines = kept.map((m) => `${m.role === "user" ? "User" : "You"}: ${m.text}`);
+  const header = truncated
+    ? `[SYSTEM: your earlier conversation with this user was lost. Here is the most recent part of the transcript — the earliest ${messages.length - kept.length} messages are omitted, but everything in them still stands. Do not mention this interruption. The user's next message follows after the transcript.]`
+    : `[SYSTEM: your earlier conversation with this user was lost. Here is the transcript so far — everything in it still stands. Do not mention this interruption. The user's next message follows after the transcript.]`;
+  return `${header}
 
 ${lines.join("\n\n")}
 

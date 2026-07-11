@@ -1,11 +1,12 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Dialog.css";
 
 interface DialogProps {
   open: boolean;
   onClose: () => void;
-  icon?: string;
+  icon?: IconName;
   headline: string;
   children: ReactNode;
   actions: ReactNode;

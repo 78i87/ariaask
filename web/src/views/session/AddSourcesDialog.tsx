@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../components/Button";
+import { Chip } from "../../components/Chip";
 import { Dialog } from "../../components/Dialog";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { Segmented } from "../../components/Segmented";
@@ -17,6 +18,8 @@ interface AddSourcesDialogProps {
   discovering: boolean;
   kickoffRunning: boolean;
   intakePending: boolean;
+  /** Interview notebooks: the reader/researcher is Cyra, not Aria. */
+  interview?: boolean;
   onClose: () => void;
   onAdded: (notebook: Notebook) => void;
   onDiscover: (query: string) => void;
@@ -29,12 +32,15 @@ export function AddSourcesDialog({
   discovering,
   kickoffRunning,
   intakePending,
+  interview,
   onClose,
   onAdded,
   onDiscover,
 }: AddSourcesDialogProps) {
   const [mode, setMode] = useState<"upload" | "online">("upload");
   const [files, setFiles] = useState<File[]>([]);
+  /** Interview notebooks: mark the upload as an updated CV (kept labeled [CV] for Cyra). */
+  const [asCv, setAsCv] = useState(false);
   const [query, setQuery] = useState(topicSuggestion);
   const [uploading, setUploading] = useState(false);
   const snackbar = useSnackbar();
@@ -46,6 +52,7 @@ export function AddSourcesDialog({
   const close = () => {
     if (uploading) return;
     setFiles([]);
+    setAsCv(false);
     onClose();
   };
 
@@ -55,13 +62,15 @@ export function AddSourcesDialog({
     try {
       const form = new FormData();
       for (const f of files) form.append("files", f);
+      if (interview && asCv) form.set("kind", "cv");
       const res = await api.addSources(notebookId, form);
       // One combined message — the snackbar is single-slot, so separate
       // warning toasts would be instantly replaced by the success one.
       const n = res.added.length;
-      const success = `Added ${n} file${n === 1 ? "" : "s"} — the student will read ${n === 1 ? "it" : "them"} with your next message`;
+      const success = `Added ${n} file${n === 1 ? "" : "s"} — ${interview ? "Cyra" : "the student"} will read ${n === 1 ? "it" : "them"} with your next message`;
       snackbar.show(res.warnings.length > 0 ? `${success}. ${res.warnings.join(" ")}` : success);
       setFiles([]);
+      setAsCv(false);
       onAdded(res.notebook);
       onClose();
     } catch (err) {
@@ -79,12 +88,13 @@ export function AddSourcesDialog({
     onClose();
   };
 
+  const who = interview ? "Cyra" : "Aria";
   const findDisabled = !query.trim() || discovering || kickoffRunning || intakePending;
   const findSupport = discovering
-    ? "Aria is already looking for sources."
+    ? `${who} is already looking for sources.`
     : kickoffRunning || intakePending
       ? "Online discovery is available once the session is ready."
-      : "Aria searches the web and adds up to 5 pages as sources — this takes a few minutes.";
+      : `${who} searches the web and adds up to 5 pages as sources — this takes a few minutes.`;
 
   return (
     <Dialog
@@ -119,10 +129,20 @@ export function AddSourcesDialog({
           onChange={(v) => setMode(v === "online" ? "online" : "upload")}
         />
         {mode === "upload" ? (
-          <FileDropZone files={files} onChange={setFiles} />
+          <>
+            <FileDropZone files={files} onChange={setFiles} />
+            {interview && (
+              <Chip
+                icon="contact_page"
+                label="This is my updated CV"
+                selected={asCv}
+                onClick={() => setAsCv(!asCv)}
+              />
+            )}
+          </>
         ) : (
           <TextField
-            label="What should Aria find?"
+            label={`What should ${who} find?`}
             value={query}
             onChange={setQuery}
             supportingText={findSupport}

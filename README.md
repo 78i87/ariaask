@@ -5,6 +5,10 @@ holds plausible misconceptions and probes exactly where your explanations get
 vague — because the fastest way to find the holes in your own understanding is to
 teach it to someone who keeps asking "wait, but why?"
 
+Aria also includes **interview practice**: give Cyra a target role, your CV,
+and optionally a company or job description, then run a tailored mock interview
+with live competency coverage and an end-of-interview debrief.
+
 The AI student is powered by **OpenAI Codex** — you sign in with your own
 ChatGPT/OpenAI account, no API key required.
 
@@ -42,6 +46,8 @@ Open http://localhost:5173, sign in with OpenAI, and create your first notebook.
 The home library supports inline rename plus archive/restore. Inside a notebook,
 the knowledge map opens as a scannable outline with deterministic “Teach next”
 recommendations; the interactive constellation remains available as a second view.
+Interview notebooks use that same surface as an interview-coverage map, with Cyra
+as the only active persona—there is no Aria student or separate “Ask Cyra” thread.
 
 ## Architecture
 
@@ -50,7 +56,9 @@ recommendations; the interactive constellation remains available as a second vie
   (the student remembers what you taught it). Chat history is persisted as
   per-notebook JSON under `data/`. Student responses stream to the browser over
   a per-notebook SSE channel. The student persona and kickoff prompts live in
-  [`server/src/domain/persona.ts`](server/src/domain/persona.ts).
+  [`server/src/domain/persona.ts`](server/src/domain/persona.ts); interview
+  framing and coverage live in [`server/src/domain/interviewer.ts`](server/src/domain/interviewer.ts)
+  and [`server/src/domain/coverage.ts`](server/src/domain/coverage.ts).
 - **`web/`** — React + Vite, hand-rolled Material 3 (Expressive) components over
   CSS design tokens. The streaming chat hook is
   [`web/src/lib/useTeachingSession.ts`](web/src/lib/useTeachingSession.ts).
@@ -90,4 +98,5 @@ lost). Settings persist in `data/settings.json`.
 - `npm test -w @aria/server` — run focused settings and Codex updater tests
 - `npm run typecheck` — typecheck both workspaces
 
-v1 is conversational Q&A only — no scoring, debrief, or quizzes (yet).
+Teaching remains conversational rather than scored. Interview practice adds a
+competency-coverage view and a conversational debrief when you end the interview.

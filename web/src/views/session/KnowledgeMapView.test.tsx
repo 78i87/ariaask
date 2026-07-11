@@ -43,4 +43,30 @@ describe("rankTeachNext", () => {
     const nodes = container.querySelectorAll(".kgraph__node[transform]");
     expect(nodes).toHaveLength(2);
   });
+
+  it("relabels the outline as interview coverage", () => {
+    localStorage.removeItem("aria-knowledge-map-mode");
+    const state: KnowledgeState = {
+      version: 1,
+      beliefs: [
+        belief("architecture", "understood"),
+        belief("performance", "partial"),
+        belief("accessibility", "misconception"),
+        belief("mentoring", "unknown"),
+      ],
+      lastChanges: [],
+      lastEvaluatedMessageId: null,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    };
+
+    render(<KnowledgeMapView state={state} mode="interview" />);
+
+    expect(screen.getByText("1 of 4 strong")).toBeInTheDocument();
+    expect(screen.getByText("Probe next")).toBeInTheDocument();
+    expect(screen.getByText("4 competencies")).toBeInTheDocument();
+    expect(screen.getAllByText("Strong").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Touched on").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Struggled").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Not probed").length).toBeGreaterThan(0);
+  });
 });

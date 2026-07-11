@@ -1,8 +1,9 @@
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Fab.css";
 
 interface FabProps {
-  icon: string;
+  icon: IconName;
   label: string;
   onClick: () => void;
   className?: string;

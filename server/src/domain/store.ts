@@ -18,6 +18,8 @@ export interface SourceFile {
   origin?: "research";
   /** Original public URL for server-discovered online sources. */
   originUrl?: string;
+  /** Interview notebooks: "cv" = candidate CV material, "jd" = job description. Absent = ordinary source. */
+  kind?: "cv" | "jd";
 }
 
 /** Collision-free, sandbox-safe file name within a notebook's sources dir. */
@@ -98,11 +100,18 @@ export function toCyraThreadSummary(ct: CyraThread): CyraThreadSummary {
   };
 }
 
+/** Interview-mode identity, collected at creation. Absent on teach notebooks. */
+export interface InterviewSetup {
+  /** Target role, e.g. "Senior Backend Engineer". */
+  role: string;
+  company: string | null;
+}
+
 export interface Notebook {
   schemaVersion: 1;
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
   sourceFiles: SourceFile[];
   threadId: string | null;
@@ -141,6 +150,8 @@ export interface Notebook {
   cyraThreads?: CyraThread[];
   /** Optional for backward compatibility; a timestamp means hidden from the active library. */
   archivedAt?: string | null;
+  /** Interview mode (see interviewer.ts): the main thread is Cyra the interviewer. */
+  interview?: InterviewSetup;
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;
@@ -150,13 +161,18 @@ export interface Notebook {
 export interface NotebookSummary {
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
+  interview?: InterviewSetup;
   sourceFiles: SourceFile[];
   createdAt: string;
   lastTaughtAt: string | null;
   messageCount: number;
   archivedAt: string | null;
+}
+
+export function isInterview(nb: Pick<Notebook, "type">): boolean {
+  return nb.type === "interview";
 }
 
 export function toSummary(nb: Notebook): NotebookSummary {
@@ -166,6 +182,7 @@ export function toSummary(nb: Notebook): NotebookSummary {
     title: nb.title,
     type: nb.type,
     topic: nb.topic,
+    ...(nb.interview ? { interview: nb.interview } : {}),
     sourceFiles: nb.sourceFiles,
     createdAt: nb.createdAt,
     lastTaughtAt: lastMsg ? lastMsg.createdAt : null,
@@ -220,7 +237,7 @@ export class NotebookStore {
   }
 
   /** Create the notebook directory structure and register an empty notebook. */
-  async create(fields: { title: string; type: "topic" | "files"; topic: string | null }, id: string = randomUUID()): Promise<Notebook> {
+  async create(fields: { title: string; type: Notebook["type"]; topic: string | null }, id: string = randomUUID()): Promise<Notebook> {
     const now = new Date().toISOString();
     const nb: Notebook = {
       schemaVersion: 1,

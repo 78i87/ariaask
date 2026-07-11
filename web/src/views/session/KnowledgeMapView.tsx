@@ -4,11 +4,42 @@ import { Segmented } from "../../components/Segmented";
 import type { KnowledgeBelief, KnowledgeState, KnowledgeStatus } from "../../lib/types";
 import "./KnowledgeMapView.css";
 
-const STATUS_LABEL: Record<KnowledgeStatus, string> = {
-  understood: "Understood",
-  partial: "Partial",
-  misconception: "Misconception",
-  unknown: "No evidence yet",
+export type KnowledgeMapMode = "teach" | "interview";
+
+interface MapLabels {
+  status: Record<KnowledgeStatus, string>;
+  headline: (counts: Record<KnowledgeStatus, number>, total: number) => string;
+  subline: (counts: Record<KnowledgeStatus, number>) => string;
+  graphAria: string;
+}
+
+// Same KnowledgeState shape either way — interview notebooks reinterpret it
+// as coverage of the competencies Cyra probed. Teach strings are the
+// originals, verbatim.
+const LABELS: Record<KnowledgeMapMode, MapLabels> = {
+  teach: {
+    status: {
+      understood: "Understood",
+      partial: "Partial",
+      misconception: "Misconception",
+      unknown: "No evidence yet",
+    },
+    headline: (c, t) => `${c.understood} of ${t} understood`,
+    subline: (c) =>
+      `${c.partial} partial · ${c.misconception} misconception${c.misconception === 1 ? "" : "s"} · ${c.unknown} no evidence yet`,
+    graphAria: "Your knowledge map graph",
+  },
+  interview: {
+    status: {
+      understood: "Strong",
+      partial: "Touched on",
+      misconception: "Struggled",
+      unknown: "Not probed",
+    },
+    headline: (c, t) => `${c.understood} of ${t} strong`,
+    subline: (c) => `${c.partial} touched on · ${c.misconception} struggled · ${c.unknown} not probed`,
+    graphAria: "Interview coverage map",
+  },
 };
 
 // ---------- force simulation (hand-rolled; ≤40 nodes, n² is nothing) ----------
@@ -133,6 +164,8 @@ function seedPosition(areaIdx: number, areaCount: number, memberIdx: number): { 
 
 interface KnowledgeMapViewProps {
   state: KnowledgeState;
+  /** Interview notebooks relabel the same map as interview coverage. */
+  mode?: KnowledgeMapMode;
 }
 
 export function rankTeachNext(beliefs: KnowledgeBelief[]): KnowledgeBelief[] {
@@ -158,8 +191,9 @@ export function rankTeachNext(beliefs: KnowledgeBelief[]): KnowledgeBelief[] {
  * SVG elements each frame — React only re-renders on data/selection changes
  * and never owns transform/x/y attributes.
  */
-export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
-  const [mode, setMode] = useState<"outline" | "constellation">(() =>
+export function KnowledgeMapView({ state, mode: knowledgeMode = "teach" }: KnowledgeMapViewProps) {
+  const labels = LABELS[knowledgeMode];
+  const [viewMode, setViewMode] = useState<"outline" | "constellation">(() =>
     localStorage.getItem("aria-knowledge-map-mode") === "constellation" ? "constellation" : "outline",
   );
   const [selected, setSelected] = useState<string | null>(null);
@@ -493,10 +527,10 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
   }, [state.beliefs, edgeList, areas, degree]);
 
   useLayoutEffect(() => {
-    if (mode !== "constellation") return;
+    if (viewMode !== "constellation") return;
     applyPositions();
     fitView();
-  }, [mode]);
+  }, [viewMode]);
 
   useEffect(() => {
     return () => {
@@ -540,7 +574,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     svg.addEventListener("wheel", onWheelNative, { passive: false });
     return () => svg.removeEventListener("wheel", onWheelNative);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [viewMode]);
 
   /**
    * null = no gesture. One pointer owns a gesture (a second touch is ignored
@@ -698,21 +732,19 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     <div className="session__main kmap-view">
       <header className="kmap__toolbar">
         <div className="kmap__progress">
-          <span className="title-medium">{counts.understood} of {state.beliefs.length} understood</span>
-          <span className="body-medium kmap__progress-sub">
-            {counts.partial} partial · {counts.misconception} misconception{counts.misconception === 1 ? "" : "s"} · {counts.unknown} no evidence yet
-          </span>
+          <span className="title-medium">{labels.headline(counts, state.beliefs.length)}</span>
+          <span className="body-medium kmap__progress-sub">{labels.subline(counts)}</span>
         </div>
         <Segmented
-          ariaLabel="Knowledge map view"
-          value={mode}
+          ariaLabel={knowledgeMode === "interview" ? "Interview coverage view" : "Knowledge map view"}
+          value={viewMode}
           options={[
             { value: "outline", label: "Outline" },
             { value: "constellation", label: "Constellation" },
           ]}
           onChange={(value) => {
-            const next = value as typeof mode;
-            setMode(next);
+            const next = value as typeof viewMode;
+            setViewMode(next);
             localStorage.setItem("aria-knowledge-map-mode", next);
           }}
         />
@@ -728,25 +760,29 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             aria-pressed={focusStatus === status}
           >
             <span className={`kmap__dot kmap__dot--${status}`} />
-            {STATUS_LABEL[status]}
+            {labels.status[status]}
           </button>
         ))}
       </div>
 
-      {mode === "outline" ? (
+      {viewMode === "outline" ? (
         <div className="koutline">
           {teachNext.length > 0 && (
             <section className="koutline__next">
               <div>
-                <span className="label-large">Teach next</span>
-                <p className="body-medium">The concepts where another explanation will help most.</p>
+                <span className="label-large">{knowledgeMode === "interview" ? "Probe next" : "Teach next"}</span>
+                <p className="body-medium">
+                  {knowledgeMode === "interview"
+                    ? "The competencies where another question would reveal the most."
+                    : "The concepts where another explanation will help most."}
+                </p>
               </div>
               <div className="koutline__next-list">
                 {teachNext.map((belief) => (
                   <button key={belief.id} type="button" onClick={() => selectNode(belief.id)}>
                     <span className={`kmap__dot kmap__dot--${belief.status}`} />
                     <span>{belief.concept}</span>
-                    <span className="label-medium">{STATUS_LABEL[belief.status]}</span>
+                    <span className="label-medium">{labels.status[belief.status]}</span>
                   </button>
                 ))}
               </div>
@@ -760,7 +796,16 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 <section key={group.key || "general"} className="koutline__group">
                   <header>
                     <h3 className="title-medium">{group.label}</h3>
-                    <span className="label-medium">{beliefs.length} concepts</span>
+                    <span className="label-medium">
+                      {beliefs.length}{" "}
+                      {knowledgeMode === "interview"
+                        ? beliefs.length === 1
+                          ? "competency"
+                          : "competencies"
+                        : beliefs.length === 1
+                          ? "concept"
+                          : "concepts"}
+                    </span>
                   </header>
                   <div className="koutline__rows">
                     {beliefs.map((belief) => {
@@ -782,7 +827,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                               <small>{deps.length > 0 ? `Builds on ${deps.map((item) => item.concept).join(", ")}` : ""}{deps.length > 0 && leads.length > 0 ? " · " : ""}{leads.length > 0 ? `Leads to ${leads.map((item) => item.concept).join(", ")}` : ""}</small>
                             )}
                           </span>
-                          <span className={`kmap__status-chip kmap__status-chip--${belief.status} label-medium`}>{STATUS_LABEL[belief.status]}</span>
+                          <span className={`kmap__status-chip kmap__status-chip--${belief.status} label-medium`}>{labels.status[belief.status]}</span>
                         </button>
                       );
                     })}
@@ -841,7 +886,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             fitView();
           }}
           role="application"
-          aria-label="Your knowledge map graph"
+          aria-label={labels.graphAria}
         >
           <g>
             {edgeList.map((e) => {
@@ -898,7 +943,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                 }}
                 role="button"
                 tabIndex={0}
-                aria-label={`${b.concept}, ${STATUS_LABEL[b.status].toLowerCase()}`}
+                aria-label={`${b.concept}, ${labels.status[b.status].toLowerCase()}`}
                 aria-pressed={selected === b.id}
               >
                 <circle className="kgraph__dot" r={6 + Math.min(Math.sqrt(degree.get(b.id) ?? 0) * 2.6, 8)} />
@@ -914,7 +959,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
           <div className="kgraph__controls">
             <select
               className="kgraph__area-filter"
-              aria-label="Filter by concept area"
+              aria-label={knowledgeMode === "interview" ? "Filter by competency area" : "Filter by concept area"}
               value={focusArea ?? ""}
               onChange={(event) => {
                 setFocusArea(event.target.value || null);
@@ -929,7 +974,11 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             </select>
             <IconButton icon="zoom_in" ariaLabel="Zoom in" onClick={() => zoomView(0.8)} />
             <IconButton icon="zoom_out" ariaLabel="Zoom out" onClick={() => zoomView(1.25)} />
-            <IconButton icon="center_focus_strong" ariaLabel="Fit all concepts" onClick={fitView} />
+            <IconButton
+              icon="center_focus_strong"
+              ariaLabel={knowledgeMode === "interview" ? "Fit all competencies" : "Fit all concepts"}
+              onClick={fitView}
+            />
           </div>
         </div>
         </div>
@@ -942,7 +991,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
             <span className={`kmap__dot kmap__dot--${sel.status}`} />
             <span className="title-small kmap__detail-concept">{sel.concept}</span>
             <span className={`kmap__status-chip kmap__status-chip--${sel.status} label-medium`}>
-              {STATUS_LABEL[sel.status]}
+              {labels.status[sel.status]}
             </span>
             <IconButton icon="close" ariaLabel="Close details" onClick={clearSelectedNode} />
           </div>

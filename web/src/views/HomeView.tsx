@@ -93,7 +93,7 @@ export function HomeView() {
       <main className="home__content">
         <div className="home__hero">
           <h1 className="expressive-headline">
-            What will you <span className="home__hero-accent">teach</span> today?
+            What will you <span className="home__hero-accent">practice</span> today?
           </h1>
           <Fab icon="add" label="New notebook" onClick={() => setCreateOpen(true)} className="home__fab" />
         </div>
@@ -130,8 +130,8 @@ export function HomeView() {
         {notebooks?.length === 0 && (
           <EmptyState
             icon="school"
-            headline="Teach your first lesson"
-            body="Create a notebook from a topic or your own notes — your student is waiting."
+            headline="Start your first session"
+            body="Teach Aria from a topic or your own notes, or practice an interview with Cyra."
             action={
               <Button icon="add" onClick={() => setCreateOpen(true)}>
                 New notebook

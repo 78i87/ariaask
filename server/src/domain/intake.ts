@@ -32,6 +32,9 @@ export interface IntakeAnswers {
   /** Generated-question id -> chosen option label or custom text. */
   focus: Record<string, string>;
   skipped: boolean;
+  /** Interview notebooks only: chosen option value or custom text. Absent/null elsewhere. */
+  interviewFormat?: string | null;
+  interviewRound?: string | null;
 }
 
 export type ResearchStatus = "none" | "running" | "done" | "failed";
@@ -68,8 +71,54 @@ export const RESEARCH_QUESTION: IntakeQuestion = {
   allowsCustom: true,
 };
 
+// ---------- interview-mode questions ----------
+// Static, never model-generated (interview notebooks preset generatedQuestions
+// to [] at creation, which also locks out the teach-framed generator).
+
+export const INTERVIEW_FORMAT_QUESTION: IntakeQuestion = {
+  id: "format",
+  question: "What kind of interview should this be?",
+  options: [
+    { value: "behavioral", label: "Behavioral — past experience, teamwork, how I work" },
+    { value: "technical", label: "Technical — skills, problems, and how I reason" },
+    { value: "case", label: "Case — work through a business or product scenario" },
+    { value: "recruiter-screen", label: "Recruiter screen — background, motivation, logistics" },
+    { value: "mixed", label: "Mixed — a bit of everything" },
+  ],
+  allowsCustom: true,
+};
+
+export const INTERVIEW_ROUND_QUESTION: IntakeQuestion = {
+  id: "round",
+  question: "Which round are you preparing for?",
+  options: [
+    { value: "first-round", label: "First round — early screen" },
+    { value: "mid-loop", label: "Mid loop — a full interview in the middle of the process" },
+    { value: "final-round", label: "Final round — the last, hardest conversation" },
+    { value: "not-sure", label: "Not sure yet" },
+  ],
+  allowsCustom: true,
+};
+
+export const INTERVIEW_RESEARCH_QUESTION: IntakeQuestion = {
+  // Reuses the "research" id so the answer flows through the same typed
+  // research mapping as teach mode.
+  id: "research",
+  question: "May Cyra research the company and real interview experiences online first?",
+  options: [
+    { value: "yes", label: "Yes — let Cyra find interview accounts and company background" },
+    { value: "no", label: "No — stick to what I provided" },
+  ],
+  allowsCustom: true,
+};
+
 /** The form as the client sees it: deterministic questions + whatever generation produced. */
 export function composeIntakeQuestions(nb: Notebook): IntakeQuestion[] {
+  if (nb.type === "interview") {
+    // Research is always offered: company/role research is valuable even
+    // though a CV is always present (unlike teach mode's sources condition).
+    return [INTERVIEW_FORMAT_QUESTION, INTERVIEW_ROUND_QUESTION, INTERVIEW_RESEARCH_QUESTION];
+  }
   return [
     LEVEL_QUESTION,
     ...(nb.sourceFiles.length > 0 ? [RESEARCH_QUESTION] : []),

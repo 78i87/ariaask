@@ -49,6 +49,23 @@
   color: var(--md-sys-color-primary);
 }
 
+.m3-textfield--multiline .m3-textfield__input {
+  display: block;
+  height: auto;
+  min-height: 96px;
+  padding: 16px;
+  resize: vertical;
+}
+
+.m3-textfield--multiline .m3-textfield__input:focus {
+  padding: 15px;
+}
+
+/* Rest the label on the first line of text instead of vertically centering */
+.m3-textfield--multiline .m3-textfield__label {
+  top: 28px;
+}
+
 .m3-textfield__supporting {
   color: var(--md-sys-color-on-surface-variant);
   padding: 0 16px;

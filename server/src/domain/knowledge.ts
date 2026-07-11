@@ -15,7 +15,8 @@ export type KnowledgeState = LearningState;
 
 const KNOWLEDGE_SCHEMA = `{"beliefs": [{"id": "short-kebab-slug", "concept": "concept label, a few words", "status": "unknown" | "misconception" | "partial" | "understood", "belief": "one sentence addressed to the human teacher as 'you': what the system has evidence they know, misunderstand, or have not shown yet", "area": "short cluster label shared by related entries", "deps": ["ids of entries that are prerequisites for this one"]}]}`;
 
-const GRAPH_RULES = `- Group the entries: every entry gets an "area" - a one-or-two-word cluster label shared
+// Shared with coverage.ts (interview mode) — same graph mechanics, different framing.
+export const GRAPH_RULES = `- Group the entries: every entry gets an "area" - a one-or-two-word cluster label shared
   by related entries, 3 to 6 distinct areas overall. Spell and case a label identically
   everywhere it is used.
 - Mark prerequisites with "deps": the ids of entries a learner should grasp before this
@@ -35,6 +36,9 @@ function unknownText(concept: string): string {
   return `No evidence yet that you have explained ${concept}.`;
 }
 
+/** No-evidence sentence, injectable so coverage.ts (interview mode) can keep its own wording. */
+export type UnknownTextFn = (concept: string) => string;
+
 function stripPrivateFields(b: KnowledgeBelief): KnowledgeBelief {
   const next: KnowledgeBelief = {
     id: b.id,
@@ -49,7 +53,7 @@ function stripPrivateFields(b: KnowledgeBelief): KnowledgeBelief {
   return next;
 }
 
-export function emptyKnowledgeState(label: string): KnowledgeState {
+export function emptyKnowledgeState(label: string, unknown: UnknownTextFn = unknownText): KnowledgeState {
   const concept = label.trim() || "This topic";
   return {
     version: 1,
@@ -58,7 +62,7 @@ export function emptyKnowledgeState(label: string): KnowledgeState {
         id: slugify(concept),
         concept,
         status: "unknown",
-        belief: unknownText(concept),
+        belief: unknown(concept),
         area: "General",
       },
     ],
@@ -68,14 +72,14 @@ export function emptyKnowledgeState(label: string): KnowledgeState {
   };
 }
 
-export function knowledgeFromConceptState(state: LearningState): KnowledgeState {
+export function knowledgeFromConceptState(state: LearningState, unknown: UnknownTextFn = unknownText): KnowledgeState {
   return {
     version: 1,
     beliefs: state.beliefs.map((b) => {
       const next = stripPrivateFields({
         ...b,
         status: "unknown",
-        belief: unknownText(b.concept),
+        belief: unknown(b.concept),
       });
       delete next.note;
       delete next.touchedAt;
@@ -102,8 +106,8 @@ export function stripKnowledgeState(state: KnowledgeState): KnowledgeState {
   };
 }
 
-export function resetKnowledgeEvidence(state: KnowledgeState): KnowledgeState {
-  return knowledgeFromConceptState(state);
+export function resetKnowledgeEvidence(state: KnowledgeState, unknown: UnknownTextFn = unknownText): KnowledgeState {
+  return knowledgeFromConceptState(state, unknown);
 }
 
 export function mergeKnowledgeEvidence(base: KnowledgeState, evaluated: KnowledgeState): KnowledgeState {
@@ -178,11 +182,27 @@ Output exactly this JSON shape:
 ${KNOWLEDGE_SCHEMA}`;
 }
 
-export function buildKnowledgeTranscriptPrompt(base: KnowledgeState, messages: ChatMessage[]): string {
-  const transcript = messages
-    .map((m) => `${m.role === "teacher" ? "Teacher" : "Aria student"}: ${m.text}`)
-    .join("\n\n");
-  return `You are rebuilding a knowledge map for the HUMAN TEACHER in a reverse-tutoring app.
+const TRANSCRIPT_PROMPT_CHAR_BUDGET = 60_000;
+
+export function buildKnowledgeTranscriptPrompt(
+  base: KnowledgeState,
+  messages: ChatMessage[],
+): { prompt: string; truncated: boolean } {
+  // Long sessions are exactly the ones with the most evidence at stake. Keep
+  // the prompt bounded so a rebuild one-shot cannot fail on context length.
+  // `truncated` tells the caller that "unknown" may mean "not in the window".
+  const lines = messages.map((m) => `${m.role === "teacher" ? "Teacher" : "Aria student"}: ${m.text}`);
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    total += line.length + 2;
+    if (kept.length > 0 && total > TRANSCRIPT_PROMPT_CHAR_BUDGET) break;
+    kept.unshift(line);
+  }
+  const omitted = lines.length - kept.length;
+  const transcript = (omitted > 0 ? `[${omitted} earlier messages omitted]\n\n` : "") + kept.join("\n\n");
+  const prompt = `You are rebuilding a knowledge map for the HUMAN TEACHER in a reverse-tutoring app.
 You are an analyst, not the student. Output JSON only - no prose, no code fences.
 
 The current concept graph. Keep these ids and concepts unless you add a genuinely missing
@@ -207,6 +227,31 @@ Infer what the human teacher has shown they know:
 
 Output the complete updated map in exactly this JSON shape:
 ${KNOWLEDGE_SCHEMA}`;
+  return { prompt, truncated: omitted > 0 };
+}
+
+/**
+ * After a truncated transcript rebuild, restore prior evidence for beliefs the
+ * model left "unknown": it never saw the omitted early messages, so "unknown"
+ * from it means "no evidence in the window", not "no evidence ever".
+ */
+export function carryForwardKnowledgeEvidence(prior: KnowledgeState, next: KnowledgeState): KnowledgeState {
+  const priorById = new Map(prior.beliefs.map((b) => [b.id, b]));
+  return {
+    ...next,
+    beliefs: next.beliefs.map((b) => {
+      if (b.status !== "unknown") return b;
+      const prev = priorById.get(b.id);
+      if (!prev || prev.status === "unknown") return b;
+      return stripPrivateFields({
+        ...b,
+        status: prev.status,
+        belief: prev.belief,
+        note: prev.note,
+        touchedAt: prev.touchedAt,
+      });
+    }),
+  };
 }
 
 export function buildKnowledgeEvaluatorPrompt(state: KnowledgeState, teacherMessage: string, recentMessages: ChatMessage[]): string {

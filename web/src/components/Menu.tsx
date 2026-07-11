@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Menu.css";
 
 export interface MenuItem {
-  icon?: string;
+  icon?: IconName;
   label: string;
   destructive?: boolean;
   onSelect: () => void;

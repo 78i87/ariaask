@@ -6,6 +6,18 @@
   overflow: hidden;
 }
 
+/* Compact sub-choice: shrinks to content instead of stretching like the primary toggle. */
+.m3-segmented--dense {
+  display: inline-flex;
+  align-self: flex-start;
+  height: 32px;
+}
+
+.m3-segmented--dense .m3-segmented__btn {
+  flex: 0 0 auto;
+  padding: 0 14px;
+}
+
 .m3-segmented__btn {
   flex: 1;
   display: flex;

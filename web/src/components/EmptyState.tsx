@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./EmptyState.css";
 
 interface EmptyStateProps {
-  icon: string;
+  icon: IconName;
   headline: string;
   body?: string;
   action?: ReactNode;

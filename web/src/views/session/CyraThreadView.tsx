@@ -7,16 +7,9 @@ import { api } from "../../lib/api";
 import { useCyraThread } from "../../lib/useCyraThread";
 import type { CyraChatMessage, CyraThreadSummary } from "../../lib/types";
 import { Composer } from "./Composer";
+import { CyraAvatar } from "./MessageBubble";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import "./CyraThreadView.css";
-
-export function CyraAvatar({ pulsing }: { pulsing?: boolean }) {
-  return (
-    <div className={`cyra-avatar${pulsing ? " cyra-avatar--pulsing" : ""}`}>
-      <Icon name="history_edu" size={18} />
-    </div>
-  );
-}
 
 interface CyraBubbleProps {
   message: CyraChatMessage;
@@ -143,6 +136,10 @@ export function CyraThreadView({
     setFollowUp(""); // a follow-up typed for one conversation must not leak into another
   }, [threadId]);
 
+  useEffect(() => {
+    if (editing && !messages.some((m) => m.id === editing.id)) setEditing(null);
+  }, [messages, editing]);
+
   // An "Ask Cyra" click landed here: cancel any edit (a fresh ask wins the
   // composer), append the question to whatever was already typed, and focus.
   // For the new-question view the parent put the text in `draft` instead —
@@ -255,7 +252,7 @@ export function CyraThreadView({
       )}
       <Composer
         key={isNew ? "new" : editing ? `edit:${editing.id}` : "normal"}
-        disabled={isNew ? creating !== null : status === "loading" || status === "error"}
+        disabled={isNew ? creating !== null : status === "loading"}
         busy={busy}
         onSend={
           isNew

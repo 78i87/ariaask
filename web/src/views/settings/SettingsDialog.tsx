@@ -35,24 +35,17 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [codexStatus, setCodexStatus] = useState<CodexCliStatus | null>(null);
-  const [codexLoadState, setCodexLoadState] = useState<"loading" | "ready" | "hidden">("loading");
+  const [codexLoadState, setCodexLoadState] = useState<"loading" | "ready" | "hidden" | "failed">("hidden");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [section, setSection] = useState<"teaching" | "appearance" | "advanced">("teaching");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const savedTimer = useRef<number | null>(null);
   const requestSeq = useRef(0);
 
   const load = useCallback(async () => {
     setLoadState("loading");
     setCodexStatus(null);
-    setCodexLoadState("loading");
-    void api
-      .getCodexStatus()
-      .then((status) => {
-        setCodexStatus(status);
-        setCodexLoadState("ready");
-      })
-      .catch(() => {
-        setCodexStatus(null);
-        setCodexLoadState("hidden");
-      });
+    setCodexLoadState("hidden");
     try {
       const res = await api.getSettings();
       setSettings(res.settings);
@@ -64,21 +57,50 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   }, []);
 
   useEffect(() => {
+    if (!open || section !== "advanced" || codexLoadState !== "hidden") return;
+    setCodexLoadState("loading");
+    void api
+      .getCodexStatus()
+      .then((status) => {
+        setCodexStatus(status);
+        setCodexLoadState("ready");
+      })
+      .catch(() => {
+        setCodexStatus(null);
+        setCodexLoadState("failed");
+      });
+  }, [open, section, codexLoadState]);
+
+  useEffect(
+    () => () => {
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
     if (open) void load();
   }, [open, load]);
 
   const update = useCallback(
     (patch: Partial<AppSettings>) => {
       setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
+      setSaveState("saving");
       const seq = ++requestSeq.current;
       const before = settings;
       void api
         .updateSettings(patch)
         .then((res) => {
-          if (seq === requestSeq.current) setSettings(res.settings);
+          if (seq === requestSeq.current) {
+            setSettings(res.settings);
+            setSaveState("saved");
+            if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
+            savedTimer.current = window.setTimeout(() => setSaveState("idle"), 1800);
+          }
         })
         .catch(() => {
           if (seq === requestSeq.current && before) setSettings(before);
+          setSaveState("error");
           snackbar.show("Couldn't save settings");
         });
     },
@@ -122,9 +144,16 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       open={open}
       onClose={onClose}
       headline="Settings"
+      headlineTrailing={
+        saveState !== "idle" ? (
+          <span className={`settings__save label-medium settings__save--${saveState}`} role="status">
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Couldn't save"}
+          </span>
+        ) : undefined
+      }
       actions={
         <Button variant="text" onClick={onClose}>
-          Done
+          Close
         </Button>
       }
     >
@@ -145,7 +174,18 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
       {loadState === "ready" && settings && (
         <div className="settings__sections">
-          {state.phase === "signed-in" && (
+          <Segmented
+            ariaLabel="Settings section"
+            value={section}
+            options={[
+              { value: "teaching", label: "Teaching" },
+              { value: "appearance", label: "Appearance" },
+              { value: "advanced", label: "Advanced" },
+            ]}
+            onChange={(value) => setSection(value as typeof section)}
+          />
+
+          {section === "advanced" && state.phase === "signed-in" && (
             <section className="settings__section">
               <h3 className="settings__heading label-large">Account</h3>
               <div className="settings__account">
@@ -168,10 +208,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </section>
           )}
 
-          {codexLoadState !== "hidden" && (
+          {section === "advanced" && (
             <section className="settings__section">
               <h3 className="settings__heading label-large">Codex CLI</h3>
-              {codexLoadState === "loading" || !codexStatus ? (
+              {codexLoadState === "failed" ? (
+                <span className="settings__supporting body-medium">Codex CLI status is unavailable.</span>
+              ) : codexLoadState === "loading" || !codexStatus ? (
                 <div className="settings__codex-row settings__codex-row--loading">
                   <div className="settings__codex-info">
                     <span className="body-large">Checking Codex CLI…</span>
@@ -209,7 +251,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </section>
           )}
 
-          <section className="settings__section">
+          {section === "teaching" && <section className="settings__section">
             <h3 className="settings__heading label-large">Chat layout</h3>
             <Segmented
               ariaLabel="Chat layout"
@@ -225,9 +267,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 ? "Aria on the left, Cyra on the right — “Ask Cyra” drops questions into the right-hand chat. On narrow windows the tabs come back."
                 : "One conversation at a time — switch between Aria, the map, and Cyra questions with the tabs."}
             </span>
-          </section>
+          </section>}
 
-          {models.length === 0 ? (
+          {section === "teaching" && (models.length === 0 ? (
             <section className="settings__section">
               <h3 className="settings__heading label-large">Model</h3>
               <span className="settings__plan body-medium">Model list unavailable — try reopening settings.</span>
@@ -278,9 +320,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </section>
               )}
             </>
-          )}
+          ))}
 
-          <section className="settings__section">
+          {section === "teaching" && <section className="settings__section">
             <h3 className="settings__heading label-large">Student style</h3>
             <div className="settings__style-row">
               <span className="body-medium settings__style-label">Reply length</span>
@@ -308,9 +350,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 onChange={(v) => update({ probing: v as AppSettings["probing"] })}
               />
             </div>
-          </section>
+          </section>}
 
-          <section className="settings__section">
+          {section === "teaching" && <section className="settings__section">
             <h3 className="settings__heading label-large">Reading recall</h3>
             <div className="settings__style-row">
               <span className="body-medium settings__style-label">Recall</span>
@@ -347,9 +389,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   ? "While you teach, Aria quietly recalls the most relevant passages from any reading."
                   : "For larger readings, Aria quietly recalls the most relevant passages while you teach."}
             </span>
-          </section>
+          </section>}
 
-          <section className="settings__section">
+          {section === "appearance" && <section className="settings__section">
             <h3 className="settings__heading label-large">Color theme</h3>
             <div className="settings__swatches" role="radiogroup" aria-label="Color theme">
               {SWATCHES.map((s) => (
@@ -368,7 +410,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               ))}
             </div>
-          </section>
+          </section>}
         </div>
       )}
     </Dialog>

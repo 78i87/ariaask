@@ -7,6 +7,7 @@ import { Fab } from "../components/Fab";
 import { IconButton } from "../components/IconButton";
 import { Menu } from "../components/Menu";
 import { ProgressIndicator } from "../components/ProgressIndicator";
+import { Segmented } from "../components/Segmented";
 import { TopAppBar } from "../components/TopAppBar";
 import { useSnackbar } from "../components/Snackbar";
 import { useAuth } from "../lib/auth";
@@ -22,7 +23,7 @@ export function HomeView() {
   const navigate = useNavigate();
   const { state, logout } = useAuth();
   const { theme, toggle } = useTheme();
-  const { notebooks, error, create, remove, refresh } = useNotebooks();
+  const { notebooks, error, create, remove, update, refresh } = useNotebooks();
   const snackbar = useSnackbar();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -30,8 +31,11 @@ export function HomeView() {
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
   const accountAnchor = useRef<HTMLButtonElement>(null);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [library, setLibrary] = useState<"active" | "archived">("active");
 
   const email = state.phase === "signed-in" ? state.email : undefined;
+  const visibleNotebooks =
+    notebooks?.filter((notebook) => (library === "archived" ? Boolean(notebook.archivedAt) : !notebook.archivedAt)) ?? [];
 
   const confirmDelete = async () => {
     const target = deleteTarget;
@@ -47,7 +51,7 @@ export function HomeView() {
   return (
     <div className="home">
       <TopAppBar
-        headline={<span className="title-large">AriaAsk</span>}
+        headline={<span className="title-large">Aria</span>}
         trailing={
           <>
             <IconButton
@@ -94,6 +98,20 @@ export function HomeView() {
           <Fab icon="add" label="New notebook" onClick={() => setCreateOpen(true)} className="home__fab" />
         </div>
 
+        {notebooks && (library === "archived" || notebooks.some((notebook) => notebook.archivedAt)) && (
+          <div className="home__filters">
+            <Segmented
+              ariaLabel="Notebook library"
+              value={library}
+              options={[
+                { value: "active", label: "Active" },
+                { value: "archived", label: "Archived" },
+              ]}
+              onChange={(value) => setLibrary(value as "active" | "archived")}
+            />
+          </div>
+        )}
+
         {notebooks === null && !error && (
           <div className="home__loading">
             <ProgressIndicator />
@@ -122,15 +140,50 @@ export function HomeView() {
           />
         )}
 
-        {notebooks && notebooks.length > 0 && (
+        {notebooks && notebooks.length > 0 && visibleNotebooks.length === 0 && (
+          <EmptyState
+            icon={library === "archived" ? "archive" : "school"}
+            headline={library === "archived" ? "No archived notebooks" : "No active notebooks"}
+            body={library === "archived" ? "Notebooks you archive will appear here." : "Restore an archived notebook or start a new one."}
+            action={
+              library === "active" ? (
+                <Button icon="add" onClick={() => setCreateOpen(true)}>
+                  New notebook
+                </Button>
+              ) : undefined
+            }
+          />
+        )}
+
+        {visibleNotebooks.length > 0 && (
           <div className="home__grid">
-            {notebooks.map((nb, i) => (
+            {visibleNotebooks.map((nb, i) => (
               <NotebookCard
                 key={nb.id}
                 notebook={nb}
                 index={i}
                 onOpen={() => navigate(`/notebook/${nb.id}`)}
                 onDelete={() => setDeleteTarget(nb)}
+                onRename={async (title) => {
+                  try {
+                    await update(nb.id, { title });
+                    return true;
+                  } catch (err) {
+                    snackbar.show(err instanceof Error ? err.message : "Couldn't rename notebook");
+                    return false;
+                  }
+                }}
+                onArchive={() => {
+                  void update(nb.id, { archived: true })
+                    .then(() =>
+                      snackbar.show("Notebook archived", {
+                        actionLabel: "Undo",
+                        onAction: () => void update(nb.id, { archived: false }),
+                      }),
+                    )
+                    .catch(() => snackbar.show("Couldn't archive notebook"));
+                }}
+                onRestore={() => void update(nb.id, { archived: false }).catch(() => snackbar.show("Couldn't restore notebook"))}
               />
             ))}
           </div>

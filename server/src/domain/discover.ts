@@ -4,6 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { extractJsonObject } from "./learning.js";
 import { approxWordCount, extractPdfText } from "./extract.js";
+import { htmlTableToMarkdown, normalizeResearchMarkdown, usefulMediaAlt } from "./source-normalize.js";
 import { sanitizeName, type NotebookStore, type SourceFile } from "./store.js";
 
 /**
@@ -414,6 +415,10 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
       }
       const title = cleanTitle(article.title || dom.window.document.title, fallback);
       const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+      turndown.addRule("tables", {
+        filter: ["table"],
+        replacement: (_content, node) => htmlTableToMarkdown(node as unknown as Element),
+      });
       turndown.addRule("dropMedia", {
         filter: ["img", "picture", "source", "svg", "video", "audio", "iframe", "object", "embed", "canvas"],
         replacement: (_content, node) => {
@@ -421,13 +426,13 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
           // short alt as plain text so formulas survive; data-URI bloat lives
           // in src, never alt, so the original fix is preserved.
           if (node.nodeName === "IMG") {
-            const alt = (node.getAttribute("alt") ?? "").trim();
-            if (alt && alt.length <= 400) return ` ${alt} `;
+            const alt = usefulMediaAlt(node.getAttribute("alt") ?? "");
+            if (alt) return ` ${alt} `;
           }
           return "";
         },
       });
-      const markdown = stripMediaMarkdown(turndown.turndown(article.content || article.textContent));
+      const markdown = normalizeResearchMarkdown(stripMediaMarkdown(turndown.turndown(article.content || article.textContent)));
       return {
         title,
         url: finalUrl,
@@ -447,7 +452,7 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
     final.pathname.toLowerCase().endsWith(".md")
   ) {
     const title = fallback;
-    const text = stripMediaMarkdown(decodeText(bytes, contentType));
+    const text = normalizeResearchMarkdown(stripMediaMarkdown(decodeText(bytes, contentType)));
     return {
       title,
       url: finalUrl,
@@ -506,11 +511,13 @@ export async function downloadDiscoveredSources(
   opts: {
     signal?: AbortSignal;
     onSource?: (nb: NonNullable<ReturnType<NotebookStore["get"]>>, file: SourceFile) => void | Promise<void>;
+    onProgress?: (completed: number, total: number) => void | Promise<void>;
   } = {},
 ): Promise<{ added: SourceFile[]; failures: DiscoverFailure[] }> {
   const added: SourceFile[] = [];
   const failures: DiscoverFailure[] = [];
 
+  let completed = 0;
   for (const src of sources) {
     if (opts.signal?.aborted) break;
     const nb = store.get(notebookId);
@@ -595,6 +602,9 @@ export async function downloadDiscoveredSources(
       added.push(file);
     } catch (err) {
       failures.push(failure(src.url, err));
+    } finally {
+      completed += 1;
+      await opts.onProgress?.(completed, sources.length);
     }
   }
 

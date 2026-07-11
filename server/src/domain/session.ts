@@ -66,6 +66,15 @@ import type {
 
 type TurnState = "idle" | "starting" | "streaming" | "interrupting";
 
+export type SessionActivity =
+  | { kind: "researching"; phase: "searching" | "downloading"; completed?: number; total?: number }
+  | { kind: "building-student-profile" }
+  | { kind: "building-knowledge-map" }
+  | { kind: "preparing-opening-question" }
+  | { kind: "evaluating-teaching" }
+  | { kind: "reading-sources" }
+  | { kind: "writing-response" };
+
 /** A turn that produces no notifications for this long is force-failed. */
 const TURN_INACTIVITY_MS = 5 * 60_000;
 const OVERLOAD_RETRY_DELAYS_MS = [1000, 4000];
@@ -96,6 +105,8 @@ interface NotebookSession {
   intakeResearch: boolean;
   /** Aborts the in-flight research one-shot when the user presses Stop. */
   researchAbort: AbortController | null;
+  /** Last structured activity, replayed in the state snapshot on reconnect. */
+  activity: SessionActivity | null;
   unsubscribe: (() => void) | null;
   watchdog: NodeJS.Timeout | null;
   /** Inner watchdog timer that force-resets a wedged turn; tracked so it can be cancelled. */
@@ -141,6 +152,7 @@ export class SessionManager {
         discoveryRunning: this.discoveries.has(notebookId),
         ragBuilding: isRagIndexBuilding(notebookId),
         ragBuildFailed: didLastRagBuildFail(notebookId),
+        activity: session.state !== "idle" || this.discoveries.has(notebookId) ? session.activity : null,
         partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
         messageCount: nb?.messages.length ?? 0,
       },
@@ -212,6 +224,7 @@ export class SessionManager {
         // persona (the belief contract is part of developerInstructions) and
         // before the kickoff prompt is built from it. Fail-open: without a
         // state the kickoff falls back to self-invented misconceptions.
+        this.setActivity(session, { kind: "building-student-profile" });
         await this.generateInitialState(nb);
         input = buildKickoffPrompt(nb);
         if (nb.learningState) {
@@ -219,6 +232,7 @@ export class SessionManager {
           await this.store.save(nb);
           this.broadcast(session, "knowledge-state", { state: nb.userKnowledgeState });
         } else {
+          this.setActivity(session, { kind: "building-knowledge-map" });
           await this.rebuildKnowledgeState(nb, session, { forceGraphGeneration: true });
         }
       }
@@ -325,6 +339,7 @@ export class SessionManager {
         // and turn/start — don't let a Stop pressed during it be lost.
         throw new HttpError(409, "turn_cancelled", "Stopped before the student replied.");
       }
+      if (kickoff) this.setActivity(session, { kind: "preparing-opening-question" });
       const turn = await this.turnStartWithRetry(nb.threadId!, catchUp + sourcesNote + beliefBlock + ragBlock + input, s.model, effort);
       // Only clear once the turn actually started — a failed turn/start must
       // not cost the fresh thread its transcript catch-up or the new-reading note.
@@ -345,6 +360,7 @@ export class SessionManager {
       session.turnId = turn.id;
       session.state = "streaming";
       this.resetWatchdog(session);
+      this.setActivity(session, { kind: "writing-response" });
       this.broadcast(session, "turn-started", { turnId: turn.id, kickoff });
       return { turnId: turn.id };
     } catch (err) {
@@ -418,7 +434,7 @@ export class SessionManager {
         if (nb.messages.length > 0) {
           try {
             const s = this.settings.get();
-            this.broadcast(session, "activity", { kind: "thinking" });
+            this.setActivity(session, { kind: "evaluating-teaching" });
             const raw = await this.client.runOneShotTurn({
               prompt: buildBootstrapPrompt(nb.messages, this.learningContext(nb)),
               model: s.model,
@@ -490,6 +506,7 @@ export class SessionManager {
     let added: SourceFile[] = [];
     let failures: DiscoverFailure[] = [];
 
+    this.setActivity(session, { kind: "researching", phase: "searching" });
     this.broadcastState(session);
     try {
       if (!initial) return;
@@ -518,6 +535,7 @@ export class SessionManager {
       if (!discovered || discovered.length === 0) {
         failures = [{ url: query ?? initial.topic ?? initial.title, reason: "the web search found no usable pages" }];
       } else {
+        this.setActivity(session, { kind: "researching", phase: "downloading", completed: 0, total: discovered.length });
         const result = await downloadDiscoveredSources(this.store, notebookId, discovered, {
           signal: controller.signal,
           onSource: (fresh, file) => {
@@ -525,6 +543,8 @@ export class SessionManager {
             addedNames.push(file.storedName);
             this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
           },
+          onProgress: (completed, total) =>
+            this.setActivity(session, { kind: "researching", phase: "downloading", completed, total }),
         });
         added = result.added;
         failures = result.failures;
@@ -611,6 +631,7 @@ export class SessionManager {
       discoveryRunning: this.discoveries.has(session.notebookId),
       ragBuilding: isRagIndexBuilding(session.notebookId),
       ragBuildFailed: didLastRagBuildFail(session.notebookId),
+      activity: session.state !== "idle" || this.discoveries.has(session.notebookId) ? session.activity : null,
       partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
       messageCount: nb?.messages.length ?? 0,
     });
@@ -635,6 +656,7 @@ export class SessionManager {
         cancelRequested: false,
         intakeResearch: false,
         researchAbort: null,
+        activity: null,
         unsubscribe: null,
         watchdog: null,
         forceResetTimer: null,
@@ -719,7 +741,7 @@ export class SessionManager {
       session.intakeResearch = true;
       session.cancelRequested = false;
       session.researchAbort = new AbortController();
-      this.broadcast(session, "activity", { kind: "researching" });
+      this.setActivity(session, { kind: "researching", phase: "searching" });
       try {
         await this.runResearch(nb, session);
       } finally {
@@ -766,9 +788,12 @@ export class SessionManager {
       });
       const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
       if (!discovered || discovered.length === 0) throw new Error("no usable discovered URLs");
+      this.setActivity(session, { kind: "researching", phase: "downloading", completed: 0, total: discovered.length });
       const result = await downloadDiscoveredSources(this.store, nb.id, discovered, {
         signal: session.researchAbort?.signal,
         onSource: (fresh) => this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) }),
+        onProgress: (completed, total) =>
+          this.setActivity(session, { kind: "researching", phase: "downloading", completed, total }),
       });
       if (result.added.length === 0) throw new Error("no discovered sources could be downloaded");
       const fresh = this.store.get(nb.id);
@@ -973,7 +998,7 @@ export class SessionManager {
       const state = nb.userKnowledgeState;
       if (state.lastEvaluatedMessageId === teacherMessageId) return;
       const s = this.settings.get();
-      this.broadcast(session, "activity", { kind: "thinking" });
+      this.setActivity(session, { kind: "evaluating-teaching" });
       const context = nb.messages.filter((m) => m.id !== teacherMessageId).slice(-6);
       const raw = await this.client.runOneShotTurn({
         prompt: buildKnowledgeEvaluatorPrompt(state, teacherText, context),
@@ -1016,7 +1041,7 @@ export class SessionManager {
         // at most once per session so a persistent failure doesn't tax every turn.
         if (session.learningBootstrapAttempted || nb.messages.length === 0) return;
         session.learningBootstrapAttempted = true;
-        this.broadcast(session, "activity", { kind: "thinking" });
+        this.setActivity(session, { kind: "evaluating-teaching" });
         // Stays at evaluator effort (default low), unlike the kickoff/edit
         // generations: this runs inside a normal teaching turn the user is
         // waiting on, and a thinner legacy map grows via the evaluator anyway.
@@ -1034,7 +1059,7 @@ export class SessionManager {
 
       const state = nb.learningState;
       if (state.lastEvaluatedMessageId === teacherMessageId) return; // retry of an already-evaluated message
-      this.broadcast(session, "activity", { kind: "thinking" });
+      this.setActivity(session, { kind: "evaluating-teaching" });
       const context = nb.messages.filter((m) => m.id !== teacherMessageId).slice(-6);
       const raw = await this.client.runOneShotTurn({
         prompt: buildEvaluatorPrompt(state, teacherText, context),
@@ -1148,9 +1173,9 @@ export class SessionManager {
       case "item/started": {
         const p = params as ItemNotification;
         if (p.item.type === "commandExecution") {
-          this.broadcast(session, "activity", { kind: "reading-sources" });
+          this.setActivity(session, { kind: "reading-sources" });
         } else if (p.item.type === "reasoning") {
-          this.broadcast(session, "activity", { kind: "thinking" });
+          this.setActivity(session, { kind: "writing-response" });
         }
         return;
       }
@@ -1344,5 +1369,10 @@ export class SessionManager {
   private broadcast(session: NotebookSession, event: string, data: unknown): void {
     const id = ++session.seq;
     for (const c of session.clients) c.send(event, data, id);
+  }
+
+  private setActivity(session: NotebookSession, activity: SessionActivity): void {
+    session.activity = activity;
+    this.broadcast(session, "activity", activity);
   }
 }

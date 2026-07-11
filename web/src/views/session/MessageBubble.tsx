@@ -1,7 +1,6 @@
 import { memo } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Icon } from "../../components/Icon";
+import { RichMarkdown, StreamingRichMarkdown } from "../../components/RichMarkdown";
 import type { ChatMessage } from "../../lib/types";
 import "./MessageBubble.css";
 
@@ -58,11 +57,10 @@ export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAs
       <StudentAvatar pulsing={streaming} />
       <div className="msg__col">
         <div className={`msg__bubble msg__bubble--student body-large${streaming ? " msg__bubble--streaming" : ""}`}>
-          {/* Render plain text while streaming (avoids re-parsing partial markdown each frame); parse once on completion. */}
           {streaming ? (
-            <span className="msg__streaming-text">{message.text}</span>
+            <StreamingRichMarkdown>{message.text}</StreamingRichMarkdown>
           ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+            <RichMarkdown>{message.text}</RichMarkdown>
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}

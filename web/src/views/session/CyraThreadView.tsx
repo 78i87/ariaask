@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
+import { RichMarkdown, StreamingRichMarkdown } from "../../components/RichMarkdown";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
 import { useCyraThread } from "../../lib/useCyraThread";
@@ -60,9 +59,9 @@ function CyraBubble({ message, onCopy, onEdit }: CyraBubbleProps) {
       <div className="msg__col">
         <div className={`msg__bubble msg__bubble--student msg__bubble--cyra body-large`}>
           {streaming ? (
-            <span className="msg__streaming-text">{message.text}</span>
+            <StreamingRichMarkdown>{message.text}</StreamingRichMarkdown>
           ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+            <RichMarkdown>{message.text}</RichMarkdown>
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}

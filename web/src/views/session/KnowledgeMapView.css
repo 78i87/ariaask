@@ -5,6 +5,130 @@
   container-type: inline-size;
 }
 
+.kmap__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px 8px;
+  flex-shrink: 0;
+}
+.kmap__toolbar .m3-segmented {
+  width: min(360px, 100%);
+}
+
+.kmap__status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 24px 12px;
+  flex-shrink: 0;
+}
+
+.koutline {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 24px 24px;
+}
+.koutline__next {
+  max-width: var(--aria-content-max);
+  margin: 0 auto 20px;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 24px;
+  padding: 20px;
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.koutline__next p {
+  margin: 4px 0 0;
+}
+.koutline__next-list {
+  display: grid;
+  gap: 6px;
+}
+.koutline__next-list button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 55%, transparent);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.koutline__groups {
+  max-width: var(--aria-content-max);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.koutline__group {
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+  overflow: hidden;
+}
+.koutline__group > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 10px;
+}
+.koutline__group h3 {
+  margin: 0;
+}
+.koutline__group header span {
+  color: var(--md-sys-color-on-surface-variant);
+}
+.koutline__rows {
+  display: grid;
+}
+.koutline__rows > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border: 0;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  padding: 14px 18px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  cursor: pointer;
+}
+.koutline__rows > button:hover,
+.koutline__rows > button.is-selected {
+  background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
+}
+.koutline__rows > button > .kmap__dot {
+  margin-top: 6px;
+}
+.koutline__row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.koutline__row-copy > span,
+.koutline__row-copy small {
+  color: var(--md-sys-color-on-surface-variant);
+}
+.koutline__row-copy small {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .kmap__body {
   display: flex;
   flex: 1;
@@ -182,6 +306,14 @@
   stroke-linejoin: round;
   pointer-events: none;
   user-select: none;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.kgraph__node--selected .kgraph__label,
+.kgraph__node--area-focus .kgraph__label,
+.kgraph__node:focus-visible .kgraph__label,
+.kgraph__node:hover .kgraph__label {
+  opacity: 1;
 }
 .kgraph__node--selected .kgraph__label,
 .kgraph__node:hover .kgraph__label {
@@ -215,6 +347,30 @@
   left: 0;
   right: 0;
   pointer-events: none;
+}
+
+.kgraph__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 4px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.kgraph__area-filter {
+  min-width: 112px;
+  max-width: 180px;
+  height: 36px;
+  padding: 0 30px 0 12px;
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-high);
+  font: 500 0.75rem/1 var(--md-sys-typescale-label-large-font);
 }
 
 /* Frosted pills so panned/zoomed graph content never overprints the text. */
@@ -381,6 +537,33 @@
 }
 
 @media (max-width: 720px) {
+  .kmap__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px 16px 8px;
+  }
+  .kmap__status-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 0 16px 10px;
+  }
+  .koutline {
+    padding: 2px 16px 16px;
+  }
+  .koutline__next {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .koutline__groups {
+    grid-template-columns: 1fr;
+  }
+  .koutline__rows > button {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .koutline__rows .kmap__status-chip {
+    grid-column: 2;
+    width: fit-content;
+  }
   .kmap__header {
     padding: 10px 16px 0;
   }

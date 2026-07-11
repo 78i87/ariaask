@@ -31,5 +31,11 @@ export function useNotebooks() {
     await api.deleteNotebook(id);
   }, []);
 
-  return { notebooks, error, refresh, create, remove };
+  const update = useCallback(async (id: string, patch: { title?: string; archived?: boolean }) => {
+    const res = await api.updateNotebook(id, patch);
+    setNotebooks((prev) => prev?.map((notebook) => (notebook.id === id ? res.notebook : notebook)) ?? null);
+    return res.notebook;
+  }, []);
+
+  return { notebooks, error, refresh, create, remove, update };
 }

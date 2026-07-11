@@ -139,6 +139,8 @@ export interface Notebook {
   intake?: Intake;
   /** "Ask Cyra" expert conversations (see cyra-session.ts). Absent = none yet. */
   cyraThreads?: CyraThread[];
+  /** Optional for backward compatibility; a timestamp means hidden from the active library. */
+  archivedAt?: string | null;
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;
@@ -154,6 +156,7 @@ export interface NotebookSummary {
   createdAt: string;
   lastTaughtAt: string | null;
   messageCount: number;
+  archivedAt: string | null;
 }
 
 export function toSummary(nb: Notebook): NotebookSummary {
@@ -167,6 +170,7 @@ export function toSummary(nb: Notebook): NotebookSummary {
     createdAt: nb.createdAt,
     lastTaughtAt: lastMsg ? lastMsg.createdAt : null,
     messageCount: nb.messages.length,
+    archivedAt: nb.archivedAt ?? null,
   };
 }
 

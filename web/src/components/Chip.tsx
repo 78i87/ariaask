@@ -33,7 +33,7 @@ export function Chip({ label, icon, onClick, onRemove, selected, className }: Ch
   );
   if (onClick) {
     return (
-      <button type="button" className={cls} onClick={onClick}>
+      <button type="button" className={cls} aria-pressed={selected} onClick={onClick}>
         {content}
       </button>
     );

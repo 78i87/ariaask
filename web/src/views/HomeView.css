@@ -85,17 +85,22 @@
   gap: 16px;
 }
 
+.home__filters {
+  width: min(280px, 100%);
+  margin: -8px 0 20px;
+}
+
 @media (max-width: 720px) {
   .home__content {
     padding: 0 16px 112px;
   }
   .home__hero {
+    align-items: stretch;
+    flex-direction: column;
     padding: 24px 0 16px;
   }
   .home__fab {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 5;
+    width: 100%;
+    justify-content: center;
   }
 }

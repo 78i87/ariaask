@@ -9,6 +9,8 @@ import { sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
 import { approxWordCount, extractPdfText } from "../domain/extract.js";
+import { normalizeResearchMarkdown } from "../domain/source-normalize.js";
+import { parseNotebookPatch } from "../domain/notebook-patch.js";
 import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "../domain/intake.js";
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
@@ -203,6 +205,19 @@ export function notebookRoutes(
     });
   });
 
+  router.patch("/:id", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const parsed = parseNotebookPatch(req.body);
+    if (!parsed.ok) throw new HttpError(400, parsed.code, parsed.message);
+    if (parsed.value.title !== undefined) nb.title = parsed.value.title;
+    if (parsed.value.archived !== undefined) {
+      nb.archivedAt = parsed.value.archived ? (nb.archivedAt ?? new Date().toISOString()) : null;
+    }
+    await store.save(nb);
+    res.json({ notebook: toSummary(nb) });
+  });
+
   router.post("/:id/intake", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -364,6 +379,30 @@ export function notebookRoutes(
     const query = typeof body.query === "string" && body.query.trim() ? body.query.trim().slice(0, 300) : null;
     const result = await sessions.startDiscovery(req.params.id, query);
     res.status(202).json(result);
+  });
+
+  router.get("/:id/sources/:name/preview", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const file = nb.sourceFiles.find((f) => f.storedName === req.params.name);
+    if (!file) throw new HttpError(404, "source_not_found");
+    if (path.extname(file.storedName).toLowerCase() === ".pdf") {
+      throw new HttpError(400, "preview_not_text", "PDF sources use the raw preview.");
+    }
+    let content: string;
+    try {
+      content = await fs.readFile(path.join(store.sourcesDir(nb.id), file.storedName), "utf8");
+    } catch {
+      throw new HttpError(404, "source_file_missing");
+    }
+    if (file.origin === "research") content = normalizeResearchMarkdown(content);
+    const limit = 500_000;
+    const truncated = content.length > limit;
+    res.json({
+      kind: file.storedName.toLowerCase().endsWith(".md") ? "markdown" : "text",
+      content: truncated ? content.slice(0, limit) : content,
+      truncated,
+    });
   });
 
   router.get("/:id/sources/:name", (req, res, next) => {

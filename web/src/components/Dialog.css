@@ -6,6 +6,7 @@
   border-radius: var(--md-sys-shape-corner-extra-large);
   box-shadow: var(--md-sys-elevation-2);
   max-height: calc(100dvh - 64px);
+  overflow: hidden;
 }
 
 .m3-dialog[open] {
@@ -17,10 +18,23 @@
 }
 
 .m3-dialog__content {
-  padding: 24px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100dvh - 64px);
+}
+
+.m3-dialog__header {
+  position: relative;
+  z-index: 1;
   display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 24px 12px;
+  background: var(--md-sys-color-surface-container-high);
+}
+.m3-dialog__header--centered {
   flex-direction: column;
-  gap: 16px;
+  text-align: center;
 }
 
 .m3-dialog__icon {
@@ -31,6 +45,7 @@
 
 .m3-dialog__headline {
   margin: 0;
+  flex: 1;
 }
 .m3-dialog__headline--centered {
   text-align: center;
@@ -41,12 +56,42 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 16px;
+  overscroll-behavior: contain;
+}
+
+.m3-dialog__headline-trailing {
+  flex-shrink: 0;
+  color: var(--md-sys-color-on-surface-variant);
 }
 
 .m3-dialog__actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  padding: 12px 24px 20px;
+  background: var(--md-sys-color-surface-container-high);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+@media (max-width: 720px) {
+  .m3-dialog {
+    max-height: calc(100dvh - 32px);
+  }
+  .m3-dialog__content {
+    max-height: calc(100dvh - 32px);
+  }
+  .m3-dialog__header {
+    padding: 20px 20px 12px;
+  }
+  .m3-dialog__body {
+    padding: 0 20px 16px;
+  }
+  .m3-dialog__actions {
+    padding: 10px 20px 16px;
+  }
 }
 
 @keyframes m3-dialog-in {

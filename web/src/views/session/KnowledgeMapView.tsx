@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { IconButton } from "../../components/IconButton";
+import { Segmented } from "../../components/Segmented";
 import type { KnowledgeBelief, KnowledgeState, KnowledgeStatus } from "../../lib/types";
 import "./KnowledgeMapView.css";
 
@@ -32,7 +33,7 @@ interface Sim {
   alpha: number;
 }
 
-const REPULSION = 3200;
+const REPULSION = 4800;
 const SPRING_K = 0.045;
 const SPRING_LEN = 95;
 const AREA_PULL = 0.014;
@@ -134,6 +135,18 @@ interface KnowledgeMapViewProps {
   state: KnowledgeState;
 }
 
+export function rankTeachNext(beliefs: KnowledgeBelief[]): KnowledgeBelief[] {
+  const understood = new Set(beliefs.filter((belief) => belief.status === "understood").map((belief) => belief.id));
+  const priority = (belief: KnowledgeBelief) => {
+    if (belief.status === "misconception") return 0;
+    if (belief.status === "partial") return 1;
+    if (belief.status === "unknown" && (belief.deps ?? []).every((id) => understood.has(id))) return 2;
+    if (belief.status === "unknown") return 3;
+    return 4;
+  };
+  return [...beliefs].filter((belief) => belief.status !== "understood").sort((a, b) => priority(a) - priority(b)).slice(0, 3);
+}
+
 /**
  * The knowledge map as a force-directed constellation: every belief is a
  * status-colored node, prerequisite deps are the links, and same-area nodes
@@ -146,6 +159,9 @@ interface KnowledgeMapViewProps {
  * and never owns transform/x/y attributes.
  */
 export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
+  const [mode, setMode] = useState<"outline" | "constellation">(() =>
+    localStorage.getItem("aria-knowledge-map-mode") === "constellation" ? "constellation" : "outline",
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   /** Area key spotlighted from the sidebar or a caption click; exclusive with node selection. */
@@ -224,6 +240,10 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     const c: Record<KnowledgeStatus, number> = { understood: 0, partial: 0, misconception: 0, unknown: 0 };
     for (const b of state.beliefs) c[b.status]++;
     return c;
+  }, [state.beliefs]);
+
+  const teachNext = useMemo(() => {
+    return rankTeachNext(state.beliefs);
   }, [state.beliefs]);
 
   useEffect(() => {
@@ -357,6 +377,19 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     applyView();
   };
 
+  const zoomView = (factor: number) => {
+    const view = viewRef.current;
+    const width = Math.min(Math.max(view.w * factor, 180), 2400);
+    const height = Math.min(Math.max(view.h * factor, 140), 1800);
+    viewRef.current = {
+      x: view.x + (view.w - width) / 2,
+      y: view.y + (view.h - height) / 2,
+      w: width,
+      h: height,
+    };
+    applyView();
+  };
+
   const startLoop = () => {
     if (runningRef.current) return;
     runningRef.current = true;
@@ -459,6 +492,12 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.beliefs, edgeList, areas, degree]);
 
+  useLayoutEffect(() => {
+    if (mode !== "constellation") return;
+    applyPositions();
+    fitView();
+  }, [mode]);
+
   useEffect(() => {
     return () => {
       cancelAnimationFrame(rafRef.current);
@@ -501,7 +540,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
     svg.addEventListener("wheel", onWheelNative, { passive: false });
     return () => svg.removeEventListener("wheel", onWheelNative);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mode]);
 
   /**
    * null = no gesture. One pointer owns a gesture (a second touch is ignored
@@ -657,6 +696,103 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
 
   return (
     <div className="session__main kmap-view">
+      <header className="kmap__toolbar">
+        <div className="kmap__progress">
+          <span className="title-medium">{counts.understood} of {state.beliefs.length} understood</span>
+          <span className="body-medium kmap__progress-sub">
+            {counts.partial} partial · {counts.misconception} misconception{counts.misconception === 1 ? "" : "s"} · {counts.unknown} no evidence yet
+          </span>
+        </div>
+        <Segmented
+          ariaLabel="Knowledge map view"
+          value={mode}
+          options={[
+            { value: "outline", label: "Outline" },
+            { value: "constellation", label: "Constellation" },
+          ]}
+          onChange={(value) => {
+            const next = value as typeof mode;
+            setMode(next);
+            localStorage.setItem("aria-knowledge-map-mode", next);
+          }}
+        />
+      </header>
+
+      <div className="kmap__status-filters label-medium">
+        {(["understood", "partial", "misconception", "unknown"] as const).map((status) => (
+          <button
+            key={status}
+            type="button"
+            className={`kmap__legend-item${focusStatus === status ? " is-active" : ""}`}
+            onClick={() => selectStatus(status)}
+            aria-pressed={focusStatus === status}
+          >
+            <span className={`kmap__dot kmap__dot--${status}`} />
+            {STATUS_LABEL[status]}
+          </button>
+        ))}
+      </div>
+
+      {mode === "outline" ? (
+        <div className="koutline">
+          {teachNext.length > 0 && (
+            <section className="koutline__next">
+              <div>
+                <span className="label-large">Teach next</span>
+                <p className="body-medium">The concepts where another explanation will help most.</p>
+              </div>
+              <div className="koutline__next-list">
+                {teachNext.map((belief) => (
+                  <button key={belief.id} type="button" onClick={() => selectNode(belief.id)}>
+                    <span className={`kmap__dot kmap__dot--${belief.status}`} />
+                    <span>{belief.concept}</span>
+                    <span className="label-medium">{STATUS_LABEL[belief.status]}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          <div className="koutline__groups">
+            {grouped.map((group) => {
+              const beliefs = focusStatus ? group.beliefs.filter((belief) => belief.status === focusStatus) : group.beliefs;
+              if (beliefs.length === 0) return null;
+              return (
+                <section key={group.key || "general"} className="koutline__group">
+                  <header>
+                    <h3 className="title-medium">{group.label}</h3>
+                    <span className="label-medium">{beliefs.length} concepts</span>
+                  </header>
+                  <div className="koutline__rows">
+                    {beliefs.map((belief) => {
+                      const deps = (belief.deps ?? []).map((id) => byId.get(id)).filter((item): item is KnowledgeBelief => Boolean(item));
+                      const leads = state.beliefs.filter((item) => item.deps?.includes(belief.id));
+                      return (
+                        <button
+                          key={belief.id}
+                          type="button"
+                          className={selected === belief.id ? "is-selected" : ""}
+                          onClick={() => selectNode(belief.id)}
+                          aria-pressed={selected === belief.id}
+                        >
+                          <span className={`kmap__dot kmap__dot--${belief.status}`} />
+                          <span className="koutline__row-copy">
+                            <strong className="body-large">{belief.concept}</strong>
+                            <span className="body-medium">{belief.belief}</span>
+                            {(deps.length > 0 || leads.length > 0) && (
+                              <small>{deps.length > 0 ? `Builds on ${deps.map((item) => item.concept).join(", ")}` : ""}{deps.length > 0 && leads.length > 0 ? " · " : ""}{leads.length > 0 ? `Leads to ${leads.map((item) => item.concept).join(", ")}` : ""}</small>
+                            )}
+                          </span>
+                          <span className={`kmap__status-chip kmap__status-chip--${belief.status} label-medium`}>{STATUS_LABEL[belief.status]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
       <div className="kmap__body">
         <aside className="kmap__sidebar">
           {grouped.map((g) => (
@@ -748,7 +884,7 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
                   if (el) nodeEls.current.set(b.id, el);
                   else nodeEls.current.delete(b.id);
                 }}
-                className={`kgraph__node kgraph__node--${b.status}${selected === b.id ? " kgraph__node--selected" : ""}${dimmed(b.id) ? " kgraph__node--dim" : ""}`}
+                className={`kgraph__node kgraph__node--${b.status}${selected === b.id ? " kgraph__node--selected" : ""}${focusArea !== null && areaKey(b) === focusArea ? " kgraph__node--area-focus" : ""}${dimmed(b.id) ? " kgraph__node--dim" : ""}`}
                 onPointerDown={onNodePointerDown(b.id)}
                 onPointerEnter={() => setHovered(b.id)}
                 onPointerLeave={() => setHovered((h) => (h === b.id ? null : h))}
@@ -775,32 +911,30 @@ export function KnowledgeMapView({ state }: KnowledgeMapViewProps) {
         </svg>
 
         <div className="kmap__header kgraph__overlay">
-          <div className="kmap__progress">
-            <span className="title-medium">
-              {counts.understood} of {state.beliefs.length} understood
-            </span>
-            <span className="body-medium kmap__progress-sub">
-              {counts.partial} partial · {counts.misconception} misconception{counts.misconception === 1 ? "" : "s"} ·{" "}
-              {counts.unknown} no evidence yet
-            </span>
-          </div>
-          <div className="kmap__legend label-medium">
-            {(["understood", "partial", "misconception", "unknown"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`kmap__legend-item${focusStatus === s ? " is-active" : ""}`}
-                onClick={() => selectStatus(s)}
-                aria-pressed={focusStatus === s}
-              >
-                <span className={`kmap__dot kmap__dot--${s}`} />
-                {STATUS_LABEL[s]}
-              </button>
-            ))}
+          <div className="kgraph__controls">
+            <select
+              className="kgraph__area-filter"
+              aria-label="Filter by concept area"
+              value={focusArea ?? ""}
+              onChange={(event) => {
+                setFocusArea(event.target.value || null);
+                setFocusStatus(null);
+                setSelected(null);
+              }}
+            >
+              <option value="">All areas</option>
+              {grouped.map((group) => (
+                <option key={group.key} value={group.key}>{group.label}</option>
+              ))}
+            </select>
+            <IconButton icon="zoom_in" ariaLabel="Zoom in" onClick={() => zoomView(0.8)} />
+            <IconButton icon="zoom_out" ariaLabel="Zoom out" onClick={() => zoomView(1.25)} />
+            <IconButton icon="center_focus_strong" ariaLabel="Fit all concepts" onClick={fitView} />
           </div>
         </div>
         </div>
       </div>
+      )}
 
       {sel && (
         <div className="kmap__detail">

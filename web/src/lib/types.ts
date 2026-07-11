@@ -47,6 +47,7 @@ export interface Notebook {
   createdAt: string;
   lastTaughtAt: string | null;
   messageCount: number;
+  archivedAt: string | null;
 }
 
 export type MessageStatus = "complete" | "streaming" | "error";
@@ -178,7 +179,17 @@ export interface SessionStateEvent {
   ragBuilding?: boolean;
   /** True when the most recent index build failed (recall not actually ready). */
   ragBuildFailed?: boolean;
+  activity?: SessionActivity | null;
   /** In-flight streamed text keyed by agentMessage itemId. */
   partials: Record<string, string>;
   messageCount: number;
 }
+
+export type SessionActivity =
+  | { kind: "researching"; phase: "searching" | "downloading"; completed?: number; total?: number }
+  | { kind: "building-student-profile" }
+  | { kind: "building-knowledge-map" }
+  | { kind: "preparing-opening-question" }
+  | { kind: "evaluating-teaching" }
+  | { kind: "reading-sources" }
+  | { kind: "writing-response" };

@@ -41,6 +41,17 @@
   flex: 1;
 }
 
+.nb-card__rename {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: 2px solid var(--md-sys-color-primary);
+  outline: 0;
+  padding: 2px 0 4px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+}
+
 .nb-card__meta {
   color: var(--md-sys-color-on-surface-variant);
   overflow: hidden;

@@ -73,6 +73,12 @@ export const api = {
   submitIntake: (id: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>
     request<Record<string, never>>(`/api/notebooks/${id}/intake`, json(payload)),
   deleteNotebook: (id: string) => request<void>(`/api/notebooks/${id}`, { method: "DELETE" }),
+  updateNotebook: (id: string, patch: { title?: string; archived?: boolean }) =>
+    request<{ notebook: Notebook }>(`/api/notebooks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
 
   sendMessage: (id: string, text?: string, retry?: boolean, clientMessageId?: string) =>
     request<{ turnId: string | null }>(
@@ -108,6 +114,10 @@ export const api = {
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,
+  sourcePreview: (id: string, storedName: string) =>
+    request<{ kind: "markdown" | "text"; content: string; truncated: boolean }>(
+      `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}/preview`,
+    ),
   addSources: (id: string, form: FormData) =>
     request<{ notebook: Notebook; added: SourceFile[]; warnings: string[] }>(`/api/notebooks/${id}/sources`, {
       method: "POST",

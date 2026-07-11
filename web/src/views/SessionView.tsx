@@ -6,6 +6,7 @@ import { Dialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { IconButton } from "../components/IconButton";
+import { ProgressIndicator } from "../components/ProgressIndicator";
 import { TopAppBar } from "../components/TopAppBar";
 import { useSnackbar } from "../components/Snackbar";
 import { api } from "../lib/api";
@@ -24,7 +25,7 @@ import { KnowledgeMapView } from "./session/KnowledgeMapView";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
-import { ThinkingIndicator } from "./session/ThinkingIndicator";
+import { SetupProgress, ThinkingIndicator } from "./session/ThinkingIndicator";
 import { CyraChips, ThreadBar } from "./session/ThreadBar";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
@@ -67,9 +68,10 @@ export function SessionView() {
   const [addOpen, setAddOpen] = useState(false);
   const [preview, setPreview] = useState<SourceFile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
+  const [sourceSheetOpen, setSourceSheetOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   /** Sources panel collapse — an app-level preference, remembered across notebooks. */
-  const [sourcesCollapsed, setSourcesCollapsed] = useState(() => localStorage.getItem("aria-sources-collapsed") === "1");
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(() => localStorage.getItem("aria-sources-collapsed") !== "0");
   const toggleSources = (collapsed: boolean) => {
     setSourcesCollapsed(collapsed);
     localStorage.setItem("aria-sources-collapsed", collapsed ? "1" : "0");
@@ -273,13 +275,13 @@ export function SessionView() {
   const intakePending = intake !== null && intake.status === "pending" && messages.length === 0;
   const busy = status === "waiting" || status === "streaming";
   const waitingLabel =
-    activity === "researching"
-      ? "Aria is finding readings online…"
-      : kickoffRunning
-        ? activity === "reading-sources"
-          ? "Aria is doing the reading…"
-          : "Aria is getting ready…"
-        : undefined;
+    activity?.kind === "evaluating-teaching"
+      ? "Aria is reflecting on what you taught…"
+      : activity?.kind === "reading-sources"
+        ? "Aria is checking the reading…"
+        : activity?.kind === "writing-response"
+          ? "Aria is forming a response…"
+          : undefined;
 
   return (
     <div className="session">
@@ -326,10 +328,11 @@ export function SessionView() {
 
           {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
             <div className="session__chips">
-              {notebook.sourceFiles.map((f) => (
-                <Chip key={f.storedName} icon={sourceIcon(f)} label={f.originalName} onClick={() => setPreview(f)} />
-              ))}
-              {discovering && <Chip icon="travel_explore" label="Finding sources…" />}
+              <button type="button" className="session__sources-trigger label-large" onClick={() => setSourceSheetOpen(true)}>
+                <Icon name="library_books" size={18} />
+                Sources · {notebook.sourceFiles.length}
+                {discovering && <ProgressIndicator size={14} />}
+              </button>
             </div>
           )}
 
@@ -356,7 +359,12 @@ export function SessionView() {
                   />
                 ))}
 
-                {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
+                {status === "waiting" &&
+                  (kickoffRunning ? (
+                    <SetupProgress activity={activity} sourceCount={notebook?.sourceFiles.length ?? 0} />
+                  ) : (
+                    <ThinkingIndicator label={waitingLabel} />
+                  ))}
 
                 {status === "error" && (
                   <div className="session__error">
@@ -494,6 +502,34 @@ export function SessionView() {
 
       {preview && notebook && (
         <SourcePreviewDialog notebookId={notebook.id} file={preview} onClose={() => setPreview(null)} />
+      )}
+
+      {notebook && (
+        <Dialog
+          open={sourceSheetOpen}
+          onClose={() => setSourceSheetOpen(false)}
+          headline="Sources"
+          width={440}
+          actions={
+            <Button variant="text" onClick={() => setSourceSheetOpen(false)}>
+              Close
+            </Button>
+          }
+        >
+          <div className="session__sources-sheet">
+            <SourcesPanel
+              notebook={notebook}
+              discovering={discovering}
+              ragBuilding={ragBuilding}
+              ragBuildFailed={ragBuildFailed}
+              onOpenFile={(file) => {
+                setSourceSheetOpen(false);
+                setPreview(file);
+              }}
+              onDeleteFile={setDeleteTarget}
+            />
+          </div>
+        </Dialog>
       )}
 
       {notebook && (

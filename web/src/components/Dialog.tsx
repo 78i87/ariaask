@@ -9,10 +9,11 @@ interface DialogProps {
   headline: string;
   children: ReactNode;
   actions: ReactNode;
+  headlineTrailing?: ReactNode;
   width?: number;
 }
 
-export function Dialog({ open, onClose, icon, headline, children, actions, width = 560 }: DialogProps) {
+export function Dialog({ open, onClose, icon, headline, children, actions, headlineTrailing, width = 560 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -36,16 +37,19 @@ export function Dialog({ open, onClose, icon, headline, children, actions, width
       }}
     >
       <div className="m3-dialog__content">
-        {icon && (
-          <div className="m3-dialog__icon">
-            <Icon name={icon} />
-          </div>
-        )}
-        <h2 className={`m3-dialog__headline headline-small${icon ? " m3-dialog__headline--centered" : ""}`}>
-          {headline}
-        </h2>
+        <header className={`m3-dialog__header${icon ? " m3-dialog__header--centered" : ""}`}>
+          {icon && (
+            <div className="m3-dialog__icon">
+              <Icon name={icon} />
+            </div>
+          )}
+          <h2 className={`m3-dialog__headline headline-small${icon ? " m3-dialog__headline--centered" : ""}`}>
+            {headline}
+          </h2>
+          {headlineTrailing && <div className="m3-dialog__headline-trailing">{headlineTrailing}</div>}
+        </header>
         <div className="m3-dialog__body">{children}</div>
-        <div className="m3-dialog__actions">{actions}</div>
+        <footer className="m3-dialog__actions">{actions}</footer>
       </div>
     </dialog>
   );

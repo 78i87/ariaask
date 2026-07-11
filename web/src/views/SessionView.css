@@ -11,6 +11,30 @@
   overflow-x: auto;
   scrollbar-width: none;
 }
+
+.session__sources-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+}
+
+.session__sources-sheet .session__sources {
+  width: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.session__sources-sheet .session__sources-heading {
+  display: none;
+}
 .session__chips::-webkit-scrollbar {
   display: none;
 }

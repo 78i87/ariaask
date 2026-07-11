@@ -13,6 +13,16 @@
   gap: 24px;
 }
 
+.settings__save {
+  white-space: nowrap;
+}
+.settings__save--saved {
+  color: var(--md-sys-color-primary);
+}
+.settings__save--error {
+  color: var(--md-sys-color-error);
+}
+
 .settings__section {
   display: flex;
   flex-direction: column;

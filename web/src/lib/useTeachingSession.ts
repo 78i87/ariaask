@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionStateEvent, SourceFile } from "./types";
+import { activityFromSessionState } from "./sessionActivity";
+import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionActivity, SessionStateEvent, SourceFile } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
-export type SessionActivity = "reading-sources" | "thinking" | "researching" | null;
 
 export interface TeachingSession {
   notebook: Notebook | null;
@@ -11,7 +11,7 @@ export interface TeachingSession {
   status: SessionStatus;
   /** True while the hidden kickoff turn runs (sources being read). */
   kickoffRunning: boolean;
-  activity: SessionActivity;
+  activity: SessionActivity | null;
   error: string | null;
   /** The setup form; null on pre-feature notebooks. */
   intake: Intake | null;
@@ -44,7 +44,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<SessionStatus>("loading");
   const [kickoffRunning, setKickoffRunning] = useState(false);
-  const [activity, setActivity] = useState<SessionActivity>(null);
+  const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
   const [knowledgeState, setKnowledgeState] = useState<KnowledgeState | null>(null);
@@ -185,9 +185,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
           setStatus(data.turnActive ? "waiting" : "idle");
         });
       }
+      setActivity(activityFromSessionState(data));
       if (data.turnActive) {
         setKickoffRunning(data.kickoffRunning || data.intakeRunning);
-        if (data.intakeRunning) setActivity("researching"); // restore indicator on reconnect mid-research
         const entries = Object.entries(data.partials ?? {});
         if (entries.length > 0) {
           for (const [itemId, text] of entries) {
@@ -208,7 +208,6 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       const data = JSON.parse((e as MessageEvent).data) as { turnId: string; kickoff: boolean };
       setKickoffRunning(data.kickoff);
       setStatus("waiting");
-      setActivity(null);
     });
 
     es.addEventListener("delta", (e) => {
@@ -216,12 +215,13 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       const buf = deltaBuffers.current;
       buf.set(data.itemId, (buf.get(data.itemId) ?? "") + data.delta);
       setStatus("streaming");
+      setActivity({ kind: "writing-response" });
       scheduleFlush();
     });
 
     es.addEventListener("activity", (e) => {
-      const data = JSON.parse((e as MessageEvent).data) as { kind: "reading-sources" | "thinking" | "researching" };
-      setActivity(data.kind);
+      const data = JSON.parse((e as MessageEvent).data) as SessionActivity;
+      setActivity(data);
     });
 
     es.addEventListener("sources-updated", (e) => {
@@ -408,7 +408,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       setError(null);
       setStatus("waiting");
       setKickoffRunning(true);
-      if (researching) setActivity("researching");
+      if (researching) setActivity({ kind: "researching", phase: "searching" });
       void api.submitIntake(notebookId, payload).catch((err) => {
         setIntake((prev) => (prev ? { ...prev, status: "pending" } : prev));
         setStatus("idle");

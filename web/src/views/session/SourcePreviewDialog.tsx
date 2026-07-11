@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
+import { RichMarkdown } from "../../components/RichMarkdown";
 import { api } from "../../lib/api";
 import type { SourceFile } from "../../lib/types";
 import { sourceIcon } from "./SourcesPanel";
 import "./SourcePreviewDialog.css";
-
-/** Above this, .md falls back to plain text — parsing huge markdown blocks the main thread. */
-const MD_PARSE_LIMIT = 200_000;
-/** Hard cap on rendered characters. */
-const TEXT_DISPLAY_LIMIT = 500_000;
 
 type Kind = "pdf" | "md" | "txt";
 
@@ -30,12 +24,18 @@ interface SourcePreviewDialogProps {
 
 export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreviewDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const docRef = useRef<HTMLDivElement>(null);
   const kind = kindOf(file);
   const url = api.sourceUrl(notebookId, file.storedName);
 
   const [text, setText] = useState<string | null>(null);
   const [load, setLoad] = useState<"loading" | "ready" | "error">(kind === "pdf" ? "ready" : "loading");
   const [attempt, setAttempt] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState(0);
+  const [activeMatch, setActiveMatch] = useState(0);
+  const [progress, setProgress] = useState(0);
 
   // Conditionally mounted by the caller, so open once on mount. The !open
   // guard and close-on-cleanup keep StrictMode's simulated remount (and
@@ -50,24 +50,49 @@ export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreview
     if (kind === "pdf") return;
     const ctrl = new AbortController();
     setLoad("loading");
-    fetch(url, { signal: ctrl.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.text();
-      })
-      .then((t) => {
-        setText(t);
+    api
+      .sourcePreview(notebookId, file.storedName)
+      .then((preview) => {
+        if (ctrl.signal.aborted) return;
+        setText(preview.content);
+        setTruncated(preview.truncated);
         setLoad("ready");
       })
       .catch(() => {
         if (!ctrl.signal.aborted) setLoad("error");
       });
     return () => ctrl.abort();
-  }, [url, kind, attempt]);
+  }, [notebookId, file.storedName, kind, attempt]);
 
-  const truncated = text !== null && text.length > TEXT_DISPLAY_LIMIT;
-  const shown = truncated ? text!.slice(0, TEXT_DISPLAY_LIMIT) : (text ?? "");
-  const renderMarkdown = kind === "md" && shown.length <= MD_PARSE_LIMIT;
+  const shown = text ?? "";
+
+  useEffect(() => {
+    const root = docRef.current;
+    if (!root || load !== "ready") return;
+    const blocks = [...root.querySelectorAll<HTMLElement>(".preview-doc__md .rich-markdown > *, .preview-doc__pre")];
+    for (const block of blocks) block.classList.remove("preview-search-match", "preview-search-match--active");
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) {
+      setMatches(0);
+      setActiveMatch(0);
+      return;
+    }
+    const found = blocks.filter((block) => (block.textContent ?? "").toLocaleLowerCase().includes(needle));
+    found.forEach((block) => block.classList.add("preview-search-match"));
+    setMatches(found.length);
+    const nextActive = Math.min(activeMatch, Math.max(found.length - 1, 0));
+    if (nextActive !== activeMatch) setActiveMatch(nextActive);
+    const current = found[nextActive];
+    if (current) {
+      current.classList.add("preview-search-match--active");
+      current.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [query, activeMatch, load, shown]);
+
+  const moveMatch = (delta: number) => {
+    if (matches === 0) return;
+    setActiveMatch((index) => (index + delta + matches) % matches);
+  };
 
   return (
     <dialog
@@ -99,6 +124,33 @@ export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreview
         )}
         <IconButton icon="close" ariaLabel="Close preview" onClick={onClose} />
       </header>
+      {kind !== "pdf" && load === "ready" && (
+        <div className="preview-dialog__tools">
+          <label className="preview-search">
+            <Icon name="search" size={18} />
+            <input
+              aria-label="Search source"
+              value={query}
+              placeholder="Find in source"
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActiveMatch(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") moveMatch(event.shiftKey ? -1 : 1);
+              }}
+            />
+          </label>
+          <span className="preview-search__count label-medium" aria-live="polite">
+            {query.trim() ? (matches ? `${activeMatch + 1} of ${matches}` : "No matches") : ""}
+          </span>
+          <IconButton icon="keyboard_arrow_up" ariaLabel="Previous match" disabled={matches === 0} onClick={() => moveMatch(-1)} />
+          <IconButton icon="keyboard_arrow_down" ariaLabel="Next match" disabled={matches === 0} onClick={() => moveMatch(1)} />
+        </div>
+      )}
+      <div className="preview-dialog__progress" aria-hidden="true">
+        <span style={{ transform: `scaleX(${progress})` }} />
+      </div>
       <div className="preview-dialog__content">
         {kind === "pdf" ? (
           <iframe className="preview-dialog__pdf" src={url} title={file.originalName} />
@@ -115,10 +167,23 @@ export function SourcePreviewDialog({ notebookId, file, onClose }: SourcePreview
             </Button>
           </div>
         ) : (
-          <div className="preview-doc">
-            {renderMarkdown ? (
+          <div
+            ref={docRef}
+            className="preview-doc"
+            onScroll={(event) => {
+              const el = event.currentTarget;
+              setProgress(el.scrollHeight <= el.clientHeight ? 1 : el.scrollTop / (el.scrollHeight - el.clientHeight));
+            }}
+          >
+            {!shown.trim() ? (
+              <div className="preview-dialog__status">
+                <Icon name="description" size={32} />
+                <span className="body-medium">This source did not contain a readable text preview.</span>
+                {file.originUrl && <span className="body-medium">Open the original source to read it.</span>}
+              </div>
+            ) : kind === "md" ? (
               <div className="preview-doc__md body-large">
-                <Markdown remarkPlugins={[remarkGfm]}>{shown}</Markdown>
+                <RichMarkdown>{shown}</RichMarkdown>
               </div>
             ) : (
               <pre className="preview-doc__pre body-medium">{shown}</pre>

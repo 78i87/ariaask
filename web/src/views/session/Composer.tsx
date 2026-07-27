@@ -16,6 +16,8 @@ interface ComposerProps {
   /** Controlled mode (used by the new-Cyra-question draft); omit for internal state. */
   value?: string;
   onChange?: (text: string) => void;
+  /** "floating" renders the ChatGPT-style bordered card variant (coach chat). */
+  variant?: "default" | "floating";
 }
 
 export function Composer({
@@ -29,6 +31,7 @@ export function Composer({
   focusKey,
   value,
   onChange,
+  variant = "default",
 }: ComposerProps) {
   const [inner, setInner] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -75,7 +78,7 @@ export function Composer({
   };
 
   return (
-    <div className="composer">
+    <div className={`composer${variant === "floating" ? " composer--floating" : ""}`}>
       <div className={`composer__pill${accent === "tertiary" ? " composer__pill--tertiary" : ""}`}>
         <textarea
           ref={taRef}

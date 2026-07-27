@@ -55,15 +55,25 @@ project.
    it reacts with calibrated confusion, tests rules by restating them slightly
    wrong, presents contradictions as its own puzzlement (never corrects you), and
    shows a genuine "aha" when an explanation lands — then asks something deeper.
+6. **Practise interviews** in projects built around a target role and required
+   CV, with an optional company or job description. Cyra runs the main interview,
+   keeps a live competency-coverage map, and gives a candid debrief when you end it.
+
+Projects are created before any chat starts. Their shared sources feed the
+learning coach, reverse tutor or interview practice; projects can be renamed,
+archived, restored or deleted from the persistent sidebar.
 
 ## Architecture
 
 - **`server/`** — Express + TypeScript. Owns one long-lived `codex app-server`
-  child process, speaking JSON-RPC over stdio. Each notebook has up to three
+  child process, speaking JSON-RPC over stdio. Each learning project has up to three
   Codex personas on their own threads: the **coach**
   ([`server/src/domain/coach.ts`](server/src/domain/coach.ts)), the **Aria
   student** ([`server/src/domain/persona.ts`](server/src/domain/persona.ts)), and
-  on-demand **Cyra** expert threads. Chat history is persisted as per-notebook
+  on-demand **Cyra** expert threads. Interview projects instead use Cyra as the
+  main interviewer ([`server/src/domain/interviewer.ts`](server/src/domain/interviewer.ts))
+  with a competency map from [`server/src/domain/coverage.ts`](server/src/domain/coverage.ts).
+  Chat history is persisted as per-notebook
   JSON under `data/`; responses stream to the browser over per-persona SSE
   channels.
 - **`kb/`** — the coach's learning-science knowledge base (curated principle /
@@ -82,9 +92,10 @@ your uploaded sources but cannot write files or run commands.
 
 ## Settings
 
-The gear button in the top bar opens Settings: model, thinking level, student
-style (reply length + probing intensity), color theme (blue default / purple),
-and account/sign-out. Model and thinking apply to every notebook immediately;
+The gear button opens autosaving Teaching, Appearance and Advanced settings:
+coaching style, chat layout, model, thinking level, student style, reading
+recall, color theme, local Codex CLI status/update, and account/sign-out. Model
+and thinking apply to every project immediately;
 changing student style restarts the notebook's thread behind the scenes (the
 student re-reads the transcript, so nothing it learned is lost). Settings
 persist in `data/settings.json`.
@@ -108,6 +119,8 @@ persist in `data/settings.json`.
 
 - `npm run dev` — run backend + frontend together
 - `npm run dev:server` / `npm run dev:web` — run one side
+- `npm test -w @aria/server` — run server unit and route tests
+- `npm test -w @aria/web` — run Vitest component tests
 - `npm run typecheck` — typecheck both workspaces
 
 The app tracks how often you use each technique and adapts: after several

@@ -1,7 +1,6 @@
 import { memo } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Icon } from "../../components/Icon";
+import { RichMarkdown, StreamingRichMarkdown } from "../../components/RichMarkdown";
 import type { ChatMessage } from "../../lib/types";
 import "./MessageBubble.css";
 
@@ -15,6 +14,7 @@ export function StudentAvatar({ pulsing }: { pulsing?: boolean }) {
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  interviewer?: boolean;
   /** All handlers must be deps-stable callbacks — this component is memo'd. */
   onCopy?: (m: ChatMessage) => void;
   onAskCyra?: (m: ChatMessage) => void;
@@ -24,7 +24,13 @@ interface MessageBubbleProps {
 
 // Memoized so finalized bubbles (stable message reference) don't re-render on
 // every streaming flush; only the actively-streaming bubble updates.
-export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAskCyra, onEdit }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  interviewer,
+  onCopy,
+  onAskCyra,
+  onEdit,
+}: MessageBubbleProps) {
   if (message.role === "teacher") {
     const showTeacherActions = onCopy !== undefined || onEdit !== undefined;
     return (
@@ -34,15 +40,13 @@ export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAs
           {showTeacherActions && (
             <div className="msg__actions">
               {onCopy && (
-                <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+                <button type="button" className="msg-action msg-action--icon" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
                   <Icon name="content_copy" size={16} />
-                  <span className="label-medium">Copy</span>
                 </button>
               )}
               {onEdit && (
-                <button type="button" className="msg-action" onClick={() => onEdit(message)}>
+                <button type="button" className="msg-action msg-action--icon" aria-label="Edit" title="Edit" onClick={() => onEdit(message)}>
                   <Icon name="edit" size={16} />
-                  <span className="label-medium">Edit</span>
                 </button>
               )}
             </div>
@@ -55,14 +59,14 @@ export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAs
   const showActions = !streaming && (onCopy !== undefined || onAskCyra !== undefined);
   return (
     <div className="msg msg--student">
-      <StudentAvatar pulsing={streaming} />
       <div className="msg__col">
-        <div className={`msg__bubble msg__bubble--student body-large${streaming ? " msg__bubble--streaming" : ""}`}>
-          {/* Render plain text while streaming (avoids re-parsing partial markdown each frame); parse once on completion. */}
+        <div
+          className={`msg__bubble msg__bubble--student${interviewer ? " msg__bubble--cyra" : ""} body-large${streaming ? " msg__bubble--streaming" : ""}`}
+        >
           {streaming ? (
-            <span className="msg__streaming-text">{message.text}</span>
+            <StreamingRichMarkdown>{message.text}</StreamingRichMarkdown>
           ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+            <RichMarkdown>{message.text}</RichMarkdown>
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}
@@ -70,9 +74,8 @@ export const MessageBubble = memo(function MessageBubble({ message, onCopy, onAs
         {showActions && (
           <div className="msg__actions">
             {onCopy && (
-              <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+              <button type="button" className="msg-action msg-action--icon" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
                 <Icon name="content_copy" size={16} />
-                <span className="label-medium">Copy</span>
               </button>
             )}
             {onAskCyra && (

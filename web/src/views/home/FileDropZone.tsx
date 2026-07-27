@@ -19,9 +19,16 @@ function middleTruncate(name: string, max = 24): string {
 interface FileDropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
+  maxFiles?: number;
+  hint?: string;
 }
 
-export function FileDropZone({ files, onChange }: FileDropZoneProps) {
+export function FileDropZone({
+  files,
+  onChange,
+  maxFiles = MAX_FILES,
+  hint = "Drag files here or click to browse",
+}: FileDropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const snackbar = useSnackbar();
@@ -36,11 +43,16 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
       snackbar.show("Each file must be under 25MB");
       accepted = accepted.filter((f) => f.size <= MAX_FILE_SIZE);
     }
+    if (maxFiles === 1) {
+      // Single-file zones replace the selection instead of accumulating
+      if (accepted.length > 0) onChange(accepted.slice(0, 1));
+      return;
+    }
     const existing = new Set(files.map(fileKey));
     let merged = [...files, ...accepted.filter((f) => !existing.has(fileKey(f)))];
-    if (merged.length > MAX_FILES) {
-      snackbar.show("You can upload at most 10 files");
-      merged = merged.slice(0, MAX_FILES);
+    if (merged.length > maxFiles) {
+      snackbar.show(`You can upload at most ${maxFiles} files`);
+      merged = merged.slice(0, maxFiles);
     }
     onChange(merged);
   };
@@ -67,12 +79,12 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
         }}
       >
         <Icon name="upload_file" size={32} fill={dragOver ? 1 : 0} />
-        <span className="body-medium">Drag files here or click to browse</span>
+        <span className="body-medium">{hint}</span>
         <span className="dropzone__formats body-medium">txt, md, pdf</span>
         <input
           ref={inputRef}
           type="file"
-          multiple
+          multiple={maxFiles !== 1}
           accept={ACCEPTED.join(",")}
           hidden
           onChange={(e) => {

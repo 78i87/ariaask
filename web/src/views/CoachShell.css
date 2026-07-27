@@ -5,169 +5,8 @@
   color: var(--md-sys-color-on-surface);
 }
 
-/* ---------- sidebar ---------- */
-
-.shell__sidebar {
-  display: flex;
-  flex-direction: column;
-  width: 288px;
-  flex-shrink: 0;
-  background: var(--md-sys-color-surface-container-low);
-  border-right: 1px solid var(--md-sys-color-outline-variant);
-  padding: 16px 12px 12px;
-  gap: 12px;
-  min-height: 0;
-}
-
-/* Mobile: the sidebar becomes an overlay drawer. */
-.shell__sidebar--hidden {
-  display: none;
-}
-.shell__sidebar--open {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 20;
-  box-shadow: var(--md-sys-elevation-3, 0 4px 16px rgba(0, 0, 0, 0.3));
-}
-.shell__scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 15;
-  background: color-mix(in srgb, var(--md-sys-color-scrim, #000) 45%, transparent);
-}
-
-.shell__brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-}
-
-.shell__brand-icon {
-  color: var(--md-sys-color-primary);
-}
-
-.shell__brand-sub {
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.shell__new {
-  display: flex;
-  padding: 0 4px;
-}
-.shell__new .m3-button {
-  width: 100%;
-  justify-content: center;
-}
-
-.shell__projects {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-}
-
-.shell__projects-loading {
-  display: flex;
-  justify-content: center;
-  padding: 24px 0;
-}
-
-.shell__projects-error {
-  color: var(--md-sys-color-error);
-  padding: 8px;
-}
-
-.shell__project {
-  display: flex;
-  align-items: center;
-  border-radius: var(--md-sys-shape-corner-full);
-}
-
-.shell__project:hover {
-  background: var(--md-sys-color-surface-container);
-}
-
-.shell__project--active {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-}
-.shell__project--active:hover {
-  background: var(--md-sys-color-secondary-container);
-}
-
-.shell__project-open {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  border-radius: inherit;
-  font: inherit;
-}
-
-.shell__project-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.shell__project-delete {
-  display: none;
-  flex-shrink: 0;
-}
-.shell__project:hover .shell__project-delete,
-.shell__project--active .shell__project-delete {
-  display: flex;
-}
-
-.shell__footer {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-  padding-top: 12px;
-}
-
-.shell__account {
-  margin-left: auto;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  border-radius: var(--md-sys-shape-corner-full);
-}
-
-.shell__avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-}
-
-.shell__account-id {
-  display: flex;
-  flex-direction: column;
-  padding: 8px 12px;
-}
-
-.shell__account-plan {
-  color: var(--md-sys-color-on-surface-variant);
-  text-transform: capitalize;
-}
+/* The sidebar (`.shell__sidebar*`) lives in CoachSidebar.css — it is shared
+   with the teach-back view. */
 
 /* ---------- main pane ---------- */
 
@@ -179,12 +18,15 @@
   min-height: 0;
 }
 
+.shell__page-title {
+  margin: 0;
+}
+
 .shell__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  gap: 8px;
+  padding: 10px 16px;
 }
 
 .shell__title {
@@ -199,34 +41,33 @@
 .shell__header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
+/* Quiet ghost chips — no border, hover wash only. */
 .shell__chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 7px 12px;
+  border: none;
   border-radius: var(--md-sys-shape-corner-full);
-  border: 1px solid var(--md-sys-color-outline-variant);
   background: none;
-  color: var(--md-sys-color-on-surface);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: inherit;
   cursor: pointer;
-  font: inherit;
 }
-
 .shell__chip:hover {
-  background: var(--md-sys-color-surface-container);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
 }
 
 .shell__chip--teach {
-  background: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-  border-color: transparent;
+  color: var(--md-sys-color-primary);
 }
 .shell__chip--teach:hover {
-  background: var(--md-sys-color-primary);
-  opacity: 0.92;
+  background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
+  color: var(--md-sys-color-primary);
 }
 
 .shell__chip-count {
@@ -237,8 +78,8 @@
   height: 20px;
   padding: 0 6px;
   border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
   font-size: 12px;
 }
 
@@ -263,54 +104,4 @@
   .shell__header {
     padding: 8px 12px;
   }
-}
-
-/* ---------- cross-project due returns (sidebar strip) ---------- */
-
-.shell__due {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 12px 8px;
-}
-
-.shell__due-label {
-  color: var(--md-sys-color-on-surface-variant);
-  padding: 0 4px;
-}
-
-.shell__due-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: none;
-  border-radius: var(--md-sys-shape-corner-medium);
-  background: none;
-  color: var(--md-sys-color-on-surface);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.shell__due-chip:hover {
-  background: var(--md-sys-color-surface-container);
-}
-
-.shell__due-chip .m3-icon {
-  color: var(--md-sys-color-secondary);
-  flex-shrink: 0;
-}
-
-.shell__due-topic {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.shell__due-meta {
-  margin-left: auto;
-  color: var(--md-sys-color-on-surface-variant);
-  flex-shrink: 0;
 }

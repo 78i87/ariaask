@@ -1,4 +1,8 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { Chip } from "../../components/Chip";
+import { IconButton } from "../../components/IconButton";
+import { Menu } from "../../components/Menu";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import type { CyraThreadSummary, ThreadSelection } from "../../lib/types";
 import "./ThreadBar.css";
 
@@ -14,7 +18,7 @@ interface CyraChipsProps {
 }
 
 /**
- * The "Ask Cyra" entry points: the permanent "Ask question" chip plus one
+ * The "Ask Cyra" entry points: the permanent action chip plus one
  * chip per conversation. Rendered inside the ThreadBar in tabbed mode, and in
  * the split pane's own bar (SessionView) when split chat is on.
  */
@@ -23,7 +27,7 @@ export function CyraChips({ selected, threads, onSelect }: CyraChipsProps) {
     <>
       <Chip
         icon="history_edu"
-        label="Ask question"
+        label="Ask Cyra"
         selected={selected !== null && selected.threadId === null}
         onClick={() => onSelect(null)}
         className="threadbar__chip threadbar__chip--cyra"
@@ -56,6 +60,18 @@ interface ThreadBarProps {
  * question" are permanent entry points; thread chips accumulate after them.
  */
 export function ThreadBar({ active, threads, onSelect, split }: ThreadBarProps) {
+  const mobile = useMediaQuery("(max-width: 720px)");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const menuAnchor = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const selectedThread = active.kind === "cyra" && active.threadId ? threads.find((thread) => thread.id === active.threadId) : null;
+  const menuThreads = threads.filter((thread) => thread.id !== selectedThread?.id);
+
+  useLayoutEffect(() => {
+    if (mobile) return;
+    scrollRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [active, threads, mobile]);
+
   return (
     <div className="threadbar">
       <Chip
@@ -68,13 +84,49 @@ export function ThreadBar({ active, threads, onSelect, split }: ThreadBarProps) 
       {!split && (
         <>
           <div className="threadbar__divider" />
-          <div className="threadbar__scroll">
-            <CyraChips
-              selected={active.kind === "cyra" ? { threadId: active.threadId } : null}
-              threads={threads}
-              onSelect={(threadId) => onSelect({ kind: "cyra", threadId })}
-            />
-          </div>
+          {mobile ? (
+            <div className="threadbar__mobile-cyra">
+              <Chip
+                icon="history_edu"
+                label="Ask Cyra"
+                selected={active.kind === "cyra" && active.threadId === null}
+                onClick={() => onSelect({ kind: "cyra", threadId: null })}
+                className="threadbar__chip threadbar__chip--cyra"
+              />
+              {selectedThread && (
+                <Chip
+                  icon="history_edu"
+                  label={truncate(selectedThread.title, 22)}
+                  selected
+                  onClick={() => onSelect({ kind: "cyra", threadId: selectedThread.id })}
+                  className="threadbar__chip threadbar__chip--cyra"
+                />
+              )}
+              {menuThreads.length > 0 && (
+                <>
+                  <IconButton ref={menuAnchor} icon="more_horiz" ariaLabel="More conversations" onClick={() => setMenuOpen(true)} />
+                  <Menu
+                    open={menuOpen}
+                    onClose={() => setMenuOpen(false)}
+                    anchorRef={menuAnchor}
+                    items={menuThreads.map((thread) => ({
+                      icon: "history_edu",
+                      label: truncate(thread.title, 32),
+                      onSelect: () => onSelect({ kind: "cyra", threadId: thread.id }),
+                    }))}
+                  />
+                </>
+              )}
+            </div>
+          ) : (
+            <div ref={scrollRef} className="threadbar__scroll">
+              <CyraChips
+                selected={active.kind === "cyra" ? { threadId: active.threadId } : null}
+                threads={threads}
+                onSelect={(threadId) => onSelect({ kind: "cyra", threadId })}
+              />
+            </div>
+          )}
         </>
       )}
     </div>

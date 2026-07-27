@@ -25,6 +25,18 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 
+.session__sources-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session__sources-empty {
+  padding: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  line-height: 1.45;
+}
+
 .session__sources-list {
   list-style: none;
   margin: 0;

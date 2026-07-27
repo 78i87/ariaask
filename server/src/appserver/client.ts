@@ -43,7 +43,8 @@ const FAILURE_WINDOW_MS = 60_000;
  * requests, and crash supervision with backoff.
  *
  * Events: "login-completed" (AccountLoginCompletedNotification),
- * "account-updated", "crashed", "restarted", "state" (AppServerState).
+ * "account-updated", "crashed", "restarting" (intentional replacement),
+ * "restarted", "state" (AppServerState).
  */
 export class AppServerClient extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -68,6 +69,7 @@ export class AppServerClient extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    this.stopping = false;
     this.setState("starting");
     await this.spawnAndInitialize();
     this.setState("running");
@@ -75,9 +77,37 @@ export class AppServerClient extends EventEmitter {
 
   async stop(): Promise<void> {
     this.stopping = true;
-    const child = this.child;
-    if (!child) return;
     this.setState("stopped");
+    await this.terminateChild();
+  }
+
+  /** Restart after an intentional CLI replacement without counting it as a crash. */
+  async restart(): Promise<void> {
+    // Streaming turns do not have a pending RPC to reject when the child exits.
+    // Give session managers a dedicated signal so they can persist partials and
+    // return to idle before the intentional replacement suppresses "crashed".
+    this.emit("restarting");
+    this.stopping = true;
+    this.setState("restarting");
+    await this.terminateChild();
+    this.stopping = false;
+    this.failures = [];
+    try {
+      await this.spawnAndInitialize();
+      this.setState("running");
+      this.emit("restarted");
+    } catch (err) {
+      if (this.stateValue !== "codex-not-found") this.setState("dead");
+      throw err;
+    }
+  }
+
+  private async terminateChild(): Promise<void> {
+    const child = this.child;
+    if (!child) {
+      this.conn = null;
+      return;
+    }
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
         child.kill("SIGKILL");
@@ -172,9 +202,11 @@ export class AppServerClient extends EventEmitter {
 
     const timer = setTimeout(() => rejectDone(new RpcError(-32000, `one-shot turn timed out after ${timeoutMs}ms`)), timeoutMs);
     // failAllPending only rejects in-flight RPCs — the wait for the
-    // turn/completed notification needs its own crash handler.
-    const onCrash = () => rejectDone(new AppServerCrashedError());
-    this.once("crashed", onCrash);
+    // turn/completed notification needs its own disconnect handler. An
+    // intentional replacement emits `restarting` and suppresses `crashed`.
+    const onDisconnect = () => rejectDone(new AppServerCrashedError());
+    this.once("crashed", onDisconnect);
+    this.once("restarting", onDisconnect);
 
     // A fresh ephemeral thread carries exactly one turn, so no turnId
     // filtering is needed (which also sidesteps any response/notification
@@ -234,7 +266,8 @@ export class AppServerClient extends EventEmitter {
     } finally {
       clearTimeout(timer);
       unsubscribe();
-      this.off("crashed", onCrash);
+      this.off("crashed", onDisconnect);
+      this.off("restarting", onDisconnect);
       opts.signal?.removeEventListener("abort", onAbort);
     }
   }
@@ -287,7 +320,7 @@ export class AppServerClient extends EventEmitter {
       const conn = new JsonRpcStdioConnection(child, {
         onNotification: (method, params) => this.onNotification(method, params),
         onServerRequest: (id, method, params) => this.onServerRequest(id, method, params),
-        onClose: (code) => this.onChildClose(code),
+        onClose: (code) => this.onChildClose(child, code),
       });
 
       this.child = child;
@@ -370,8 +403,15 @@ export class AppServerClient extends EventEmitter {
     }
   }
 
-  private onChildClose(code: number | null): void {
+  private onChildClose(closedChild: ChildProcessWithoutNullStreams | null, code: number | null): void {
+    // A deliberately replaced child may finish closing after its successor is
+    // already running. Never let that stale close event restart the successor.
+    if (closedChild && this.child !== closedChild) return;
     this.conn?.failAllPending(new AppServerCrashedError());
+    if (closedChild) {
+      this.child = null;
+      this.conn = null;
+    }
     // codex-not-found: restarting would respawn the same missing binary forever.
     if (this.stopping || this.stateValue === "stopped" || this.stateValue === "codex-not-found") return;
 
@@ -399,7 +439,7 @@ export class AppServerClient extends EventEmitter {
         })
         .catch((err) => {
           console.error("[aria] app-server restart failed:", err);
-          this.onChildClose(null);
+          this.onChildClose(null, null);
         });
     }, delay);
   }

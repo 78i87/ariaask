@@ -18,6 +18,8 @@ export interface SourceFile {
   origin?: "research";
   /** Original public URL for server-discovered online sources. */
   originUrl?: string;
+  /** Interview projects: candidate CV or job-description material. */
+  kind?: "cv" | "jd";
 }
 
 /** Collision-free, sandbox-safe file name within a notebook's sources dir. */
@@ -279,11 +281,17 @@ export function ensureCoachState(nb: Notebook): CoachState {
   return nb.coach;
 }
 
+/** Interview-project identity collected at creation. */
+export interface InterviewSetup {
+  role: string;
+  company: string | null;
+}
+
 export interface Notebook {
   schemaVersion: 1;
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
   sourceFiles: SourceFile[];
   threadId: string | null;
@@ -320,6 +328,10 @@ export interface Notebook {
   intake?: Intake;
   /** "Ask Cyra" expert conversations (see cyra-session.ts). Absent = none yet. */
   cyraThreads?: CyraThread[];
+  /** A timestamp hides this project from the active section without deleting it. */
+  archivedAt?: string | null;
+  /** Interview practice configuration. Absent on ordinary learning projects. */
+  interview?: InterviewSetup;
   /** The learning-coach conversation. Absent = never opened in the coach shell. */
   coach?: CoachState;
   /**
@@ -335,11 +347,10 @@ export interface Notebook {
   /** The study plan (see journey.ts). Absent = none drafted yet. */
   studyPlan?: StudyPlan;
   /**
-   * "coach" = created from the coach shell: Aria intake init is deferred until
-   * the teach-back view is first opened (GET /:id), so a project that never
-   * launches teach-back never generates intake questions.
+   * Creation path. Both values defer Aria intake until the reverse tutor is
+   * first opened, so a project that never uses teach-back spends no setup turn.
    */
-  createdVia?: "coach";
+  createdVia?: "coach" | "project";
   kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;
@@ -349,12 +360,21 @@ export interface Notebook {
 export interface NotebookSummary {
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
+  interview?: InterviewSetup;
   sourceFiles: SourceFile[];
   createdAt: string;
   lastTaughtAt: string | null;
   messageCount: number;
+  hasCoachChat: boolean;
+  hasTeachBackChat: boolean;
+  hasInterviewChat: boolean;
+  archivedAt: string | null;
+}
+
+export function isInterview(nb: Pick<Notebook, "type">): boolean {
+  return nb.type === "interview";
 }
 
 export function toSummary(nb: Notebook): NotebookSummary {
@@ -364,10 +384,19 @@ export function toSummary(nb: Notebook): NotebookSummary {
     title: nb.title,
     type: nb.type,
     topic: nb.topic,
+    ...(nb.interview ? { interview: nb.interview } : {}),
     sourceFiles: nb.sourceFiles,
     createdAt: nb.createdAt,
     lastTaughtAt: lastMsg ? lastMsg.createdAt : null,
     messageCount: nb.messages.length,
+    hasCoachChat: nb.coach !== undefined,
+    hasTeachBackChat:
+      nb.type !== "interview" &&
+      (nb.intake !== undefined || nb.kickoffDone || nb.messages.length > 0 || nb.threadId !== null),
+    hasInterviewChat:
+      nb.type === "interview" &&
+      (nb.intake !== undefined || nb.kickoffDone || nb.messages.length > 0 || nb.threadId !== null),
+    archivedAt: nb.archivedAt ?? null,
   };
 }
 
@@ -417,7 +446,7 @@ export class NotebookStore {
   }
 
   /** Create the notebook directory structure and register an empty notebook. */
-  async create(fields: { title: string; type: "topic" | "files"; topic: string | null }, id: string = randomUUID()): Promise<Notebook> {
+  async create(fields: { title: string; type: Notebook["type"]; topic: string | null }, id: string = randomUUID()): Promise<Notebook> {
     const now = new Date().toISOString();
     const nb: Notebook = {
       schemaVersion: 1,

@@ -1,7 +1,35 @@
 .session {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* The content column beside the sidebar: app bar + body, same 100dvh column
+   behavior the view had before the sidebar arrived. */
+.session__column {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Quiet ChatGPT-style header: plain page surface (no filled scrolled state),
+   a touch shorter than the default 64px bar. */
+.session .m3-top-app-bar {
+  height: 56px;
+}
+.session .m3-top-app-bar[data-scrolled] {
+  background: var(--md-sys-color-surface);
+}
+
+.session__page-title {
+  margin: 0;
 }
 
 .session__chips {
@@ -49,7 +77,6 @@
   align-items: center;
   gap: 8px;
   color: var(--md-sys-color-on-surface-variant);
-  padding-left: 44px;
 }
 
 .session__error-icon {
@@ -73,6 +100,15 @@
 .session__editing span {
   flex: 1;
   min-width: 0;
+}
+
+.session__end-interview {
+  display: flex;
+  justify-content: flex-end;
+  max-width: var(--aria-chat-max);
+  margin: 0 auto;
+  width: 100%;
+  padding: 4px 24px 0;
 }
 
 .session__jump {
@@ -103,14 +139,16 @@
   flex-direction: column;
 }
 
-/* The app-bar slot for the sources toggle; collapses away with the panel. */
-.session__panel-toggle-slot {
-  display: contents;
-}
-
-/* The knowledge-map chip lives in the app bar, left of the icon actions. */
+/* The knowledge-map chip lives in the app bar, left of the icon actions.
+   A quiet ghost chip like the coach header's: no border, hover wash only. */
 .session__map-chip {
   margin-right: 4px;
+  border-color: transparent;
+}
+.session__map-chip.m3-chip--selected {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border-color: transparent;
 }
 
 /* Phone widths: the trailing slot can't wrap or scroll, so the chip goes
@@ -176,8 +214,7 @@
   .session__chips {
     display: flex;
   }
-  .session__sources-wrap,
-  .session__panel-toggle-slot {
+  .session__sources-wrap {
     display: none;
   }
 }

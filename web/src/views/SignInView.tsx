@@ -23,9 +23,9 @@ export function SignInView() {
   };
 
   return (
-    <div className="signin">
-      <div className="signin__blob signin__blob--primary" />
-      <div className="signin__blob signin__blob--tertiary" />
+    <main className="signin">
+      <div className="signin__blob signin__blob--primary" aria-hidden="true" />
+      <div className="signin__blob signin__blob--tertiary" aria-hidden="true" />
       <div className="signin__stack">
         <h1 className="signin__wordmark display-large">Aria</h1>
         <p className="signin__tagline title-large">Learn anything by teaching it.</p>
@@ -44,6 +44,6 @@ export function SignInView() {
           </Button>
         )}
       </div>
-    </div>
+    </main>
   );
 }

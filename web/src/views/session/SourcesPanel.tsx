@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
+import type { IconName } from "../../components/iconNames";
 import type { Notebook, SourceFile } from "../../lib/types";
 import "./SourcesPanel.css";
 
-export function sourceIcon(f: SourceFile): string {
+export function sourceIcon(f: SourceFile): IconName {
   if (f.origin === "research") return "travel_explore";
   return f.storedName.toLowerCase().endsWith(".pdf") ? "picture_as_pdf" : "description";
 }
@@ -25,9 +26,18 @@ interface SourcesPanelProps {
   ragBuildFailed: boolean;
   onOpenFile: (f: SourceFile) => void;
   onDeleteFile: (f: SourceFile) => void;
+  onAddSource: () => void;
 }
 
-export function SourcesPanel({ notebook, discovering, ragBuilding, ragBuildFailed, onOpenFile, onDeleteFile }: SourcesPanelProps) {
+export function SourcesPanel({
+  notebook,
+  discovering,
+  ragBuilding,
+  ragBuildFailed,
+  onOpenFile,
+  onDeleteFile,
+  onAddSource,
+}: SourcesPanelProps) {
   const [deleteMode, setDeleteMode] = useState(false);
   /** Brief "ready" confirmation after a build finishes while we're watching. */
   const [recallReady, setRecallReady] = useState(false);
@@ -59,26 +69,25 @@ export function SourcesPanel({ notebook, discovering, ragBuilding, ragBuildFaile
   useEffect(() => {
     setDeleteMode(false);
   }, [notebook.id]);
-  // ...and when the last file disappears — the panel renders null then, and
-  // must not reappear in delete mode after files are added again.
+  // ...and when the last file disappears.
   useEffect(() => {
     if (notebook.sourceFiles.length === 0) setDeleteMode(false);
   }, [notebook.sourceFiles.length]);
-
-  // The notebook's topic already titles the app bar — the panel is files-only.
-  if (notebook.sourceFiles.length === 0 && !discovering) return null;
 
   return (
     <aside className="session__sources" aria-label="Source materials">
       <div className="session__sources-header">
         <h2 className="session__sources-heading label-large">Sources</h2>
-        {notebook.sourceFiles.length > 0 && (
-          <IconButton
-            icon={deleteMode ? "close" : "delete"}
-            ariaLabel={deleteMode ? "Done removing sources" : "Remove sources"}
-            onClick={() => setDeleteMode((m) => !m)}
-          />
-        )}
+        <div className="session__sources-actions">
+          <IconButton icon="add" ariaLabel="Add sources" onClick={onAddSource} />
+          {notebook.sourceFiles.length > 0 && (
+            <IconButton
+              icon={deleteMode ? "close" : "delete"}
+              ariaLabel={deleteMode ? "Done removing sources" : "Remove sources"}
+              onClick={() => setDeleteMode((mode) => !mode)}
+            />
+          )}
+        </div>
       </div>
       {discovering ? (
         <div className="session__sources-progress">
@@ -96,6 +105,9 @@ export function SourcesPanel({ notebook, discovering, ragBuilding, ragBuildFaile
           <span className="body-medium">Reading recall ready</span>
         </div>
       ) : null}
+      {!discovering && notebook.sourceFiles.length === 0 && (
+        <div className="session__sources-empty body-medium">Add files or find material online for every chat in this project.</div>
+      )}
       <ul className="session__sources-list">
         {notebook.sourceFiles.map((f) => (
           <li key={f.storedName} className="session__source-li">

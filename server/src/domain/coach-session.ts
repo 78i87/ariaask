@@ -46,10 +46,12 @@ interface CoachSession {
   catchUpNeeded: boolean;
   /** The in-flight turn is the visible kickoff turn. */
   kickoffTurn: boolean;
-  /** A non-empty coach message was persisted during the in-flight turn. */
-  repliedThisTurn: boolean;
+  /** Completed messages since the latest tool call; only the final response is persisted. */
+  responseMessages: { id: string; text: string }[];
   /** Set by interrupt() while a turn is still "starting"; aborts before turn/start. */
   cancelRequested: boolean;
+  /** Cancels pre-stream retrieval/setup work when Stop is pressed. */
+  startAbort: AbortController | null;
   unsubscribe: (() => void) | null;
   watchdog: NodeJS.Timeout | null;
   forceResetTimer: NodeJS.Timeout | null;
@@ -75,6 +77,9 @@ export class CoachSessionManager {
     private usage: UsageStore,
   ) {
     client.on("crashed", () => this.failAllActiveTurns("The coach's connection dropped."));
+    client.on("restarting", () =>
+      this.failAllActiveTurns("The Codex CLI restarted during this response. Please retry."),
+    );
   }
 
   private findCoach(notebookId: string): { nb: Notebook; coach: CoachState } {
@@ -96,7 +101,9 @@ export class CoachSessionManager {
       {
         turnActive: session.state !== "idle",
         turnId: session.turnId,
-        partials: Object.fromEntries(session.partials),
+        // Agent messages are buffered until they are known to be final, so a
+        // reconnect must not surface an operational preamble as chat content.
+        partials: {},
         messageCount: coach.messages.length,
         kickoffDone: coach.kickoffDone,
       },
@@ -114,7 +121,8 @@ export class CoachSessionManager {
   /**
    * Start a coach turn. `kickoff: true` = the visible first turn: no user
    * message is persisted and the hidden kickoff prompt is the input; the
-   * streamed reply lands as an ordinary coach message and flips kickoffDone.
+   * final buffered reply lands as an ordinary coach message and flips
+   * kickoffDone.
    */
   async startTurn(
     notebookId: string,
@@ -146,8 +154,9 @@ export class CoachSessionManager {
     session.partials.clear();
     session.finalizedItems.clear();
     session.cancelRequested = false;
+    session.startAbort = new AbortController();
     session.kickoffTurn = opts.kickoff === true;
-    session.repliedThisTurn = false;
+    session.responseMessages = [];
 
     let userMessageId: string | null = null;
     try {
@@ -163,7 +172,10 @@ export class CoachSessionManager {
 
       if (!opts.kickoff && !opts.retry) {
         // Optimistic persist + SSE echo, rolled back on failure.
-        userMessageId = opts.clientMessageId ?? randomUUID();
+        const idTaken = opts.clientMessageId
+          ? coach.messages.some((message) => message.id === opts.clientMessageId)
+          : false;
+        userMessageId = opts.clientMessageId && !idTaken ? opts.clientMessageId : randomUUID();
         coach.messages.push({ id: userMessageId, role: "user", text, turnId: null, createdAt: new Date().toISOString() });
         coach.updatedAt = new Date().toISOString();
         await this.store.save(nb);
@@ -189,14 +201,15 @@ export class CoachSessionManager {
         sessionBlock = buildSessionBlock(nb, { excludeMessageId: retryMsg?.id ?? userMessageId ?? undefined });
         planBlock = renderPlanBlock(nb);
         if (pendingNotes.length > 0) {
-          notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. The files are in your working directory. Acknowledge naturally if relevant — never mention this note. The user's message follows.]\n\n`;
+          notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. Relevant excerpts are included below when retrieval finds a match. Acknowledge the new material naturally if relevant, but do all inspection silently and never mention this note or narrate tool use. The user's message follows.]\n\n`;
         }
         profileBlock = this.usage.renderProfileBlock();
         const query = buildCoachRagQuery(coach.messages, text);
         [kbBlock, sourcesBlock] = await Promise.all([
-          buildKbBlock(query, renderCoachKbBlock),
+          buildKbBlock(query, renderCoachKbBlock, { signal: session.startAbort?.signal }),
           buildRetrievalBlockWith(this.store, this.settings, nb, query, renderCoachSourcesBlock, {
             excludePendingSources: false,
+            signal: session.startAbort?.signal,
           }),
         ]);
       }
@@ -216,15 +229,25 @@ export class CoachSessionManager {
       session.catchUpNeeded = false;
       session.turnId = turn.id;
       session.state = "streaming";
+      session.startAbort = null;
       this.resetWatchdog(session);
       this.broadcast(session, "turn-started", { turnId: turn.id });
       return { turnId: turn.id };
     } catch (err) {
       session.state = "idle";
+      session.startAbort = null;
+      session.kickoffTurn = false;
+      session.responseMessages = [];
       this.clearWatchdog(session);
-      if (userMessageId) {
+      const cancelled = err instanceof HttpError && err.code === "turn_cancelled";
+      if (userMessageId && !cancelled) {
         const idx = coach.messages.findIndex((m) => m.id === userMessageId);
         if (idx >= 0) coach.messages.splice(idx, 1);
+        await this.store.save(nb).catch(() => {});
+      } else if (userMessageId && cancelled) {
+        // The saved message never reached Codex. Recreate the coach thread on
+        // the next send so catch-up includes this valid stopped message.
+        coach.threadId = null;
         await this.store.save(nb).catch(() => {});
       }
       if (err instanceof HttpError) throw err;
@@ -280,7 +303,7 @@ export class CoachSessionManager {
     this.broadcast(session, "state", {
       turnActive: session.state !== "idle",
       turnId: session.turnId,
-      partials: Object.fromEntries(session.partials),
+      partials: {},
       messageCount: coach.messages.length,
       kickoffDone: coach.kickoffDone,
     });
@@ -294,6 +317,7 @@ export class CoachSessionManager {
     if (!session || !coach || session.state === "idle") return false;
     if (session.state === "starting") {
       session.cancelRequested = true;
+      session.startAbort?.abort();
       return true;
     }
     if (!session.turnId || !coach.threadId) return false;
@@ -339,8 +363,9 @@ export class CoachSessionManager {
         threadGeneration: -1,
         catchUpNeeded: false,
         kickoffTurn: false,
-        repliedThisTurn: false,
+        responseMessages: [],
         cancelRequested: false,
+        startAbort: null,
         unsubscribe: null,
         watchdog: null,
         forceResetTimer: null,
@@ -429,12 +454,15 @@ export class CoachSessionManager {
         const p = params as AgentMessageDeltaNotification;
         if (session.turnId === null || p.turnId !== session.turnId) return;
         session.partials.set(p.itemId, (session.partials.get(p.itemId) ?? "") + p.delta);
-        this.broadcast(session, "delta", { itemId: p.itemId, delta: p.delta });
         return;
       }
       case "item/started": {
         const p = params as ItemNotification;
+        if (session.turnId === null || p.turnId !== session.turnId) return;
         if (p.item.type === "commandExecution") {
+          // Any completed agent message before a tool call is an operational
+          // prelude ("I'll inspect…"), not the answer to persist in chat.
+          session.responseMessages = [];
           this.broadcast(session, "activity", { kind: "reading-sources" });
         } else if (p.item.type === "reasoning") {
           this.broadcast(session, "activity", { kind: "thinking" });
@@ -448,9 +476,7 @@ export class CoachSessionManager {
         const text = typeof p.item.text === "string" ? p.item.text : "";
         session.finalizedItems.add(p.item.id);
         session.partials.delete(p.item.id);
-        void this.persistCoachMessage(session, { id: p.item.id, text, turnId: p.turnId }).catch((err) =>
-          console.error("[aria] persistCoachMessage failed:", err),
-        );
+        session.responseMessages.push({ id: p.item.id, text });
         return;
       }
       case "turn/completed": {
@@ -481,7 +507,6 @@ export class CoachSessionManager {
     const nb = this.store.get(session.notebookId);
     const coach = nb?.coach;
     if (!nb || !coach || !msg.text.trim()) return;
-    session.repliedThisTurn = true;
     coach.messages.push({
       id: msg.id,
       role: "coach",
@@ -508,52 +533,89 @@ export class CoachSessionManager {
   private async onTurnCompleted(session: CoachSession, p: TurnCompletedNotification): Promise<void> {
     this.clearWatchdog(session);
 
-    if (p.turn.status === "interrupted" || p.turn.status === "failed") {
-      for (const [itemId, text] of session.partials) {
-        if (!session.finalizedItems.has(itemId) && text.trim()) {
-          await this.persistCoachMessage(session, { id: itemId, text, turnId: p.turn.id, interrupted: true });
-        }
+    const finalMsg = [...session.responseMessages].reverse().find((message) => message.text.trim());
+    let kickoffEmpty = false;
+    if (p.turn.status === "completed") {
+      if (finalMsg) {
+        await this.persistCoachMessage(session, { id: finalMsg.id, text: finalMsg.text, turnId: p.turn.id });
       }
-    }
-
-    let error =
-      p.turn.status === "failed"
-        ? {
-            message: p.turn.error?.message ?? "The turn failed.",
-            code: typeof p.turn.error?.codexErrorInfo === "string" ? p.turn.error.codexErrorInfo : undefined,
-          }
-        : undefined;
-
-    if (session.kickoffTurn && p.turn.status === "completed") {
-      if (session.repliedThisTurn) {
+      if (session.kickoffTurn && finalMsg) {
         const nb = this.store.get(session.notebookId);
         if (nb?.coach && !nb.coach.kickoffDone) {
           nb.coach.kickoffDone = true;
           await this.store.save(nb);
         }
-      } else if (!error) {
-        // Completed but silent — keep kickoffDone false so a reload retries.
-        error = { message: "The coach didn't reply.", code: undefined };
+      } else if (session.kickoffTurn && !finalMsg) {
+        kickoffEmpty = true;
+      }
+    } else if (!session.kickoffTurn) {
+      const partial = [...session.partials.entries()]
+        .reverse()
+        .find(([itemId, text]) => !session.finalizedItems.has(itemId) && text.trim());
+      if (partial) {
+        await this.persistCoachMessage(session, {
+          id: partial[0],
+          text: partial[1],
+          turnId: p.turn.id,
+          interrupted: true,
+        });
+      } else if (finalMsg) {
+        // A completed response remains valid even when the surrounding turn
+        // later reports interrupted/failed.
+        await this.persistCoachMessage(session, { id: finalMsg.id, text: finalMsg.text, turnId: p.turn.id });
       }
     }
+
+    const error =
+      p.turn.status === "failed"
+        ? {
+            message: p.turn.error?.message ?? "The turn failed.",
+            code: typeof p.turn.error?.codexErrorInfo === "string" ? p.turn.error.codexErrorInfo : undefined,
+          }
+        : kickoffEmpty
+          ? { message: "The coach didn't reply.", code: undefined }
+          : undefined;
     session.kickoffTurn = false;
 
     session.state = "idle";
     session.turnId = null;
     session.partials.clear();
     session.finalizedItems.clear();
+    session.responseMessages = [];
     if (error) this.broadcast(session, "error", { ...error, retryable: true });
-    this.broadcast(session, "turn-completed", { turnId: p.turn.id, status: p.turn.status, error });
+    this.broadcast(session, "turn-completed", {
+      turnId: p.turn.id,
+      status: kickoffEmpty ? "failed" : p.turn.status,
+      error,
+    });
   }
 
   /** Mirrors cyra-session.ts:525-543. */
   private failAllActiveTurns(message: string): void {
     for (const session of this.sessions.values()) {
       if (session.state === "idle") continue;
+      session.cancelRequested = true;
+      session.startAbort?.abort();
+      session.startAbort = null;
       void (async () => {
-        for (const [itemId, text] of session.partials) {
-          if (!session.finalizedItems.has(itemId) && text.trim()) {
-            await this.persistCoachMessage(session, { id: itemId, text, turnId: session.turnId, interrupted: true });
+        if (!session.kickoffTurn) {
+          const partial = [...session.partials.entries()]
+            .reverse()
+            .find(([itemId, text]) => !session.finalizedItems.has(itemId) && text.trim());
+          const finalMsg = [...session.responseMessages].reverse().find((message) => message.text.trim());
+          if (partial) {
+            await this.persistCoachMessage(session, {
+              id: partial[0],
+              text: partial[1],
+              turnId: session.turnId,
+              interrupted: true,
+            });
+          } else if (finalMsg) {
+            await this.persistCoachMessage(session, {
+              id: finalMsg.id,
+              text: finalMsg.text,
+              turnId: session.turnId,
+            });
           }
         }
         session.state = "idle";
@@ -561,6 +623,7 @@ export class CoachSessionManager {
         session.kickoffTurn = false;
         session.partials.clear();
         session.finalizedItems.clear();
+        session.responseMessages = [];
         this.clearWatchdog(session);
         this.broadcast(session, "error", { message, retryable: true });
         this.broadcast(session, "turn-completed", { turnId: null, status: "failed", error: { message } });
@@ -584,15 +647,31 @@ export class CoachSessionManager {
         if (session.state === "idle" || session.turnId !== armedTurnId) return;
         const partials = [...session.partials.entries()];
         const finalized = new Set(session.finalizedItems);
+        const responseMessages = [...session.responseMessages];
+        const wasKickoff = session.kickoffTurn;
         session.state = "idle";
         session.turnId = null;
         session.kickoffTurn = false;
         session.partials.clear();
         session.finalizedItems.clear();
+        session.responseMessages = [];
         void (async () => {
-          for (const [itemId, text] of partials) {
-            if (!finalized.has(itemId) && text.trim()) {
-              await this.persistCoachMessage(session, { id: itemId, text, turnId: armedTurnId, interrupted: true });
+          if (!wasKickoff) {
+            const partial = partials.reverse().find(([itemId, text]) => !finalized.has(itemId) && text.trim());
+            const finalMsg = responseMessages.reverse().find((message) => message.text.trim());
+            if (partial) {
+              await this.persistCoachMessage(session, {
+                id: partial[0],
+                text: partial[1],
+                turnId: armedTurnId,
+                interrupted: true,
+              });
+            } else if (finalMsg) {
+              await this.persistCoachMessage(session, {
+                id: finalMsg.id,
+                text: finalMsg.text,
+                turnId: armedTurnId,
+              });
             }
           }
           this.broadcast(session, "error", { message: "The coach stopped responding.", retryable: true });

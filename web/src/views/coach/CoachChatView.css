@@ -1,5 +1,7 @@
-/* The coach speaks the secondary color family — distinct from the Aria
-   student (surface/primary) and the Cyra expert (tertiary). */
+/* Coach chat, ChatGPT-style: a centered plain-text column. The coach's
+   answer sits directly on the page (no bubble, no per-message avatar); the
+   learner's messages are compact right-aligned pills on a neutral gray wash.
+   Shared session/message classes are overridden only inside .coach-chat. */
 
 .coach-chat {
   flex: 1;
@@ -15,6 +17,97 @@
   padding: 48px 0;
 }
 
+/* Centered reading column with generous side gutters. */
+.coach-chat .session__thread {
+  gap: 20px;
+  max-width: var(--aria-chat-max);
+  padding: 40px 24px 48px;
+}
+
+/* Extra room after a full coach answer, before the next learner pill. */
+.coach-chat .msg--student {
+  margin-bottom: 16px;
+}
+
+/* ---------- coach messages: plain full-column text ---------- */
+
+.coach-chat .msg--student .msg__col {
+  width: 100%;
+  max-width: none;
+}
+
+.coach-chat .msg__bubble--coach {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  max-width: none;
+  color: var(--md-sys-color-on-surface);
+}
+
+.coach-chat .msg__bubble--coach p {
+  margin: 0 0 12px;
+}
+.coach-chat .msg__bubble--coach p:last-child {
+  margin-bottom: 0;
+}
+.coach-chat .msg__bubble--coach ul,
+.coach-chat .msg__bubble--coach ol {
+  margin: 0 0 12px;
+}
+
+/* Code blocks keep a quiet surface so they read as inserts, not cards. */
+.coach-chat .msg__bubble--coach pre {
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+}
+
+.coach-chat .msg__bubble--coach .msg__cursor {
+  background: var(--md-sys-color-on-surface);
+}
+.coach-chat .msg__bubble--coach blockquote {
+  border-left-color: var(--md-sys-color-outline-variant);
+}
+
+/* ---------- learner messages: compact right-aligned pills ---------- */
+
+.coach-chat .msg__col--teacher {
+  max-width: 70%;
+}
+
+.coach-chat .msg__bubble--coach-user {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 10px 16px;
+  white-space: pre-wrap;
+}
+
+/* ---------- quiet icon-only actions (revealed on hover by .msg__actions) ---------- */
+
+.coach-chat .coach-chat__action {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+/* ---------- waiting indicator: dots/label on the page, no bubble ---------- */
+
+.coach-chat .thinking__bubble {
+  background: none;
+  border-radius: 0;
+  padding: 4px 0;
+  min-height: 0;
+}
+
+/* The error row no longer needs to clear a message avatar. */
+.coach-chat .session__error {
+  padding-left: 0;
+}
+
+/* Kept for the waiting indicator — no longer shown per message. */
 .coach-avatar {
   display: flex;
   align-items: center;
@@ -162,17 +255,16 @@
   outline: none;
 }
 
-/* ---------- quiz cards (```quiz fenced blocks) ---------- */
+/* ---------- quiz cards (```quiz fenced blocks): outlined, no fill ---------- */
 
 .quiz {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 10px 0;
-  padding: 14px;
+  margin: 12px 0;
+  padding: 16px;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-large);
-  background: var(--md-sys-color-surface-container-low);
 }
 
 .quiz__question {
@@ -183,7 +275,7 @@
 }
 
 .quiz__question .m3-icon {
-  color: var(--md-sys-color-secondary);
+  color: var(--md-sys-color-on-surface-variant);
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -212,8 +304,7 @@
 
 .quiz__option--correct {
   border-color: var(--md-sys-color-primary);
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  color: var(--md-sys-color-primary);
 }
 
 .quiz__option--wrong {
@@ -233,13 +324,13 @@
   color: var(--md-sys-color-primary);
 }
 
-/* ---------- choice buttons (```choices fenced blocks) ---------- */
+/* ---------- choice buttons (```choices fenced blocks): plain outlined pills ---------- */
 
 .choices {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 10px 0;
+  margin: 12px 0;
 }
 
 .choices__prompt {
@@ -259,15 +350,14 @@
   padding: 10px 18px;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-surface-container-low);
-  color: var(--md-sys-color-primary);
+  background: none;
+  color: var(--md-sys-color-on-surface);
   font: inherit;
   cursor: pointer;
 }
 
 .choices__option:hover:not(:disabled) {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-surface-container);
 }
 
 .choices__option:disabled {
@@ -279,7 +369,6 @@
 }
 
 .choices__option--picked {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
   border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-primary);
 }

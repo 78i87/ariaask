@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Button.css";
 
 interface ButtonProps {
   variant?: "filled" | "tonal" | "text";
-  icon?: string;
+  icon?: IconName;
   disabled?: boolean;
   type?: "button" | "submit";
   destructive?: boolean;

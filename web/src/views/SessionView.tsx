@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
 import { Dialog } from "../components/Dialog";
@@ -11,11 +11,12 @@ import { useSnackbar } from "../components/Snackbar";
 import { api } from "../lib/api";
 import { extractTrailingQuestion } from "../lib/extractQuestion";
 import { useSplitChat } from "../lib/splitChat";
-import { useTheme } from "../lib/theme";
 import { useCyraThreads } from "../lib/useCyraThread";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTeachingSession } from "../lib/useTeachingSession";
 import type { ChatMessage, SourceFile, ThreadSelection } from "../lib/types";
+import { useLearningShell } from "./LearningShell";
+import { ProjectSourcesButton } from "./ProjectSourcesButton";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { Composer } from "./session/Composer";
 import { CyraThreadView } from "./session/CyraThreadView";
@@ -24,17 +25,19 @@ import { KnowledgeMapView } from "./session/KnowledgeMapView";
 import { MessageBubble } from "./session/MessageBubble";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
 import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
-import { ThinkingIndicator } from "./session/ThinkingIndicator";
+import { SetupProgress, ThinkingIndicator } from "./session/ThinkingIndicator";
 import { CyraChips, ThreadBar } from "./session/ThreadBar";
-import { SettingsDialog } from "./settings/SettingsDialog";
 import "./SessionView.css";
 
 const PIN_THRESHOLD = 80;
+const END_INTERVIEW_MESSAGE = "Let's end the interview here — please give me your debrief.";
 
 export function SessionView() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const { theme, toggle } = useTheme();
+  return <NotebookSessionView key={id} id={id!} />;
+}
+
+function NotebookSessionView({ id }: { id: string }) {
   const session = useTeachingSession(id!);
   const {
     notebook,
@@ -58,12 +61,19 @@ export function SessionView() {
     retry,
     updateNotebook,
   } = session;
+  const isInterview = notebook?.type === "interview";
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const didInitialScroll = useRef(false);
   const [showJump, setShowJump] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const {
+    narrow,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    setDrawerOpen,
+    projects: { notebooks: projectSummaries },
+  } = useLearningShell();
   const [addOpen, setAddOpen] = useState(false);
   const [preview, setPreview] = useState<SourceFile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
@@ -81,13 +91,17 @@ export function SessionView() {
   /** Unsent new-question draft; non-null while the provisional chip exists. */
   const [newDraft, setNewDraft] = useState<string | null>(null);
   const [seedSourceMessageId, setSeedSourceMessageId] = useState<string | null>(null);
-  const { threads: cyraThreads, loaded: cyraLoaded, refresh: refreshCyraThreads } = useCyraThreads(id!);
+  const { threads: cyraThreads, loaded: cyraLoaded, refresh: refreshCyraThreads } = useCyraThreads(
+    id!,
+    notebook !== null && notebook.type !== "interview",
+  );
 
   // ---- split chat (Aria left, Cyra right) ----
   const splitChat = useSplitChat();
+  // Below this the sidebar becomes a drawer, mirroring the coach shell.
   // Below this the sources panel is gone too — not enough room for two chats.
   const wideEnough = useMediaQuery("(min-width: 1141px)");
-  const splitActive = splitChat && wideEnough;
+  const splitActive = splitChat && wideEnough && !isInterview;
   const splitActiveRef = useRef(splitActive);
   splitActiveRef.current = splitActive;
   /** Right-pane thread: undefined = follow the newest thread, null = new question. */
@@ -155,6 +169,9 @@ export function SessionView() {
   const onEditMessage = useCallback((m: ChatMessage) => {
     setEditing({ id: m.id, text: m.text });
   }, []);
+  useEffect(() => {
+    if (editing && !messages.some((message) => message.id === editing.id)) setEditing(null);
+  }, [messages, editing]);
 
   const confirmDeleteSource = async () => {
     const target = deleteTarget;
@@ -273,45 +290,53 @@ export function SessionView() {
   const intakePending = intake !== null && intake.status === "pending" && messages.length === 0;
   const busy = status === "waiting" || status === "streaming";
   const waitingLabel =
-    activity === "researching"
-      ? "Aria is finding readings online…"
-      : kickoffRunning
-        ? activity === "reading-sources"
-          ? "Aria is doing the reading…"
-          : "Aria is getting ready…"
-        : undefined;
+    activity?.kind === "evaluating-teaching"
+      ? isInterview
+        ? "Cyra is assessing your answer…"
+        : "Aria is reflecting on what you taught…"
+      : activity?.kind === "reading-sources"
+        ? isInterview
+          ? "Cyra is reviewing your materials…"
+          : "Aria is checking the reading…"
+        : activity?.kind === "writing-response"
+          ? isInterview
+            ? "Cyra is preparing her next question…"
+            : "Aria is forming a response…"
+          : undefined;
+  const projectTitle = projectSummaries?.find((project) => project.id === id)?.title ?? notebook?.title ?? "";
 
   return (
-    <div className="session">
+    <main className="session session__column">
       <TopAppBar
-        leading={<IconButton icon="arrow_back" ariaLabel="Back to your coach" onClick={() => navigate(id ? `/learn/${id}` : "/")} />}
-        headline={<span className="title-large">{notebook?.title ?? ""}</span>}
+        leading={
+          narrow ? (
+            <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />
+          ) : sidebarCollapsed ? (
+            <span className="shell__panel-mirror">
+              <IconButton icon="right_panel_open" ariaLabel="Show sidebar" onClick={() => setSidebarCollapsed(false)} />
+            </span>
+          ) : null
+        }
+        headline={<h1 className="session__page-title title-medium">{projectTitle}</h1>}
         trailing={
           <>
             <Chip
-              icon="hub"
-              label="Your knowledge map"
+              icon={isInterview ? "fact_check" : "hub"}
+              label={isInterview ? "Interview coverage" : "Your knowledge map"}
               selected={mapOpen}
               onClick={toggleMap}
               className="session__map-chip"
             />
-            <IconButton
-              icon="add"
-              ariaLabel="Add sources"
+            <ProjectSourcesButton
+              count={notebook?.sourceFiles.length ?? 0}
+              busy={discovering}
               disabled={status === "loading"}
-              onClick={() => setAddOpen(true)}
+              expanded={wideEnough ? !sourcesCollapsed : undefined}
+              onClick={() => {
+                if (wideEnough) toggleSources(!sourcesCollapsed);
+                else setAddOpen(true);
+              }}
             />
-            <IconButton icon={theme === "dark" ? "light_mode" : "dark_mode"} ariaLabel="Toggle theme" onClick={toggle} />
-            {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
-              <span className="session__panel-toggle-slot">
-                <IconButton
-                  icon={sourcesCollapsed ? "right_panel_open" : "right_panel_close"}
-                  ariaLabel={sourcesCollapsed ? "Show sources panel" : "Hide sources panel"}
-                  onClick={() => toggleSources(!sourcesCollapsed)}
-                />
-              </span>
-            )}
-            <IconButton icon="settings" ariaLabel="Settings" onClick={() => setSettingsOpen(true)} />
           </>
         }
         scrollContainer={scrollerRef.current}
@@ -320,7 +345,7 @@ export function SessionView() {
       <div className="session__body">
         <div className="session__content">
           {/* Full-screen map: no thread switcher — the app-bar chip / Esc exit. */}
-          {!mapOpen && (
+          {notebook && !isInterview && !mapOpen && (
             <ThreadBar active={activeThread} threads={cyraThreads} onSelect={onSelectThread} split={splitActive} />
           )}
 
@@ -341,6 +366,7 @@ export function SessionView() {
                   <IntakeForm
                     questions={intake.questions}
                     submitting={false}
+                    interview={isInterview}
                     onSubmit={(answers) => submitIntake({ answers })}
                     onSkip={() => submitIntake({ skip: true })}
                   />
@@ -350,18 +376,31 @@ export function SessionView() {
                   <MessageBubble
                     key={m.id}
                     message={m}
+                    interviewer={isInterview}
                     onCopy={onCopyMessage}
-                    onAskCyra={onAskCyra}
+                    onAskCyra={isInterview ? undefined : onAskCyra}
                     onEdit={onEditMessage}
                   />
                 ))}
 
-                {status === "waiting" && <ThinkingIndicator label={waitingLabel} />}
+                {status === "waiting" &&
+                  (kickoffRunning ? (
+                    <SetupProgress
+                      activity={activity}
+                      sourceCount={notebook?.sourceFiles.length ?? 0}
+                      interview={isInterview}
+                    />
+                  ) : (
+                    <ThinkingIndicator label={waitingLabel} />
+                  ))}
 
                 {status === "error" && (
                   <div className="session__error">
                     <Icon name="error" size={18} className="session__error-icon" />
-                    <span className="body-medium">{error ?? "The student lost their train of thought."}</span>
+                    <span className="body-medium">
+                      {error ??
+                        (isInterview ? "Cyra lost her train of thought." : "The student lost their train of thought.")}
+                    </span>
                     <Button variant="text" onClick={retry}>
                       Retry
                     </Button>
@@ -386,10 +425,25 @@ export function SessionView() {
                 </Button>
               </div>
             )}
+            {isInterview && !editing && messages.length > 0 && (
+              <div className="session__end-interview">
+                <Button
+                  variant="tonal"
+                  icon="flag"
+                  disabled={busy || status === "loading"}
+                  onClick={() => send(END_INTERVIEW_MESSAGE)}
+                >
+                  End interview
+                </Button>
+              </div>
+            )}
             <Composer
+              variant="floating"
               key={editing ? `edit:${editing.id}` : "normal"}
-              disabled={status === "loading" || status === "error" || kickoffRunning || intakePending}
+              disabled={status === "loading" || kickoffRunning || intakePending || messages.length === 0}
               busy={busy}
+              placeholder={isInterview ? "Answer Cyra…" : undefined}
+              accent={isInterview ? "tertiary" : undefined}
               onSend={(text) => {
                 if (editing) {
                   editMessage(editing.id, text);
@@ -410,7 +464,15 @@ export function SessionView() {
           </div>
         ) : activeThread.kind === "map" ? (
           knowledgeState ? (
-            <KnowledgeMapView state={knowledgeState} />
+            <KnowledgeMapView state={knowledgeState} mode={isInterview ? "interview" : "teach"} />
+          ) : isInterview ? (
+            <div className="session__main">
+              <EmptyState
+                icon="fact_check"
+                headline="No coverage yet"
+                body="The competencies Cyra probes — and how you did on each — appear here once the interview is underway."
+              />
+            </div>
           ) : (
             <div className="session__main">
               <EmptyState
@@ -478,7 +540,7 @@ export function SessionView() {
           </div>
         )}
 
-        {notebook && (notebook.sourceFiles.length > 0 || discovering) && (
+        {notebook && (
           <div className={`session__sources-wrap${sourcesCollapsed ? " session__sources-wrap--closed" : ""}`}>
             <SourcesPanel
               notebook={notebook}
@@ -487,6 +549,7 @@ export function SessionView() {
               ragBuildFailed={ragBuildFailed}
               onOpenFile={setPreview}
               onDeleteFile={setDeleteTarget}
+              onAddSource={() => setAddOpen(true)}
             />
           </div>
         )}
@@ -500,10 +563,15 @@ export function SessionView() {
         <AddSourcesDialog
           open={addOpen}
           notebookId={notebook.id}
-          topicSuggestion={notebook.topic ?? notebook.title}
+          topicSuggestion={
+            isInterview
+              ? `${notebook.interview?.role ?? notebook.title}${notebook.interview?.company ? ` at ${notebook.interview.company}` : ""} interview questions`
+              : (notebook.topic ?? notebook.title)
+          }
           discovering={discovering}
           kickoffRunning={kickoffRunning}
           intakePending={intakePending}
+          interview={isInterview}
           onClose={() => setAddOpen(false)}
           onAdded={updateNotebook}
           onDiscover={discoverSources}
@@ -529,12 +597,9 @@ export function SessionView() {
         }
       >
         <span className="body-medium">
-          <strong>{deleteTarget?.originalName}</strong> will be deleted from this notebook and the student won't be
-          able to read it anymore.
+          <strong>{deleteTarget?.originalName}</strong> will be removed from this project and its chats.
         </span>
       </Dialog>
-
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-    </div>
+    </main>
   );
 }

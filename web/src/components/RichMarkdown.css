@@ -1,0 +1,43 @@
+.rich-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rich-markdown > :first-child,
+.rich-markdown > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.rich-markdown > :last-child,
+.rich-markdown > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.rich-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.rich-markdown th,
+.rich-markdown td {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.rich-markdown a {
+  overflow-wrap: anywhere;
+}
+
+.rich-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+.streaming-markdown__tail {
+  white-space: pre-wrap;
+}

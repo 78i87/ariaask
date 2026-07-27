@@ -15,6 +15,7 @@ import type {
   ReadingSession,
   ReadingSessionSummary,
   CoachMode,
+  CodexCliStatus,
   SettingsResponse,
   SourceFile,
   StudyPlan,
@@ -81,6 +82,14 @@ export const api = {
     }>(`/api/notebooks/${id}`),
   submitIntake: (id: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>
     request<Record<string, never>>(`/api/notebooks/${id}/intake`, json(payload)),
+  renameNotebook: (id: string, title: string) =>
+    request<{ notebook: Notebook }>(`/api/notebooks/${id}`, { ...json({ title }), method: "PATCH" }),
+  updateNotebook: (id: string, patch: { title?: string; archived?: boolean }) =>
+    request<{ notebook: Notebook }>(`/api/notebooks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
   deleteNotebook: (id: string) => request<void>(`/api/notebooks/${id}`, { method: "DELETE" }),
 
   sendMessage: (id: string, text?: string, retry?: boolean, clientMessageId?: string) =>
@@ -166,6 +175,10 @@ export const api = {
 
   /** Raw URL (not a request wrapper) — used by the previewer's iframe and text fetch. */
   sourceUrl: (id: string, storedName: string) => `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`,
+  sourcePreview: (id: string, storedName: string) =>
+    request<{ kind: "markdown" | "text"; content: string; truncated: boolean }>(
+      `/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}/preview`,
+    ),
   addSources: (id: string, form: FormData) =>
     request<{ notebook: Notebook; added: SourceFile[]; warnings: string[] }>(`/api/notebooks/${id}/sources`, {
       method: "POST",
@@ -181,6 +194,14 @@ export const api = {
   getSettings: () => request<SettingsResponse>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) =>
     request<{ settings: AppSettings }>("/api/settings", { ...json(patch), method: "PUT" }),
+
+  getCodexStatus: () => request<CodexCliStatus>("/api/codex/status"),
+  updateCodex: () =>
+    request<CodexCliStatus>("/api/codex/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Aria-Local-Action": "codex-update" },
+      body: "{}",
+    }),
 
   getUsage: () => request<{ usage: Usage }>("/api/usage"),
   updateUsage: (patch: { coachMode: CoachMode }) =>

@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
+import { RichMarkdown, StreamingRichMarkdown } from "../../components/RichMarkdown";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
 import { useCyraThread } from "../../lib/useCyraThread";
@@ -36,15 +35,13 @@ function CyraBubble({ message, onCopy, onEdit }: CyraBubbleProps) {
           {showActions && (
             <div className="msg__actions">
               {onCopy && (
-                <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+                <button type="button" className="msg-action msg-action--icon" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
                   <Icon name="content_copy" size={16} />
-                  <span className="label-medium">Copy</span>
                 </button>
               )}
               {onEdit && (
-                <button type="button" className="msg-action" onClick={() => onEdit(message)}>
+                <button type="button" className="msg-action msg-action--icon" aria-label="Edit" title="Edit" onClick={() => onEdit(message)}>
                   <Icon name="edit" size={16} />
-                  <span className="label-medium">Edit</span>
                 </button>
               )}
             </div>
@@ -56,22 +53,20 @@ function CyraBubble({ message, onCopy, onEdit }: CyraBubbleProps) {
   const streaming = message.status === "streaming";
   return (
     <div className="msg msg--student">
-      <CyraAvatar pulsing={streaming} />
       <div className="msg__col">
         <div className={`msg__bubble msg__bubble--student msg__bubble--cyra body-large`}>
           {streaming ? (
-            <span className="msg__streaming-text">{message.text}</span>
+            <StreamingRichMarkdown>{message.text}</StreamingRichMarkdown>
           ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
+            <RichMarkdown>{message.text}</RichMarkdown>
           )}
           {streaming && <span className="msg__cursor" />}
           {message.interrupted && <div className="msg__interrupted body-medium">interrupted</div>}
         </div>
         {!streaming && onCopy && (
           <div className="msg__actions">
-            <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+            <button type="button" className="msg-action msg-action--icon" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
               <Icon name="content_copy" size={16} />
-              <span className="label-medium">Copy</span>
             </button>
           </div>
         )}
@@ -143,6 +138,10 @@ export function CyraThreadView({
     setEditing(null);
     setFollowUp(""); // a follow-up typed for one conversation must not leak into another
   }, [threadId]);
+
+  useEffect(() => {
+    if (editing && !messages.some((message) => message.id === editing.id)) setEditing(null);
+  }, [messages, editing]);
 
   // An "Ask Cyra" click landed here: cancel any edit (a fresh ask wins the
   // composer), append the question to whatever was already typed, and focus.
@@ -255,8 +254,9 @@ export function CyraThreadView({
         </div>
       )}
       <Composer
+        variant="floating"
         key={isNew ? "new" : editing ? `edit:${editing.id}` : "normal"}
-        disabled={isNew ? creating !== null : status === "loading" || status === "error"}
+        disabled={isNew ? creating !== null : status === "loading"}
         busy={busy}
         onSend={
           isNew

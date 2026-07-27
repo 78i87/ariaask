@@ -4,6 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { extractJsonObject } from "./learning.js";
 import { approxWordCount, extractPdfText } from "./extract.js";
+import { htmlTableToMarkdown, normalizeResearchMarkdown, usefulMediaAlt } from "./source-normalize.js";
 import { sanitizeName, type NotebookStore, type SourceFile } from "./store.js";
 
 /**
@@ -125,6 +126,62 @@ Return at most ${opts.max} sources. Rules:
 
 Output exactly this shape:
 {"sources":[{"title":"short human-readable title","url":"https://...","why":"one short reason this helps the session"}]}`;
+}
+
+/**
+ * Interview-mode variant. Deliberately NOT a query pass-through into
+ * buildDiscoverPrompt: that prompt's "skip forums, social media threads" and
+ * assigned-reading framing actively fight interview research, where candid
+ * forum/Q&A accounts of real interviews are exactly what's wanted.
+ */
+export function buildInterviewDiscoverPrompt(opts: {
+  role: string;
+  company: string | null;
+  note: string | null;
+  query: string | null;
+  manifest: string | null;
+  knownUrls: string[];
+  max: number;
+}): string {
+  const known = opts.knownUrls.length > 0 ? opts.knownUrls.map((u) => `- ${u}`).join("\n") : "None.";
+  const target = `${opts.role}${opts.company ? ` at ${opts.company}` : ""}`;
+  return `You are gathering background material for a simulated job interview. An AI interviewer is
+about to interview a human candidate for: ${target}. Use the web search tool now and return
+real, publicly available URLs that the server can download to prepare the interviewer.
+${opts.query ? `Specific request from the candidate: ${opts.query}` : ""}
+${opts.note ? `The candidate's note about what to find: ${opts.note}` : ""}
+
+Find, in order of value:
+1. Accounts of real interview experiences and commonly asked questions for ${target} —
+   candid first-person accounts and substantive Q&A or forum threads count, as long as the
+   page is openly accessible.
+2. ${opts.company ? `Background on ${opts.company} and this team — engineering/company blog posts, product or values pages with real substance.` : "Background on how companies typically run interviews for this role."}
+3. Role-specific preparation guides or question banks.
+${
+  opts.manifest
+    ? `
+The interviewer already has these materials:
+
+${opts.manifest}
+
+Find pages that complement them — do not duplicate what is already there.`
+    : ""
+}
+
+Already saved URLs, which you must not repeat:
+${known}
+
+Return at most ${opts.max} sources. Rules:
+- Every URL must come from this turn's web search results. Do not rely on memory alone.
+- Substantive text-first pages only. Skip videos, podcasts, search result pages, home
+  pages, landing pages, and pages that are mostly product copy.
+- Skip paywalls and login-gated pages (most Glassdoor and Blind pages are — prefer openly
+  readable alternatives).
+- Use at most two sources from the same site.
+- Output ONLY JSON. No prose, no markdown fence.
+
+Output exactly this shape:
+{"sources":[{"title":"short human-readable title","url":"https://...","why":"one short reason this helps the interview"}]}`;
 }
 
 export function parseDiscoveredSources(raw: string, max: number): DiscoveredSource[] | null {
@@ -383,7 +440,12 @@ export function truncateWords(text: string, url: string): string {
   return `${clipped.trim()}\n\n[Truncated - full text at ${url}]`;
 }
 
-async function fetchSourcePage(url: string, fallbackTitle: string, signal?: AbortSignal): Promise<DownloadedContent> {
+async function fetchSourcePage(
+  url: string,
+  fallbackTitle: string,
+  signal?: AbortSignal,
+  opts: { minWords?: number } = {},
+): Promise<DownloadedContent> {
   const { response, url: finalUrl } = await fetchWithRedirects(url, signal);
   const contentType = response.headers.get("content-type") ?? "";
   const bytes = await readCapped(response);
@@ -409,11 +471,15 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
     const dom = new JSDOM(bytes, { url: finalUrl });
     try {
       const article = new Readability(dom.window.document).parse();
-      if (!article || !article.textContent || approxWordCount(article.textContent) < MIN_KEEP_WORDS) {
+      if (!article || !article.textContent || approxWordCount(article.textContent) < (opts.minWords ?? MIN_KEEP_WORDS)) {
         throw new Error("no readable article text");
       }
       const title = cleanTitle(article.title || dom.window.document.title, fallback);
       const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+      turndown.addRule("tables", {
+        filter: ["table"],
+        replacement: (_content, node) => htmlTableToMarkdown(node as unknown as Element),
+      });
       turndown.addRule("dropMedia", {
         filter: ["img", "picture", "source", "svg", "video", "audio", "iframe", "object", "embed", "canvas"],
         replacement: (_content, node) => {
@@ -421,13 +487,13 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
           // short alt as plain text so formulas survive; data-URI bloat lives
           // in src, never alt, so the original fix is preserved.
           if (node.nodeName === "IMG") {
-            const alt = (node.getAttribute("alt") ?? "").trim();
-            if (alt && alt.length <= 400) return ` ${alt} `;
+            const alt = usefulMediaAlt(node.getAttribute("alt") ?? "");
+            if (alt) return ` ${alt} `;
           }
           return "";
         },
       });
-      const markdown = stripMediaMarkdown(turndown.turndown(article.content || article.textContent));
+      const markdown = normalizeResearchMarkdown(stripMediaMarkdown(turndown.turndown(article.content || article.textContent)));
       return {
         title,
         url: finalUrl,
@@ -447,7 +513,7 @@ async function fetchSourcePage(url: string, fallbackTitle: string, signal?: Abor
     final.pathname.toLowerCase().endsWith(".md")
   ) {
     const title = fallback;
-    const text = stripMediaMarkdown(decodeText(bytes, contentType));
+    const text = normalizeResearchMarkdown(stripMediaMarkdown(decodeText(bytes, contentType)));
     return {
       title,
       url: finalUrl,
@@ -506,11 +572,13 @@ export async function downloadDiscoveredSources(
   opts: {
     signal?: AbortSignal;
     onSource?: (nb: NonNullable<ReturnType<NotebookStore["get"]>>, file: SourceFile) => void | Promise<void>;
+    onProgress?: (completed: number, total: number) => void | Promise<void>;
   } = {},
 ): Promise<{ added: SourceFile[]; failures: DiscoverFailure[] }> {
   const added: SourceFile[] = [];
   const failures: DiscoverFailure[] = [];
 
+  let completed = 0;
   for (const src of sources) {
     if (opts.signal?.aborted) break;
     const nb = store.get(notebookId);
@@ -595,8 +663,74 @@ export async function downloadDiscoveredSources(
       added.push(file);
     } catch (err) {
       failures.push(failure(src.url, err));
+    } finally {
+      completed += 1;
+      await opts.onProgress?.(completed, sources.length);
     }
   }
 
   return { added, failures };
+}
+
+/** Sanity floor for a fetched job posting — enough to reject cookie walls and empty shells. */
+const JD_MIN_WORDS = 30;
+
+/**
+ * Interview mode: fetch a user-provided job-posting URL at notebook creation
+ * and write it into the sources dir as the job description. Single URL, same
+ * SSRF/redirect/size guards as discovery, but no discovery-grade minimum
+ * length (a terse posting is still the posting) and flagged kind: "jd".
+ * Throws on failure — the caller downgrades it to a creation warning.
+ */
+export async function downloadJobDescriptionFile(
+  sourcesDir: string,
+  url: string,
+  usedNames: Set<string>,
+): Promise<SourceFile> {
+  const requested = canonicalUrl(rewriteKnownUrl(new URL(url))).toString();
+  const signal = AbortSignal.timeout(SOURCE_BUDGET_MS);
+  const content = await fetchSourcePage(requested, "Job description", signal, { minWords: JD_MIN_WORDS });
+  const finalUrl = canonicalUrl(new URL(content.url)).toString();
+
+  if (content.kind === "pdf") {
+    const bytes = content.bytes!;
+    const storedName = sanitizeName("job-description.pdf", usedNames);
+    const pdfPath = path.join(sourcesDir, storedName);
+    await fs.writeFile(pdfPath, bytes);
+    // Extraction failure keeps the PDF (mirrors uploads): the kickoff read may
+    // still manage, and the preview shows the original either way.
+    const extracted = await extractPdfText(pdfPath);
+    let extractedName: string | null = null;
+    let approxWords: number | null = null;
+    if (extracted && extracted.trim()) {
+      extractedName = reserveExtractedName(storedName, usedNames);
+      const extractedText = truncateWords(extracted, finalUrl);
+      await fs.writeFile(path.join(sourcesDir, extractedName), extractedText, "utf8");
+      approxWords = approxWordCount(extractedText);
+    }
+    return {
+      originalName: "Job description",
+      storedName,
+      extractedName,
+      mimeType: "application/pdf",
+      size: bytes.byteLength,
+      approxWords,
+      originUrl: finalUrl,
+      kind: "jd",
+    };
+  }
+
+  const text = content.text!;
+  const storedName = sanitizeName("job-description.md", usedNames);
+  await fs.writeFile(path.join(sourcesDir, storedName), text, "utf8");
+  return {
+    originalName: "Job description",
+    storedName,
+    extractedName: null,
+    mimeType: "text/markdown",
+    size: Buffer.byteLength(text, "utf8"),
+    approxWords: approxWordCount(text),
+    originUrl: finalUrl,
+    kind: "jd",
+  };
 }

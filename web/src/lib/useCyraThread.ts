@@ -20,7 +20,7 @@ export interface CyraThreadSession {
 const STREAMING_ID_PREFIX = "streaming:";
 
 /** The notebook's list of Cyra conversations, newest first. */
-export function useCyraThreads(notebookId: string): {
+export function useCyraThreads(notebookId: string, enabled = true): {
   threads: CyraThreadSummary[];
   /** True once the first fetch settles — gates UI that picks a default thread. */
   loaded: boolean;
@@ -29,6 +29,7 @@ export function useCyraThreads(notebookId: string): {
   const [threads, setThreads] = useState<CyraThreadSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const refresh = useCallback(async () => {
+    if (!enabled) return;
     try {
       const res = await api.listCyraThreads(notebookId);
       setThreads([...res.threads].reverse());
@@ -37,7 +38,7 @@ export function useCyraThreads(notebookId: string): {
     } finally {
       setLoaded(true);
     }
-  }, [notebookId]);
+  }, [notebookId, enabled]);
   useEffect(() => {
     setThreads([]);
     setLoaded(false);
@@ -261,6 +262,10 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       setStatus("waiting");
       void api.sendCyraMessage(notebookId, threadId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
         if (err instanceof ApiError && err.code === "turn_active") return; // SSE will drive the UI
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setStatus("idle");
+          return;
+        }
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
         knownIds.current.delete(optimisticId);
         persistedCount.current -= 1;
@@ -293,6 +298,10 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
         (err) => {
           // A rejected edit leaves this tab's optimistic truncation wrong — resync.
           void loadThread().catch(() => {});
+          if (err instanceof ApiError && err.code === "turn_cancelled") {
+            setStatus("idle");
+            return;
+          }
           setStatus("error");
           setError(err instanceof Error ? err.message : "Couldn't edit the message");
         },

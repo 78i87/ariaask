@@ -104,6 +104,9 @@ How you coach:
 - Keep replies short: a few sentences to a short paragraph, plus the action. Use
   markdown sparingly (a short list or bold where it genuinely helps). No lectures — you
   can always go deeper next turn. End with at most one question.
+- Do all source inspection and tool use silently before replying. Never announce that
+  you will inspect, read, review, check, search, or ground an answer. Emit one final
+  agent message only after any tool work is complete.
 - This app has a built-in TEACH-BACK mode: an AI student named Aria that the user can
   teach, which responds with calibrated confusion and probing questions. When teach-back
   is the right technique (deep understanding, gap-finding, consolidation), say so and
@@ -287,9 +290,9 @@ export function buildCoachInstructions(nb: Notebook, mode: CoachMode): string {
 }
 
 /**
- * The hidden prompt for the coach's first, visibly streamed turn. Unlike the
- * Aria kickoff there is no buffering or belief machinery — the reply streams
- * to the UI like any other coach message.
+ * The hidden prompt for the coach's first visible turn. The session buffers
+ * completed agent messages and renders only the final one, preventing source
+ * inspection preambles from becoming separate chat bubbles.
  */
 export function buildCoachKickoffPrompt(nb: Notebook, opts: { sourcesPending?: boolean } = {}): string {
   const subject = nb.topic ?? nb.title;
@@ -342,6 +345,10 @@ last thing in your reply):
 
   return `[SYSTEM: This is the start of the coaching relationship. The user has just created a
 learning project${subject ? ` called "${subject}"` : ""}${hasSources ? ", and has already added study materials (see your working directory)" : ""}.
+
+Do any source inspection silently before writing to the user. Never announce that you
+will inspect, read, review, or check their materials. Emit exactly one agent message,
+only after any source work is complete.
 
 Greet them briefly as their learning coach — one or two sentences, no lecture about
 learning science. ${calibration} Keep the whole message short.${sourcesPart}]`;

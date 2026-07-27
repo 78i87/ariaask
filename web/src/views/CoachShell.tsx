@@ -1,89 +1,106 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
+import { Chip } from "../components/Chip";
 import { Dialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
-import { Icon } from "../components/Icon";
 import { IconButton } from "../components/IconButton";
-import { Menu } from "../components/Menu";
 import { ProgressIndicator } from "../components/ProgressIndicator";
 import { useSnackbar } from "../components/Snackbar";
+import { TopAppBar } from "../components/TopAppBar";
 import { api } from "../lib/api";
-import { useAuth } from "../lib/auth";
-import { useMediaQuery } from "../lib/useMediaQuery";
-import { useNotebooks } from "../lib/useNotebooks";
-import { useTheme } from "../lib/theme";
-import type { DueTopic, GlobalDueTopic, LearningLogEntry, Notebook, StudyPlan } from "../lib/types";
 import { PLAN_REQUEST_MESSAGE, quickReturnMessage, startTaskMessage } from "../lib/journeyMessages";
+import type { DueTopic, LearningLogEntry, SourceFile, StudyPlan } from "../lib/types";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { CoachChatView } from "./coach/CoachChatView";
 import { CoachActionsContext, type CoachActions } from "./coach/coachActions";
 import { JourneyContext, type Journey } from "./coach/journeyContext";
 import { JourneyDialog } from "./coach/JourneyDialog";
-import { CreateNotebookDialog } from "./home/CreateNotebookDialog";
 import { SourcesDialog } from "./coach/SourcesDialog";
+import { requestNewProject } from "./CoachSidebar";
+import { useLearningShell } from "./LearningShell";
+import { ProjectSourcesButton } from "./ProjectSourcesButton";
 import { ReadingDialog } from "./reading/ReadingDialog";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
-import { SettingsDialog } from "./settings/SettingsDialog";
+import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
+import { sourceIcon, SourcesPanel } from "./session/SourcesPanel";
 import "./CoachShell.css";
 
 /**
- * The app's front door: a chatbot-style shell with the learning projects in a
- * left sidebar and the selected project's coach conversation as the main
- * pane. Teach-back (the Aria student, /notebook/:id) is one technique the
- * coach can recommend — launched from the header, returning here after.
+ * The coach conversation inside the persistent project shell. The same
+ * project sources are available to coaching, reverse tutoring and interview
+ * practice; the top-right Sources control owns the desktop panel toggle.
  */
 export function CoachShell() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { state, logout } = useAuth();
-  const { theme, toggle } = useTheme();
-  const { notebooks, error, create, remove, refresh } = useNotebooks();
+  const {
+    narrow,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    setDrawerOpen,
+    refreshSidebarReadings,
+    projects: { notebooks, refresh },
+  } = useLearningShell();
   const snackbar = useSnackbar();
-  const narrow = useMediaQuery("(max-width: 900px)");
+  const sourcesPanelAvailable = useMediaQuery("(min-width: 1141px)");
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourcesHubOpen, setSourcesHubOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [readingOpen, setReadingOpen] = useState(false);
-  /** Set by the sources hub: open the new-reading form preselected to this source. */
   const [readingPreselect, setReadingPreselect] = useState<string | null>(null);
   const [journeyOpen, setJourneyOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
-  const accountAnchor = useRef<HTMLButtonElement>(null);
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [ragBuilding, setRagBuilding] = useState(false);
+  const [ragBuildFailed, setRagBuildFailed] = useState(false);
+  const [preview, setPreview] = useState<SourceFile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(
+    () => localStorage.getItem("aria-sources-collapsed") === "1",
+  );
 
-  const email = state.phase === "signed-in" ? state.email : undefined;
-  const current = useMemo(() => notebooks?.find((n) => n.id === id) ?? null, [notebooks, id]);
+  const current = useMemo(
+    () => notebooks?.find((notebook) => notebook.id === id && !notebook.archivedAt) ?? null,
+    [notebooks, id],
+  );
 
-  // Live source updates: link ingestion, uploads from other tabs, and online
-  // discovery all announce on the notebook's teach-back SSE channel — keep
-  // the sources chip and dialogs fresh without manual refreshes.
+  // Link ingestion, uploads from other tabs and online discovery all announce
+  // on the project SSE channel. Keep every source surface in sync.
   useEffect(() => {
     if (!id) return;
     setDiscovering(false);
     const es = new EventSource(api.notebookEventsUrl(id));
     const onRefresh = () => void refresh();
+    es.addEventListener("open", onRefresh, { once: true });
     es.addEventListener("sources-updated", onRefresh);
-    es.addEventListener("discover-completed", (e) => {
+    es.addEventListener("discover-completed", (event) => {
       onRefresh();
       setDiscovering(false);
       try {
-        const data = JSON.parse((e as MessageEvent).data) as { added?: unknown[]; failures?: unknown[] };
-        const n = data.added?.length ?? 0;
-        snackbar.show(n > 0 ? `Found ${n} source${n === 1 ? "" : "s"} online` : "The search found no usable sources");
+        const data = JSON.parse((event as MessageEvent).data) as { added?: unknown[] };
+        const count = data.added?.length ?? 0;
+        snackbar.show(
+          count > 0
+            ? `Found ${count} source${count === 1 ? "" : "s"} online`
+            : "The search found no usable sources",
+        );
       } catch {
-        /* refresh already happened */
+        // The source refresh above is the important part.
       }
     });
-    es.addEventListener("state", (e) => {
+    es.addEventListener("state", (event) => {
       try {
-        const data = JSON.parse((e as MessageEvent).data) as { discoveryRunning?: boolean };
+        const data = JSON.parse((event as MessageEvent).data) as {
+          discoveryRunning?: boolean;
+          ragBuilding?: boolean;
+          ragBuildFailed?: boolean;
+        };
         if (typeof data.discoveryRunning === "boolean") setDiscovering(data.discoveryRunning);
+        if (typeof data.ragBuilding === "boolean") setRagBuilding(data.ragBuilding);
+        if (typeof data.ragBuildFailed === "boolean") setRagBuildFailed(data.ragBuildFailed);
       } catch {
-        /* ignore */
+        // Ignore malformed transient state.
       }
     });
     return () => es.close();
@@ -96,33 +113,34 @@ export function CoachShell() {
         if (!id) return;
         setDiscovering(true);
         const query = current?.topic ?? current?.title ?? "";
-        void api.discoverSources(id, query ? { query } : {}).catch((err) => {
+        void api.discoverSources(id, query ? { query } : {}).catch((error) => {
           setDiscovering(false);
-          snackbar.show(err instanceof Error ? err.message : "Couldn't start the search");
+          snackbar.show(error instanceof Error ? error.message : "Couldn't start the search");
         });
       },
     }),
     [id, current, snackbar],
   );
 
-  // The current project's learning log + due returns, shared via JourneyContext
-  // with the Journey dialog and the chat's in-message log cards.
   const [logEntries, setLogEntries] = useState<LearningLogEntry[]>([]);
   const [dueTopics, setDueTopics] = useState<DueTopic[]>([]);
   const [studyPlan, setStudyPlan] = useState<StudyPlan | null>(null);
-  const [globalDue, setGlobalDue] = useState<GlobalDueTopic[]>([]);
+
   const refreshJourney = useCallback(() => {
-    api.getGlobalDue().then((res) => setGlobalDue(res.due), () => {});
     if (!id) return;
     api.getLog(id).then(
-      (res) => {
-        setLogEntries(res.entries);
-        setDueTopics(res.due);
+      (result) => {
+        setLogEntries(result.entries);
+        setDueTopics(result.due);
       },
       () => {},
     );
-    api.getPlan(id).then((res) => setStudyPlan(res.plan), () => {});
+    api.getPlan(id).then(
+      (result) => setStudyPlan(result.plan),
+      () => {},
+    );
   }, [id]);
+
   useEffect(() => {
     setLogEntries([]);
     setDueTopics([]);
@@ -138,186 +156,137 @@ export function CoachShell() {
       refresh: refreshJourney,
       addEntry: async (body) => {
         if (!id) throw new Error("No project selected");
-        const res = await api.addLogEntry(id, body);
-        setLogEntries((prev) => (prev.some((e) => e.id === res.entry.id) ? prev : [...prev, res.entry]));
-        setDueTopics(res.due);
-        return res.entry;
+        const result = await api.addLogEntry(id, body);
+        setLogEntries((previous) =>
+          previous.some((entry) => entry.id === result.entry.id) ? previous : [...previous, result.entry],
+        );
+        setDueTopics(result.due);
+        return result.entry;
       },
       savePlan: async (body) => {
         if (!id) throw new Error("No project selected");
-        const res = await api.savePlan(id, body);
-        setStudyPlan(res.plan);
-        return res.plan;
+        const result = await api.savePlan(id, body);
+        setStudyPlan(result.plan);
+        return result.plan;
       },
-      setTaskStatus: async (taskId, taskStatus) => {
+      setTaskStatus: async (taskId, status) => {
         if (!id) throw new Error("No project selected");
-        const res = await api.updatePlanTask(id, taskId, taskStatus);
-        setStudyPlan(res.plan);
+        const result = await api.updatePlanTask(id, taskId, status);
+        setStudyPlan(result.plan);
       },
     }),
     [id, logEntries, dueTopics, studyPlan, refreshJourney],
   );
 
-  /** Post a canonical journey message into the coach chat and close the dialog. */
   const sendJourneyMessage = (text: string) => {
     if (!id) return;
     setJourneyOpen(false);
     void api
       .sendCoachMessage(id, { text, clientMessageId: crypto.randomUUID() })
-      .catch((err) => snackbar.show(err instanceof Error ? err.message : "Couldn't reach the coach"));
+      .catch((error) => snackbar.show(error instanceof Error ? error.message : "Couldn't reach the coach"));
   };
-  const startQuickReturn = (topic: string) => sendJourneyMessage(quickReturnMessage(topic));
 
-  // "/" (or a stale id) lands on the most recent project once the list loads.
+  const toggleSources = (collapsed: boolean) => {
+    setSourcesCollapsed(collapsed);
+    localStorage.setItem("aria-sources-collapsed", collapsed ? "1" : "0");
+  };
+
+  const confirmDeleteSource = async () => {
+    if (!current || !deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await api.deleteSource(current.id, deleteTarget.storedName);
+      setDeleteTarget(null);
+      await refresh();
+      snackbar.show(`Removed "${deleteTarget.originalName}"`);
+    } catch (error) {
+      snackbar.show(error instanceof Error ? error.message : "Couldn't remove the source");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // "/" and stale ids resolve to the newest active project.
   useEffect(() => {
     if (notebooks === null) return;
-    if ((!id || !notebooks.some((n) => n.id === id)) && notebooks.length > 0) {
-      navigate(`/learn/${notebooks[0]!.id}`, { replace: true });
+    const active = notebooks.filter((notebook) => !notebook.archivedAt);
+    if ((!id || !active.some((notebook) => notebook.id === id)) && active.length > 0) {
+      navigate(`/project/${active[0]!.id}`, { replace: true });
     }
   }, [id, notebooks, navigate]);
 
-  useEffect(() => setDrawerOpen(false), [id]); // picking a project closes the mobile drawer
-
-  const confirmDelete = async () => {
-    const target = deleteTarget;
-    setDeleteTarget(null);
-    if (!target) return;
-    try {
-      await remove(target.id);
-      if (target.id === id) navigate("/", { replace: true });
-    } catch {
-      snackbar.show("Couldn't delete the project", { actionLabel: "Retry", onAction: () => void refresh() });
-    }
-  };
-
-  const sidebar = (
-    <aside className={`shell__sidebar${narrow ? (drawerOpen ? " shell__sidebar--open" : " shell__sidebar--hidden") : ""}`}>
-      <div className="shell__brand">
-        <Icon name="psychology" size={22} className="shell__brand-icon" />
-        <span className="title-medium">Aria</span>
-        <span className="shell__brand-sub label-medium">learning coach</span>
-      </div>
-
-      <div className="shell__new">
-        <Button icon="add" onClick={() => setCreateOpen(true)}>
-          New learning project
-        </Button>
-      </div>
-
-      {globalDue.length > 0 && (
-        <div className="shell__due">
-          <span className="shell__due-label label-medium">Worth a quick return</span>
-          {globalDue.map((d) => (
-            <button
-              key={`${d.notebookId}:${d.topic}`}
-              type="button"
-              className="shell__due-chip"
-              onClick={() => navigate(`/learn/${d.notebookId}`)}
-              title={`${d.topic} — ${d.daysSince} days since, in ${d.notebookTitle}`}
-            >
-              <Icon name="history_edu" size={16} />
-              <span className="shell__due-topic label-large">{d.topic}</span>
-              <span className="shell__due-meta label-medium">
-                {d.daysSince}d · {d.notebookTitle}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <nav className="shell__projects" aria-label="Learning projects">
-        {notebooks === null && !error && (
-          <div className="shell__projects-loading">
-            <ProgressIndicator size={24} />
-          </div>
-        )}
-        {error && <span className="shell__projects-error body-medium">{error}</span>}
-        {notebooks?.map((nb) => (
-          <div key={nb.id} className={`shell__project${nb.id === id ? " shell__project--active" : ""}`}>
-            <button type="button" className="shell__project-open" onClick={() => navigate(`/learn/${nb.id}`)}>
-              <span className="shell__project-title body-large">{nb.title}</span>
-            </button>
-            <span className="shell__project-delete">
-              <IconButton icon="delete" ariaLabel={`Delete ${nb.title}`} onClick={() => setDeleteTarget(nb)} />
-            </span>
-          </div>
-        ))}
-      </nav>
-
-      <footer className="shell__footer">
-        <IconButton icon={theme === "dark" ? "light_mode" : "dark_mode"} ariaLabel="Toggle theme" onClick={toggle} />
-        <IconButton icon="settings" ariaLabel="Settings" onClick={() => setSettingsOpen(true)} />
-        <button
-          ref={accountAnchor}
-          type="button"
-          className="shell__account"
-          onClick={() => setAccountOpen(true)}
-          aria-label="Account"
-          title={email}
-        >
-          <span className="shell__avatar label-large">{(email?.[0] ?? "?").toUpperCase()}</span>
-        </button>
-        <Menu
-          open={accountOpen}
-          onClose={() => setAccountOpen(false)}
-          anchorRef={accountAnchor}
-          header={
-            email && (
-              <div className="shell__account-id">
-                <span className="body-medium">{email}</span>
-                {state.phase === "signed-in" && state.planType && (
-                  <span className="shell__account-plan body-medium">{state.planType} plan</span>
-                )}
-              </div>
-            )
-          }
-          items={[{ icon: "logout", label: "Sign out", onSelect: () => void logout() }]}
-        />
-      </footer>
-    </aside>
-  );
+  const showSidebarButton = narrow ? (
+    <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />
+  ) : sidebarCollapsed ? (
+    <span className="shell__panel-mirror">
+      <IconButton icon="right_panel_open" ariaLabel="Show sidebar" onClick={() => setSidebarCollapsed(false)} />
+    </span>
+  ) : null;
 
   return (
-    <div className="shell">
-      {sidebar}
-      {narrow && drawerOpen && <div className="shell__scrim" onClick={() => setDrawerOpen(false)} />}
-
+    <>
       <main className="shell__main">
         {current ? (
           <>
-            <header className="shell__header">
-              {narrow && <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />}
-              <h1 className="shell__title title-medium">{current.title}</h1>
-              <div className="shell__header-actions">
-                <button type="button" className="shell__chip label-large" onClick={() => setSourcesHubOpen(true)}>
-                  <Icon name="library_books" size={18} />
-                  <span className="shell__chip-label">Sources</span>
-                  {current.sourceFiles.length > 0 && <span className="shell__chip-count">{current.sourceFiles.length}</span>}
-                </button>
-                <button type="button" className="shell__chip label-large" onClick={() => setJourneyOpen(true)}>
-                  <Icon name="timeline" size={18} />
-                  <span className="shell__chip-label">Journey</span>
-                  {dueTopics.length > 0 && <span className="shell__chip-count">{dueTopics.length}</span>}
-                </button>
-                <button type="button" className="shell__chip label-large" onClick={() => setReadingOpen(true)}>
-                  <Icon name="auto_stories" size={18} />
-                  <span className="shell__chip-label">Guided reading</span>
-                </button>
-                <button
-                  type="button"
-                  className="shell__chip shell__chip--teach label-large"
-                  onClick={() => navigate(`/notebook/${current.id}`)}
-                >
-                  <Icon name="school" size={18} />
-                  <span className="shell__chip-label">Teach it back</span>
-                </button>
+            <TopAppBar
+              leading={showSidebarButton}
+              headline={<h1 className="shell__page-title title-medium">{current.title}</h1>}
+              trailing={
+                <>
+                  <Chip
+                    icon="timeline"
+                    label={dueTopics.length > 0 ? `Journey · ${dueTopics.length}` : "Journey"}
+                    onClick={() => setJourneyOpen(true)}
+                  />
+                  <Chip icon="auto_stories" label="Guided reading" onClick={() => setReadingOpen(true)} />
+                  <ProjectSourcesButton
+                    count={current.sourceFiles.length}
+                    busy={discovering}
+                    expanded={sourcesPanelAvailable ? !sourcesCollapsed : undefined}
+                    onClick={() => {
+                      if (sourcesPanelAvailable) toggleSources(!sourcesCollapsed);
+                      else setSourcesHubOpen(true);
+                    }}
+                  />
+                </>
+              }
+            />
+
+            <div className="session__body">
+              <div className="session__content">
+                {current.sourceFiles.length > 0 || discovering ? (
+                  <div className="session__chips">
+                    {current.sourceFiles.map((source) => (
+                      <Chip
+                        key={source.storedName}
+                        icon={sourceIcon(source)}
+                        label={source.originalName}
+                        onClick={() => setPreview(source)}
+                      />
+                    ))}
+                    {discovering && <Chip icon="travel_explore" label="Finding sources…" />}
+                  </div>
+                ) : null}
+
+                <CoachActionsContext.Provider value={coachActions}>
+                  <JourneyContext.Provider value={journey}>
+                    <CoachChatView key={current.id} notebookId={current.id} />
+                  </JourneyContext.Provider>
+                </CoachActionsContext.Provider>
               </div>
-            </header>
-            <CoachActionsContext.Provider value={coachActions}>
-              <JourneyContext.Provider value={journey}>
-                <CoachChatView notebookId={current.id} />
-              </JourneyContext.Provider>
-            </CoachActionsContext.Provider>
+
+              <div className={`session__sources-wrap${sourcesCollapsed ? " session__sources-wrap--closed" : ""}`}>
+                <SourcesPanel
+                  notebook={current}
+                  discovering={discovering}
+                  ragBuilding={ragBuilding}
+                  ragBuildFailed={ragBuildFailed}
+                  onOpenFile={setPreview}
+                  onDeleteFile={setDeleteTarget}
+                  onAddSource={() => setSourcesOpen(true)}
+                />
+              </div>
+            </div>
           </>
         ) : notebooks === null ? (
           <div className="shell__empty">
@@ -325,17 +294,13 @@ export function CoachShell() {
           </div>
         ) : (
           <div className="shell__empty">
-            {narrow && (
-              <div className="shell__empty-menu">
-                <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />
-              </div>
-            )}
+            {showSidebarButton && <div className="shell__empty-menu">{showSidebarButton}</div>}
             <EmptyState
               icon="psychology"
               headline="What do you want to learn?"
               body="Your coach helps you learn anything — the right technique for the right task, at the right stage."
               action={
-                <Button icon="add" onClick={() => setCreateOpen(true)}>
+                <Button variant="tonal" icon="add" onClick={requestNewProject}>
                   New learning project
                 </Button>
               }
@@ -343,18 +308,6 @@ export function CoachShell() {
           </div>
         )}
       </main>
-
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-
-      <CreateNotebookDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreate={create}
-        onCreated={(nb) => {
-          setCreateOpen(false);
-          navigate(`/learn/${nb.id}`);
-        }}
-      />
 
       {current && (
         <ReadingDialog
@@ -364,6 +317,7 @@ export function CoachShell() {
           onClose={() => {
             setReadingOpen(false);
             setReadingPreselect(null);
+            refreshSidebarReadings();
           }}
         />
       )}
@@ -374,7 +328,7 @@ export function CoachShell() {
             open={journeyOpen}
             notebookId={current.id}
             onClose={() => setJourneyOpen(false)}
-            onQuickReturn={startQuickReturn}
+            onQuickReturn={(topic) => sendJourneyMessage(quickReturnMessage(topic))}
             onStartTask={(position, title) => sendJourneyMessage(startTaskMessage(position, title))}
             onRequestPlan={() => sendJourneyMessage(PLAN_REQUEST_MESSAGE)}
           />
@@ -403,43 +357,53 @@ export function CoachShell() {
         <AddSourcesDialog
           open={sourcesOpen}
           notebookId={current.id}
-          topicSuggestion={current.topic ?? current.title}
+          topicSuggestion={
+            current.type === "interview"
+              ? `${current.interview?.role ?? current.title}${current.interview?.company ? ` at ${current.interview.company}` : ""} interview questions`
+              : (current.topic ?? current.title)
+          }
           discovering={discovering}
           kickoffRunning={false}
           intakePending={false}
+          interview={current.type === "interview"}
           onClose={() => setSourcesOpen(false)}
           onAdded={() => void refresh()}
           onDiscover={(query) => {
             setDiscovering(true);
-            void api.discoverSources(current.id, { query }).catch((err) => {
+            void api.discoverSources(current.id, { query }).catch((error) => {
               setDiscovering(false);
-              snackbar.show(err instanceof Error ? err.message : "Couldn't start the search");
+              snackbar.show(error instanceof Error ? error.message : "Couldn't start the search");
             });
           }}
         />
       )}
 
+      {current && preview && (
+        <SourcePreviewDialog notebookId={current.id} file={preview} onClose={() => setPreview(null)} />
+      )}
+
       <Dialog
         open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => {
+          if (!deleting) setDeleteTarget(null);
+        }}
         icon="delete"
-        headline="Delete this project?"
+        headline="Remove this source?"
         actions={
           <>
-            <Button variant="text" onClick={() => setDeleteTarget(null)}>
+            <Button variant="text" onClick={() => setDeleteTarget(null)} disabled={deleting}>
               Cancel
             </Button>
-            <Button destructive onClick={() => void confirmDelete()}>
-              Delete
+            <Button destructive onClick={() => void confirmDeleteSource()} disabled={deleting}>
+              Remove
             </Button>
           </>
         }
       >
         <span className="body-medium">
-          The coach conversation, teaching sessions and sources for <strong>{deleteTarget?.title}</strong> will be
-          removed.
+          <strong>{deleteTarget?.originalName}</strong> will be removed from this project and its chats.
         </span>
       </Dialog>
-    </div>
+    </>
   );
 }

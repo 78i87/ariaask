@@ -19,13 +19,40 @@ export interface CoachThreadSession {
 
 const STREAMING_ID_PREFIX = "streaming:";
 
+type CoachSnapshot = Awaited<ReturnType<typeof api.getCoach>>;
+const coachThreadCache = new Map<string, CoachSnapshot>();
+const COACH_CACHE_MAX = 8;
+
+function cacheCoach(notebookId: string, snapshot: CoachSnapshot): void {
+  coachThreadCache.delete(notebookId);
+  coachThreadCache.set(notebookId, snapshot);
+  if (coachThreadCache.size > COACH_CACHE_MAX) {
+    const oldest = coachThreadCache.keys().next().value;
+    if (oldest !== undefined) coachThreadCache.delete(oldest);
+  }
+}
+
+function toCompleteMessages(snapshot: CoachSnapshot): CoachChatMessage[] {
+  return snapshot.messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    status: "complete" as const,
+    interrupted: message.interrupted,
+    createdAt: message.createdAt,
+  }));
+}
+
 /**
  * The notebook's coach conversation — a mirror of useCyraThread keyed by
  * notebookId only (one coach per notebook), plus a once-guarded auto-kickoff:
  * a fresh coach greets the user without them having to type first.
  */
 export function useCoachThread(notebookId: string): CoachThreadSession {
-  const [messages, setMessages] = useState<CoachChatMessage[]>([]);
+  const cached = coachThreadCache.get(notebookId);
+  const [messages, setMessages] = useState<CoachChatMessage[]>(() => (cached ? toCompleteMessages(cached) : []));
+  // Cached messages avoid a blank repaint, but controls stay disabled until the
+  // fresh snapshot has rebuilt the reconciliation refs below.
   const [status, setStatus] = useState<CoachStatus>("loading");
   const [activity, setActivity] = useState<CoachActivity>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,29 +93,34 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
 
   const loadCoach = useCallback(async () => {
     const res = await api.getCoach(notebookId);
+    cacheCoach(notebookId, res);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
-    setMessages(
-      res.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        status: "complete" as const,
-        interrupted: m.interrupted,
-        createdAt: m.createdAt,
-      })),
-    );
+    setMessages(toCompleteMessages(res));
     return res;
   }, [notebookId]);
 
+  useEffect(() => {
+    const prior = coachThreadCache.get(notebookId);
+    if (!prior) return;
+    cacheCoach(notebookId, {
+      ...prior,
+      turnActive: status === "waiting" || status === "streaming",
+      messages: messages
+        .filter((message) => message.status === "complete" && !message.id.startsWith(STREAMING_ID_PREFIX))
+        .map(({ id, role, text, interrupted, createdAt }) => ({ id, role, text, interrupted, createdAt })),
+    });
+  }, [notebookId, messages, status]);
+
   // Initial load (and full reset when switching projects), plus auto-kickoff.
   useEffect(() => {
+    const previous = coachThreadCache.get(notebookId);
     initialLoaded.current = false;
     kickoffTried.current = false;
     persistedCount.current = 0;
     knownIds.current = new Set();
     deltaBuffers.current.clear();
-    setMessages([]);
+    setMessages(previous ? toCompleteMessages(previous) : []);
     setError(null);
     setActivity(null);
     setStatus("loading");
@@ -246,6 +278,10 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       setStatus("waiting");
       void api.sendCoachMessage(notebookId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
         if (err instanceof ApiError && err.code === "turn_active") return; // SSE will drive the UI
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setStatus("idle");
+          return;
+        }
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
         knownIds.current.delete(optimisticId);
         persistedCount.current -= 1;
@@ -280,6 +316,10 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
         (err) => {
           // A rejected edit leaves this tab's optimistic truncation wrong — resync.
           void loadCoach().catch(() => {});
+          if (err instanceof ApiError && err.code === "turn_cancelled") {
+            setStatus("idle");
+            return;
+          }
           setStatus("error");
           setError(err instanceof Error ? err.message : "Couldn't edit the message");
         },

@@ -1,9 +1,10 @@
 import { Icon } from "./Icon";
+import type { IconName } from "./iconNames";
 import "./Chip.css";
 
 interface ChipProps {
   label: string;
-  icon?: string;
+  icon?: IconName;
   onClick?: () => void;
   onRemove?: () => void;
   selected?: boolean;
@@ -33,7 +34,7 @@ export function Chip({ label, icon, onClick, onRemove, selected, className }: Ch
   );
   if (onClick) {
     return (
-      <button type="button" className={cls} onClick={onClick}>
+      <button type="button" className={cls} aria-pressed={selected} onClick={onClick}>
         {content}
       </button>
     );

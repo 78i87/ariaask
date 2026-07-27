@@ -88,6 +88,36 @@
   color: var(--md-sys-color-on-tertiary);
 }
 
+/* Floating variant (coach chat): a bordered card floating on the page
+   surface, same max-width as the chat column. */
+.composer--floating {
+  background: transparent;
+  padding: 8px 24px 20px;
+}
+.composer--floating::before {
+  display: none;
+}
+
+.composer--floating .composer__pill {
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 10px 10px 10px 22px;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--md-sys-color-shadow) 10%, transparent),
+    0 4px 16px color-mix(in srgb, var(--md-sys-color-shadow) 8%, transparent);
+  transition: box-shadow 200ms var(--md-sys-motion-easing-emphasized);
+}
+.composer--floating .composer__pill:focus-within {
+  box-shadow:
+    0 2px 4px color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent),
+    0 8px 24px color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent);
+}
+.composer--floating .composer__pill--tertiary {
+  background: color-mix(in srgb, var(--md-sys-color-tertiary-container) 30%, var(--md-sys-color-surface-container-low));
+  border-color: color-mix(in srgb, var(--md-sys-color-tertiary) 30%, var(--md-sys-color-outline-variant));
+}
+
 @media (max-width: 720px) {
   .composer {
     padding: 0 12px 12px;

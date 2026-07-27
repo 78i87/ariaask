@@ -287,7 +287,11 @@ async function selectKbExcerpts(query: string): Promise<Excerpt[]> {
  * Races the same hard cap as notebook retrieval; a lost race keeps working
  * in the background so the next turn is warm.
  */
-export async function buildKbBlock(query: string, render: (excerpts: Excerpt[]) => string): Promise<string> {
+export async function buildKbBlock(
+  query: string,
+  render: (excerpts: Excerpt[]) => string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<string> {
   if (config.kbDisabled || !query.trim()) return "";
   try {
     return await Promise.race([
@@ -301,6 +305,14 @@ export async function buildKbBlock(query: string, render: (excerpts: Excerpt[]) 
         const t = setTimeout(() => resolve(""), config.ragQueryTimeoutMs);
         t.unref();
       }),
+      ...(opts.signal
+        ? [
+            new Promise<string>((resolve) => {
+              if (opts.signal!.aborted) resolve("");
+              else opts.signal!.addEventListener("abort", () => resolve(""), { once: true });
+            }),
+          ]
+        : []),
     ]);
   } catch {
     return "";

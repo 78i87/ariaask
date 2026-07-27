@@ -1,7 +1,8 @@
+import type { IconName } from "./iconNames";
 import "./Icon.css";
 
 interface IconProps {
-  name: string;
+  name: IconName;
   size?: number;
   fill?: 0 | 1;
   className?: string;

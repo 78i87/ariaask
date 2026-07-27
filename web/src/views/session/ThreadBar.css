@@ -22,6 +22,25 @@
   overflow-x: auto;
   scrollbar-width: none;
   min-width: 0;
+  mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  padding: 0 14px;
+  margin: 0 -14px;
+}
+
+.threadbar__mobile-cyra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.threadbar__mobile-cyra .threadbar__chip {
+  min-width: 0;
+}
+.threadbar__mobile-cyra .m3-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .threadbar__scroll::-webkit-scrollbar {
   display: none;

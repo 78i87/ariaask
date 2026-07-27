@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionStateEvent, SourceFile } from "./types";
+import { activityFromSessionState } from "./sessionActivity";
+import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionActivity, SessionStateEvent, SourceFile } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
-export type SessionActivity = "reading-sources" | "thinking" | "researching" | null;
 
 export interface TeachingSession {
   notebook: Notebook | null;
@@ -11,7 +11,7 @@ export interface TeachingSession {
   status: SessionStatus;
   /** True while the hidden kickoff turn runs (sources being read). */
   kickoffRunning: boolean;
-  activity: SessionActivity;
+  activity: SessionActivity | null;
   error: string | null;
   /** The setup form; null on pre-feature notebooks. */
   intake: Intake | null;
@@ -39,15 +39,48 @@ export interface TeachingSession {
 
 const STREAMING_ID_PREFIX = "streaming:";
 
+type NotebookSnapshot = Awaited<ReturnType<typeof api.getNotebook>>;
+
+const notebookCache = new Map<string, NotebookSnapshot>();
+const NOTEBOOK_CACHE_MAX = 8;
+
+function cacheNotebook(notebookId: string, snapshot: NotebookSnapshot): void {
+  notebookCache.delete(notebookId);
+  notebookCache.set(notebookId, snapshot);
+  if (notebookCache.size > NOTEBOOK_CACHE_MAX) {
+    const oldest = notebookCache.keys().next().value;
+    if (oldest !== undefined) notebookCache.delete(oldest);
+  }
+}
+
+export function evictNotebookCache(notebookId: string): void {
+  notebookCache.delete(notebookId);
+}
+
+export function clearNotebookCache(): void {
+  notebookCache.clear();
+}
+
+function toCompleteMessages(snap: NotebookSnapshot): ChatMessage[] {
+  return snap.messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    status: "complete" as const,
+    interrupted: m.interrupted,
+  }));
+}
+
 export function useTeachingSession(notebookId: string): TeachingSession {
-  const [notebook, setNotebook] = useState<Notebook | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const cached = notebookCache.get(notebookId);
+  const [notebook, setNotebook] = useState<Notebook | null>(() => cached?.notebook ?? null);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => (cached ? toCompleteMessages(cached) : []));
   const [status, setStatus] = useState<SessionStatus>("loading");
   const [kickoffRunning, setKickoffRunning] = useState(false);
-  const [activity, setActivity] = useState<SessionActivity>(null);
+  const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [intake, setIntake] = useState<Intake | null>(null);
-  const [knowledgeState, setKnowledgeState] = useState<KnowledgeState | null>(null);
+  const [intake, setIntake] = useState<Intake | null>(() => cached?.intake ?? null);
+  const [knowledgeState, setKnowledgeState] = useState<KnowledgeState | null>(() => cached?.knowledgeState ?? null);
   const [notice, setNotice] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [ragBuilding, setRagBuilding] = useState(false);
@@ -60,6 +93,10 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   const initialLoaded = useRef(false);
   /** Ids of messages already in local state — dedupes SSE echoes of our own sends. */
   const knownIds = useRef(new Set<string>());
+  /** The notebook's type, mirrored so stable callbacks can name the persona. */
+  const typeRef = useRef<Notebook["type"] | null>(null);
+  /** Who the main thread is: Cyra interviews, Aria gets taught. */
+  const who = useCallback(() => (typeRef.current === "interview" ? "Cyra" : "Aria"), []);
 
   const flushDeltas = useCallback(() => {
     rafPending.current = false;
@@ -99,22 +136,31 @@ export function useTeachingSession(notebookId: string): TeachingSession {
 
   const loadNotebook = useCallback(async () => {
     const res = await api.getNotebook(notebookId);
+    cacheNotebook(notebookId, res);
+    typeRef.current = res.notebook.type;
     setNotebook(res.notebook);
     setIntake(res.intake);
     setKnowledgeState(res.knowledgeState);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
-    setMessages(
-      res.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        status: "complete" as const,
-        interrupted: m.interrupted,
-      })),
-    );
+    setMessages(toCompleteMessages(res));
     return res;
   }, [notebookId]);
+
+  useEffect(() => {
+    const prior = notebookCache.get(notebookId);
+    if (!prior || !notebook) return;
+    cacheNotebook(notebookId, {
+      ...prior,
+      notebook,
+      intake,
+      knowledgeState,
+      turnActive: status === "waiting" || status === "streaming",
+      messages: messages
+        .filter((message) => message.status === "complete" && !message.id.startsWith(STREAMING_ID_PREFIX))
+        .map(({ id, role, text, interrupted }) => ({ id, role, text, interrupted })),
+    });
+  }, [notebookId, notebook, messages, status, intake, knowledgeState]);
 
   const startTurn = useCallback(
     async (text?: string, retry?: boolean, clientMessageId?: string): Promise<boolean> => {
@@ -125,12 +171,28 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         return true;
       } catch (err) {
         if (err instanceof ApiError && err.code === "turn_active") return true; // already running; SSE will drive UI
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setKickoffRunning(false);
+          if (persistedCount.current === 0) {
+            setStatus("error");
+            setError(`Stopped while ${who()} was getting ready.`);
+            return false;
+          }
+          setStatus("idle");
+          return true;
+        }
         setStatus("error");
-        setError(err instanceof Error ? err.message : "Failed to reach the student");
+        setError(
+          err instanceof Error
+            ? err.message
+            : typeRef.current === "interview"
+              ? "Couldn't reach Cyra"
+              : "Failed to reach the student",
+        );
         return false;
       }
     },
-    [notebookId],
+    [notebookId, who],
   );
 
   // Initial load + kickoff auto-trigger.
@@ -142,6 +204,14 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     setDiscovering(false);
     setRagBuilding(false);
     setRagBuildFailed(false);
+    const snap = notebookCache.get(notebookId);
+    typeRef.current = snap?.notebook.type ?? null;
+    setNotebook(snap?.notebook ?? null);
+    setIntake(snap?.intake ?? null);
+    setKnowledgeState(snap?.knowledgeState ?? null);
+    persistedCount.current = snap?.messages.length ?? 0;
+    knownIds.current = new Set(snap?.messages.map((m) => m.id) ?? []);
+    setMessages(snap ? toCompleteMessages(snap) : []);
     void (async () => {
       try {
         const res = await loadNotebook();
@@ -170,7 +240,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     return () => {
       cancelled = true;
     };
-  }, [loadNotebook, startTurn]);
+  }, [notebookId, loadNotebook, startTurn]);
 
   // SSE channel.
   useEffect(() => {
@@ -185,9 +255,9 @@ export function useTeachingSession(notebookId: string): TeachingSession {
           setStatus(data.turnActive ? "waiting" : "idle");
         });
       }
+      setActivity(activityFromSessionState(data));
       if (data.turnActive) {
         setKickoffRunning(data.kickoffRunning || data.intakeRunning);
-        if (data.intakeRunning) setActivity("researching"); // restore indicator on reconnect mid-research
         const entries = Object.entries(data.partials ?? {});
         if (entries.length > 0) {
           for (const [itemId, text] of entries) {
@@ -208,7 +278,6 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       const data = JSON.parse((e as MessageEvent).data) as { turnId: string; kickoff: boolean };
       setKickoffRunning(data.kickoff);
       setStatus("waiting");
-      setActivity(null);
     });
 
     es.addEventListener("delta", (e) => {
@@ -216,16 +285,18 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       const buf = deltaBuffers.current;
       buf.set(data.itemId, (buf.get(data.itemId) ?? "") + data.delta);
       setStatus("streaming");
+      setActivity({ kind: "writing-response" });
       scheduleFlush();
     });
 
     es.addEventListener("activity", (e) => {
-      const data = JSON.parse((e as MessageEvent).data) as { kind: "reading-sources" | "thinking" | "researching" };
-      setActivity(data.kind);
+      const data = JSON.parse((e as MessageEvent).data) as SessionActivity;
+      setActivity(data);
     });
 
     es.addEventListener("sources-updated", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as { notebook: Notebook };
+      typeRef.current = data.notebook.type;
       setNotebook(data.notebook);
     });
 
@@ -235,6 +306,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         added: SourceFile[];
         failures: DiscoverFailure[];
       };
+      typeRef.current = data.notebook.type;
       setNotebook(data.notebook);
       setDiscovering(false);
       if (data.added.length > 0 && data.failures.length > 0) {
@@ -248,8 +320,8 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         const reason = data.failures[0]?.reason;
         setNotice(
           reason
-            ? `Aria couldn't add sources — ${reason}${data.failures.length > 1 ? ` (${data.failures.length} pages failed)` : ""}.`
-            : "Aria couldn't find usable sources — try a more specific search.",
+            ? `${who()} couldn't add sources — ${reason}${data.failures.length > 1 ? ` (${data.failures.length} pages failed)` : ""}.`
+            : `${who()} couldn't find usable sources — try a more specific search.`,
         );
       }
     });
@@ -317,7 +389,15 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       );
       if (data.status === "failed") {
         setStatus("error");
-        setError(data.error?.message ?? "The student lost their train of thought.");
+        setError(
+          data.error?.message ??
+            (typeRef.current === "interview"
+              ? "Cyra lost her train of thought."
+              : "The student lost their train of thought."),
+        );
+      } else if (data.status === "interrupted" && persistedCount.current === 0) {
+        setStatus("error");
+        setError(`Stopped while ${who()} was getting ready.`);
       } else {
         setStatus("idle");
       }
@@ -337,7 +417,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     });
 
     return () => es.close();
-  }, [notebookId, loadNotebook, scheduleFlush]);
+  }, [notebookId, loadNotebook, scheduleFlush, who]);
 
   const send = useCallback(
     (text: string) => {
@@ -382,6 +462,13 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         // Unlike send(), a rejected edit (incl. turn_active) leaves this tab's
         // optimistic truncation wrong — resync the real transcript, then surface it.
         void loadNotebook().catch(() => {});
+        if (err instanceof ApiError && err.code === "turn_cancelled") {
+          setStatus("idle");
+          setNotice(
+            typeRef.current === "interview" ? "Stopped before Cyra replied." : "Stopped before the student replied.",
+          );
+          return;
+        }
         setStatus("error");
         setError(err instanceof Error ? err.message : "Couldn't edit the message");
       });
@@ -401,14 +488,14 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     (payload: { skip?: boolean; answers?: IntakeAnswerPayload }) => {
       const researching =
         payload.skip === true
-          ? (notebook?.sourceFiles.length ?? 0) === 0
+          ? notebook?.type === "interview" || (notebook?.sourceFiles.length ?? 0) === 0
           : payload.answers?.research?.value !== "no";
       // Optimistic: the form yields to the progress indicator immediately.
       setIntake((prev) => (prev ? { ...prev, status: "done" } : prev));
       setError(null);
       setStatus("waiting");
       setKickoffRunning(true);
-      if (researching) setActivity("researching");
+      if (researching) setActivity({ kind: "researching", phase: "searching" });
       void api.submitIntake(notebookId, payload).catch((err) => {
         setIntake((prev) => (prev ? { ...prev, status: "pending" } : prev));
         setStatus("idle");
@@ -422,6 +509,11 @@ export function useTeachingSession(notebookId: string): TeachingSession {
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
+  const updateNotebook = useCallback((nb: Notebook) => {
+    typeRef.current = nb.type;
+    setNotebook(nb);
+  }, []);
+
   const discoverSources = useCallback(
     (query: string) => {
       const trimmed = query.trim();
@@ -429,7 +521,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       setDiscovering(true);
       void api.discoverSources(notebookId, { query: trimmed }).catch((err) => {
         if (err instanceof ApiError && err.code === "discover_active") {
-          setNotice("Aria is already looking for sources.");
+          setNotice(`${who()} is already looking for sources.`);
           setDiscovering(true);
           return;
         }
@@ -437,7 +529,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         setNotice(err instanceof Error ? err.message : "Couldn't start source discovery.");
       });
     },
-    [discovering, notebookId],
+    [discovering, notebookId, who],
   );
 
   return {
@@ -460,6 +552,6 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     editMessage,
     interrupt,
     retry,
-    updateNotebook: setNotebook,
+    updateNotebook,
   };
 }

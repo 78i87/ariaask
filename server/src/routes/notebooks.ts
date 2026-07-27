@@ -20,14 +20,25 @@ import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "..
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
 import { config } from "../config.js";
+import { downloadJobDescriptionFile } from "../domain/discover.js";
+import { normalizeResearchMarkdown } from "../domain/source-normalize.js";
+import { parseNotebookPatch } from "../domain/notebook-patch.js";
+import { INTERVIEW_FORMAT_QUESTION, INTERVIEW_ROUND_QUESTION } from "../domain/intake.js";
 
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_MESSAGE_CHARS = 100_000;
 
 interface UploadRequest extends Request {
   notebookId?: string;
   usedNames?: Set<string>;
+}
+
+/** Browsers send multipart filenames as UTF-8 while busboy decodes latin1. */
+function decodeOriginalName(name: string): string {
+  const utf8 = Buffer.from(name, "latin1").toString("utf8");
+  return utf8.includes("�") ? name : utf8;
 }
 
 /** Per-file processing shared by notebook creation and add-sources: PDF extraction + word counts. */
@@ -40,6 +51,7 @@ async function processUploads(
   const warnings: string[] = [];
   const sourceFiles: SourceFile[] = [];
   for (const f of files) {
+    const originalName = decodeOriginalName(f.originalname);
     const ext = path.extname(f.filename).toLowerCase();
     let extractedName: string | null = null;
     let approxWords: number | null = null;
@@ -57,14 +69,14 @@ async function processUploads(
         await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
         approxWords = approxWordCount(text);
       } else {
-        warnings.push(`"${f.originalname}" appears to be a scanned or unreadable PDF; the student may not be able to read it.`);
+        warnings.push(`"${originalName}" appears to be a scanned or unreadable PDF; it may not be readable during the session.`);
       }
     } else {
       const text = await fs.readFile(f.path, "utf8").catch(() => "");
       approxWords = approxWordCount(text);
     }
     sourceFiles.push({
-      originalName: f.originalname,
+      originalName,
       storedName: f.filename,
       extractedName,
       mimeType: f.mimetype,
@@ -73,6 +85,25 @@ async function processUploads(
     });
   }
   return { sourceFiles, warnings };
+}
+
+async function writePastedSource(
+  store: NotebookStore,
+  id: string,
+  usedNames: Set<string>,
+  opts: { baseName: string; originalName: string; text: string; kind: "cv" | "jd" },
+): Promise<SourceFile> {
+  const storedName = sanitizeName(opts.baseName, usedNames);
+  await fs.writeFile(path.join(store.sourcesDir(id), storedName), opts.text, "utf8");
+  return {
+    originalName: opts.originalName,
+    storedName,
+    extractedName: null,
+    mimeType: "text/plain",
+    size: Buffer.byteLength(opts.text, "utf8"),
+    approxWords: approxWordCount(opts.text),
+    kind: opts.kind,
+  };
 }
 
 export function notebookRoutes(
@@ -89,7 +120,8 @@ export function notebookRoutes(
   const upload = multer({
     storage: multer.diskStorage({
       destination: (req: UploadRequest, _file, cb) => cb(null, store.sourcesDir(req.notebookId!)),
-      filename: (req: UploadRequest, file, cb) => cb(null, sanitizeName(file.originalname, req.usedNames!)),
+      filename: (req: UploadRequest, file, cb) =>
+        cb(null, sanitizeName(decodeOriginalName(file.originalname), req.usedNames!)),
     }),
     limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
     fileFilter: (_req, file, cb) => {
@@ -139,27 +171,97 @@ export function notebookRoutes(
     async (req: UploadRequest, res) => {
       const id = req.notebookId!;
       const body = req.body as Record<string, string | undefined>;
-      const type = body.type === "files" ? "files" : body.type === "topic" ? "topic" : null;
+      const type =
+        body.type === "files"
+          ? "files"
+          : body.type === "topic"
+            ? "topic"
+            : body.type === "interview"
+              ? "interview"
+              : null;
       const topic = body.topic?.trim() || null;
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const role = body.role?.trim().slice(0, 200) || null;
+      const company = body.company?.trim().slice(0, 200) || null;
+      const jobDescription = body.jobDescription?.trim().slice(0, 50_000) || null;
+      const cvText = body.cvText?.trim().slice(0, 200_000) || null;
+      const jdUrlRaw = body.jobDescriptionUrl?.trim().slice(0, 2000) || null;
+      const jobDescriptionUrl = jdUrlRaw && !/^https?:\/\//i.test(jdUrlRaw) ? `https://${jdUrlRaw}` : jdUrlRaw;
 
       const fail = async (status: number, code: string, message?: string) => {
         await fs.rm(store.notebookDir(id), { recursive: true, force: true });
         throw new HttpError(status, code, message);
       };
 
-      if (!type) await fail(400, "invalid_type", 'type must be "topic" or "files"');
+      if (!type) await fail(400, "invalid_type", 'type must be "topic", "files" or "interview"');
       if (type === "topic" && !topic) await fail(400, "missing_topic", "A topic is required");
       if (type === "files" && files.length === 0) await fail(400, "missing_files", "At least one source file is required");
+      if (type === "interview" && !role) await fail(400, "missing_role", "A target role is required");
+      if (type === "interview" && files.length === 0 && !cvText) {
+        await fail(400, "missing_cv", "Provide a CV file or paste its text");
+      }
+      if (jobDescriptionUrl) {
+        try {
+          const url = new URL(jobDescriptionUrl);
+          if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("not http(s)");
+        } catch {
+          await fail(400, "invalid_jd_url", "The job description link isn't a valid URL");
+        }
+      }
 
       const { sourceFiles, warnings } = await processUploads(store, id, files, req.usedNames!);
+      if (type === "interview") {
+        for (const file of sourceFiles) file.kind = "cv";
+        if (cvText) {
+          sourceFiles.push(
+            await writePastedSource(store, id, req.usedNames!, {
+              baseName: "cv.txt",
+              originalName: "CV (pasted)",
+              text: cvText,
+              kind: "cv",
+            }),
+          );
+        }
+        if (jobDescription) {
+          sourceFiles.push(
+            await writePastedSource(store, id, req.usedNames!, {
+              baseName: "job-description.txt",
+              originalName: "Job description",
+              text: jobDescription,
+              kind: "jd",
+            }),
+          );
+        }
+        if (jobDescriptionUrl) {
+          try {
+            sourceFiles.push(
+              await downloadJobDescriptionFile(store.sourcesDir(id), jobDescriptionUrl, req.usedNames!),
+            );
+          } catch (err) {
+            console.error(`[aria] job description fetch failed for notebook ${id}:`, err);
+            warnings.push(
+              "Couldn't fetch the job description link — you can paste the posting or add it as a source later.",
+            );
+          }
+        }
+      }
 
       const title =
         body.title?.trim() ||
-        (type === "topic" ? topic! : path.basename(files[0]!.originalname, path.extname(files[0]!.originalname)));
+        (type === "topic"
+          ? topic!
+          : type === "interview"
+            ? company
+              ? `${role!} — ${company}`
+              : role!
+            : path.basename(
+                decodeOriginalName(files[0]!.originalname),
+                path.extname(decodeOriginalName(files[0]!.originalname)),
+              ));
 
-      const nb = await store.create({ title, type: type as "topic" | "files", topic }, id);
+      const nb = await store.create({ title, type: type as "topic" | "files" | "interview", topic }, id);
       nb.sourceFiles = sourceFiles;
+      if (type === "interview") nb.interview = { role: role!, company };
       if (body.coachFirst === "1") {
         // Coach-shell creation: the coach conversation is the front door and
         // Aria intake init is DEFERRED to the first teach-back open (GET /:id)
@@ -172,6 +274,14 @@ export function notebookRoutes(
         const current = clip(body.current);
         const deadline = clip(body.deadline);
         if (goal || current || deadline) nb.coachIntake = { goal, current, deadline };
+      } else if (body.projectFirst === "1" || type === "interview") {
+        // Project-first creation: sources and metadata exist before the user
+        // chooses a conversation. Coach and teach-back state are both lazily
+        // initialized from the sidebar's add-chat menu.
+        nb.createdVia = "project";
+        const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 300) : undefined);
+        const current = clip(body.current);
+        if (current) nb.coachIntake = { current };
       } else if (!config.intakeDisabled) {
         nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
       }
@@ -201,10 +311,22 @@ export function notebookRoutes(
     // Deferred Aria intake for coach-first projects: only the teach-back view
     // calls this endpoint, so the first open is the moment to initialize the
     // setup form (precedent: this handler already mutates intake state below).
-    if (nb.createdVia === "coach" && !nb.intake && !nb.kickoffDone && nb.messages.length === 0 && !config.intakeDisabled) {
-      nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
+    if (
+      (nb.createdVia === "coach" || nb.createdVia === "project") &&
+      !nb.intake &&
+      !nb.kickoffDone &&
+      nb.messages.length === 0 &&
+      !config.intakeDisabled
+    ) {
+      nb.intake = {
+        status: "pending",
+        generatedQuestions: nb.type === "interview" ? [] : null,
+        answers: null,
+        research: "none",
+        submittedAt: null,
+      };
       await store.save(nb);
-      void sessions.ensureIntakeQuestions(nb);
+      if (nb.type !== "interview") void sessions.ensureIntakeQuestions(nb);
     }
 
     if (nb.intake && nb.intake.status === "pending" && nb.intake.generatedQuestions === null) {
@@ -228,7 +350,7 @@ export function notebookRoutes(
       ? null
       : sessionState.turnActive || intakePending
         ? (nb.userKnowledgeState ?? null)
-        : await sessions.ensureKnowledgeState(nb.id);
+        : sessions.ensureKnowledgeState(nb.id);
 
     res.json({
       notebook: toSummary(nb),
@@ -260,20 +382,22 @@ export function notebookRoutes(
     const raw = body.answers ?? {};
     const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 500) : null);
 
+    const interview = nb.type === "interview";
     let mapped: IntakeAnswers;
     if (body.skip === true) {
       mapped = {
         level: null,
         levelNote: null,
-        research: nb.sourceFiles.length === 0,
+        research: interview ? true : nb.sourceFiles.length === 0,
         researchNote: null,
         focus: {},
         skipped: true,
+        ...(interview ? { interviewFormat: null, interviewRound: null } : {}),
       };
     } else {
       const levelCustom = clip(raw.level?.custom);
       const levelValue = raw.level?.value;
-      if (levelValue !== undefined && !["fundamental", "standard", "challenge"].includes(levelValue)) {
+      if (!interview && levelValue !== undefined && !["fundamental", "standard", "challenge"].includes(levelValue)) {
         throw new HttpError(400, "invalid_answer", `Unknown level "${levelValue}"`);
       }
       const researchCustom = clip(raw.research?.custom);
@@ -287,15 +411,42 @@ export function notebookRoutes(
         const text = clip(a?.custom) ?? clip(a?.value);
         if (text) focus[q.id] = text;
       }
-      mapped = {
-        level: levelCustom ? null : ((levelValue as IntakeLevel | undefined) ?? null),
-        levelNote: levelCustom,
-        // A free-text research answer is inherently a "yes, but…".
-        research: researchCustom ? true : researchValue === undefined ? true : researchValue === "yes",
-        researchNote: researchCustom,
-        focus,
-        skipped: false,
-      };
+      const research = researchCustom ? true : researchValue === undefined ? true : researchValue === "yes";
+      if (interview) {
+        const formatValue = raw.format?.value;
+        if (
+          formatValue !== undefined &&
+          !INTERVIEW_FORMAT_QUESTION.options.some((option) => option.value === formatValue)
+        ) {
+          throw new HttpError(400, "invalid_answer", `Unknown format "${formatValue}"`);
+        }
+        const roundValue = raw.round?.value;
+        if (
+          roundValue !== undefined &&
+          !INTERVIEW_ROUND_QUESTION.options.some((option) => option.value === roundValue)
+        ) {
+          throw new HttpError(400, "invalid_answer", `Unknown round "${roundValue}"`);
+        }
+        mapped = {
+          level: null,
+          levelNote: null,
+          research,
+          researchNote: researchCustom,
+          focus,
+          skipped: false,
+          interviewFormat: clip(raw.format?.custom) ?? formatValue ?? null,
+          interviewRound: clip(raw.round?.custom) ?? roundValue ?? null,
+        };
+      } else {
+        mapped = {
+          level: levelCustom ? null : ((levelValue as IntakeLevel | undefined) ?? null),
+          levelNote: levelCustom,
+          research,
+          researchNote: researchCustom,
+          focus,
+          skipped: false,
+        };
+      }
     }
 
     nb.intake.answers = mapped;
@@ -309,6 +460,19 @@ export function notebookRoutes(
     const pipeline = sessions.runIntakePipeline(nb.id);
     res.status(202).json({});
     void pipeline.catch((err) => console.error("[aria] intake pipeline failed:", err));
+  });
+
+  router.patch("/:id", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const parsed = parseNotebookPatch(req.body);
+    if (!parsed.ok) throw new HttpError(400, parsed.code, parsed.message);
+    if (parsed.value.title !== undefined) nb.title = parsed.value.title;
+    if (parsed.value.archived !== undefined) {
+      nb.archivedAt = parsed.value.archived ? (nb.archivedAt ?? new Date().toISOString()) : null;
+    }
+    await store.save(nb);
+    res.json({ notebook: toSummary(nb) });
   });
 
   router.post(
@@ -352,6 +516,9 @@ export function notebookRoutes(
       if (files.length === 0) throw new HttpError(400, "missing_files", "At least one file is required");
 
       const { sourceFiles, warnings } = await processUploads(store, nb.id, files, req.usedNames!);
+      if (nb.type === "interview" && (req.body as Record<string, string | undefined>).kind === "cv") {
+        for (const file of sourceFiles) file.kind = "cv";
+      }
       nb.sourceFiles.push(...sourceFiles);
       // The live thread's instructions can't change — the student learns about
       // these on the next turn via a hidden note (see session.ts).
@@ -410,6 +577,30 @@ export function notebookRoutes(
     res.status(202).json(result);
   });
 
+  router.get("/:id/sources/:name/preview", async (req, res) => {
+    const nb = store.get(req.params.id);
+    if (!nb) throw new HttpError(404, "notebook_not_found");
+    const file = nb.sourceFiles.find((entry) => entry.storedName === req.params.name);
+    if (!file) throw new HttpError(404, "source_not_found");
+    if (path.extname(file.storedName).toLowerCase() === ".pdf") {
+      throw new HttpError(400, "preview_not_text", "PDF sources use the raw preview.");
+    }
+    let content: string;
+    try {
+      content = await fs.readFile(path.join(store.sourcesDir(nb.id), file.storedName), "utf8");
+    } catch {
+      throw new HttpError(404, "source_file_missing");
+    }
+    if (file.origin === "research") content = normalizeResearchMarkdown(content);
+    const limit = 500_000;
+    const truncated = content.length > limit;
+    res.json({
+      kind: file.storedName.toLowerCase().endsWith(".md") ? "markdown" : "text",
+      content: truncated ? content.slice(0, limit) : content,
+      truncated,
+    });
+  });
+
   router.get("/:id/sources/:name", (req, res, next) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -442,6 +633,16 @@ export function notebookRoutes(
   const validClientMessageId = (v: unknown): string | undefined =>
     typeof v === "string" && v.length > 0 && v.length <= 64 ? v : undefined;
 
+  const checkMessageLength = (text: unknown): void => {
+    if (typeof text === "string" && text.length > MAX_MESSAGE_CHARS) {
+      throw new HttpError(
+        400,
+        "message_too_long",
+        `Messages are limited to ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters; upload long material as a source instead.`,
+      );
+    }
+  };
+
   router.get("/:id/cyra", (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
@@ -452,7 +653,11 @@ export function notebookRoutes(
   router.post("/:id/cyra", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
+    if (nb.type === "interview") {
+      throw new HttpError(400, "cyra_unavailable", "Interview projects don't have Ask-Cyra side threads.");
+    }
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string; sourceMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.startTurn(nb.id, {
       cyraThreadId: null,
       text: body.text,
@@ -477,6 +682,7 @@ export function notebookRoutes(
 
   router.post("/:id/cyra/:tid/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.startTurn(req.params.id, {
       cyraThreadId: req.params.tid,
       text: body.text,
@@ -489,6 +695,7 @@ export function notebookRoutes(
   // Rewind-and-resend within a Cyra conversation.
   router.post("/:id/cyra/:tid/messages/:mid/edit", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await cyra.editTurn(
       req.params.id,
       req.params.tid,
@@ -553,6 +760,7 @@ export function notebookRoutes(
     if (!nb) throw new HttpError(404, "notebook_not_found");
     ensureCoachState(nb);
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await coach.startTurn(nb.id, {
       text: body.text,
       retry: body.retry === true,
@@ -564,6 +772,7 @@ export function notebookRoutes(
   // Rewind-and-resend within the coach conversation.
   router.post("/:id/coach/messages/:mid/edit", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await coach.editTurn(req.params.id, req.params.mid, body.text, validClientMessageId(body.clientMessageId));
     res.status(202).json({ turnId: result.turnId });
   });
@@ -802,6 +1011,7 @@ export function notebookRoutes(
 
   router.post("/:id/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
+    checkMessageLength(body.text);
     // A teach-back "use" is a teaching session, not a message: count when the
     // notebook has no messages yet or the last one is more than 4 hours old.
     const nbBefore = store.get(req.params.id);
@@ -813,13 +1023,20 @@ export function notebookRoutes(
       body.retry === true,
       validClientMessageId(body.clientMessageId),
     );
-    if (newSession && body.retry !== true) usage.recordUse("teach-back");
+    if (
+      nbBefore?.type !== "interview" &&
+      newSession &&
+      body.retry !== true
+    ) {
+      usage.recordUse("teach-back");
+    }
     res.status(202).json(result);
   });
 
   // Rewind-and-resend: replaces the message and deletes everything after it.
   router.post("/:id/messages/:mid/edit", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
+    checkMessageLength(body.text);
     const result = await sessions.editTurn(
       req.params.id,
       req.params.mid,

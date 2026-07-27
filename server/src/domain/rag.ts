@@ -671,7 +671,7 @@ export async function buildRetrievalBlockWith(
   nb: Notebook,
   query: string,
   render: (excerpts: Excerpt[]) => string,
-  opts: { excludePendingSources?: boolean } = {},
+  opts: { excludePendingSources?: boolean; signal?: AbortSignal } = {},
 ): Promise<string> {
   if (!ragEligible(nb, settings.get()) || !query.trim()) return "";
   try {
@@ -686,6 +686,14 @@ export async function buildRetrievalBlockWith(
         const t = setTimeout(() => resolve(""), config.ragQueryTimeoutMs);
         t.unref();
       }),
+      ...(opts.signal
+        ? [
+            new Promise<string>((resolve) => {
+              if (opts.signal!.aborted) resolve("");
+              else opts.signal!.addEventListener("abort", () => resolve(""), { once: true });
+            }),
+          ]
+        : []),
     ]);
   } catch {
     return "";

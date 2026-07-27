@@ -7,8 +7,10 @@ import type { CyraSessionManager } from "./domain/cyra-session.js";
 import type { CoachSessionManager } from "./domain/coach-session.js";
 import type { SettingsStore } from "./domain/settings.js";
 import type { UsageStore } from "./domain/usage.js";
+import type { CodexCliUpdater } from "./domain/codex-update.js";
 import { errorHandler, HttpError } from "./lib/errors.js";
 import { authRoutes, LoginTracker } from "./routes/auth.js";
+import { codexRoutes } from "./routes/codex.js";
 import { healthRoutes } from "./routes/health.js";
 import { journeyRoutes } from "./routes/journey.js";
 import { notebookRoutes } from "./routes/notebooks.js";
@@ -25,6 +27,7 @@ export interface AppDeps {
   logins: LoginTracker;
   settings: SettingsStore;
   usage: UsageStore;
+  codexUpdater: CodexCliUpdater;
 }
 
 export function createApp(deps: AppDeps): express.Express {
@@ -32,6 +35,8 @@ export function createApp(deps: AppDeps): express.Express {
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/api/health", healthRoutes(deps.client, deps.config));
+  // Local recovery/update must remain reachable while app-server is unhealthy.
+  app.use("/api/codex", codexRoutes(deps.codexUpdater));
 
   // Everything else needs a live codex app-server.
   app.use("/api", (_req, _res, next) => {

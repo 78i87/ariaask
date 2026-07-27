@@ -1,0 +1,13 @@
+.learning-shell {
+  display: flex;
+  width: 100%;
+  height: 100dvh;
+  min-width: 0;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Coach, project, and reverse-tutor surfaces share one header geometry. */
+.learning-shell .m3-top-app-bar {
+  height: 56px;
+}

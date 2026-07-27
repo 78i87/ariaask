@@ -31,5 +31,19 @@ export function useNotebooks() {
     await api.deleteNotebook(id);
   }, []);
 
-  return { notebooks, error, refresh, create, remove };
+  const rename = useCallback(async (id: string, title: string) => {
+    const res = await api.updateNotebook(id, { title });
+    setNotebooks((prev) => prev?.map((notebook) => (notebook.id === id ? res.notebook : notebook)) ?? null);
+    return res.notebook;
+  }, []);
+
+  const setArchived = useCallback(async (id: string, archived: boolean) => {
+    const res = await api.updateNotebook(id, { archived });
+    setNotebooks((prev) => prev?.map((notebook) => (notebook.id === id ? res.notebook : notebook)) ?? null);
+    return res.notebook;
+  }, []);
+
+  return { notebooks, error, refresh, create, remove, rename, setArchived };
 }
+
+export type NotebooksController = ReturnType<typeof useNotebooks>;

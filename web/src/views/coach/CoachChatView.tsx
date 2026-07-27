@@ -1,6 +1,8 @@
 import { isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { ProgressIndicator } from "../../components/ProgressIndicator";
@@ -209,7 +211,7 @@ const COACH_MD_COMPONENTS: Components = {
 function CoachMarkdown({ text }: { text: string }) {
   const annotated = useMemo(() => annotateTechniques(text), [text]);
   return (
-    <Markdown remarkPlugins={[remarkGfm]} components={COACH_MD_COMPONENTS}>
+    <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={COACH_MD_COMPONENTS}>
       {annotated}
     </Markdown>
   );
@@ -385,13 +387,11 @@ function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubble
         <div className="msg__col msg__col--teacher">
           <div className="msg__bubble msg__bubble--coach-user body-large"><TechText text={message.text} /></div>
           <div className="msg__actions">
-            <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+            <button type="button" className="msg-action coach-chat__action" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
               <Icon name="content_copy" size={16} />
-              <span className="label-medium">Copy</span>
             </button>
-            <button type="button" className="msg-action" onClick={() => onEdit(message)}>
+            <button type="button" className="msg-action coach-chat__action" aria-label="Edit" title="Edit" onClick={() => onEdit(message)}>
               <Icon name="edit" size={16} />
-              <span className="label-medium">Edit</span>
             </button>
           </div>
         </div>
@@ -401,7 +401,6 @@ function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubble
   const streaming = message.status === "streaming";
   return (
     <div className="msg msg--student">
-      <CoachAvatar pulsing={streaming} />
       <div className="msg__col">
         <div className="msg__bubble msg__bubble--student msg__bubble--coach body-large">
           {streaming ? (
@@ -416,9 +415,8 @@ function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubble
         </div>
         {!streaming && (
           <div className="msg__actions">
-            <button type="button" className="msg-action" onClick={() => onCopy(message)}>
+            <button type="button" className="msg-action coach-chat__action" aria-label="Copy" title="Copy" onClick={() => onCopy(message)}>
               <Icon name="content_copy" size={16} />
-              <span className="label-medium">Copy</span>
             </button>
           </div>
         )}
@@ -516,6 +514,7 @@ export function CoachChatView({ notebookId }: { notebookId: string }) {
         </div>
       )}
       <Composer
+        variant="floating"
         key={editing ? `edit:${editing.id}` : "normal"}
         disabled={status === "loading"}
         busy={busy}

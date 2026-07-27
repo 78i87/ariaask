@@ -1,0 +1,382 @@
+/* The learning-project sidebar shared by CoachShell and SessionView.
+   Class names keep the original `shell__*` prefix from CoachShell. */
+
+.shell__sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 264px;
+  flex-shrink: 0;
+  background: var(--md-sys-color-surface-container-low);
+  padding: 8px;
+  gap: 2px;
+  min-height: 0;
+}
+
+/* Mobile: the sidebar becomes an overlay drawer; on desktop --hidden is the
+   collapsed state (reopened from the header's panel button). */
+.shell__sidebar--hidden {
+  display: none;
+}
+.shell__sidebar--open {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  box-shadow: var(--md-sys-elevation-2);
+}
+.shell__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: color-mix(in srgb, var(--md-sys-color-scrim, #000) 45%, transparent);
+}
+
+.shell__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 8px;
+}
+
+.shell__brand-icon {
+  color: var(--md-sys-color-primary);
+}
+
+.shell__brand-collapse {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+/* The icon subset only ships right_panel_* glyphs; mirroring turns them into
+   left-sidebar collapse/expand affordances. */
+.shell__panel-mirror .m3-icon {
+  transform: scaleX(-1);
+}
+
+/* "New learning project" — a plain row like ChatGPT's "New chat", not a
+   filled button. */
+.shell__new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  margin: 2px 0 4px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.shell__new:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+/* Cross-project spaced returns stay visible above the project list. */
+.shell__due {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px 8px;
+}
+
+.shell__due-label {
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 0 6px;
+}
+
+.shell__due-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell__due-chip:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.shell__due-chip .m3-icon {
+  color: var(--md-sys-color-secondary);
+  flex-shrink: 0;
+}
+
+.shell__due-topic {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__due-meta {
+  margin-left: auto;
+  color: var(--md-sys-color-on-surface-variant);
+  flex-shrink: 0;
+}
+
+.shell__projects {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.shell__projects-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.shell__projects-error {
+  color: var(--md-sys-color-error);
+  padding: 8px 10px;
+}
+
+.shell__section {
+  padding: 10px 10px 4px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* One collapsible group per learning project. */
+
+.shell__group-header {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding-right: 4px;
+  border-radius: var(--md-sys-shape-corner-small);
+}
+.shell__group-header:hover {
+  background: var(--md-sys-color-surface-container);
+}
+.shell__group-header--active .shell__group-title {
+  font-weight: 500;
+}
+
+.shell__group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 100%;
+  flex-shrink: 0;
+  border: none;
+  border-radius: inherit;
+  background: none;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  padding: 0;
+}
+
+.shell__chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.shell__group--open .shell__chevron {
+  transform: rotate(45deg);
+}
+.shell__chevron--open {
+  transform: rotate(45deg);
+}
+
+.shell__group-title {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: none;
+  background: none;
+  color: var(--md-sys-color-on-surface);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+/* Compact project actions: add chat and project menu. */
+.shell__row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: none;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+.shell__row-action:hover {
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+}
+.shell__group-header:hover .shell__row-action,
+.shell__row-action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Touch layouts have no hover state; keep project management reachable. */
+@media (hover: none) {
+  .shell__row-action {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Nested chat rows, indented under their group. */
+.shell__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 13px;
+  margin: 1px 0 4px;
+}
+
+.shell__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: none;
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.shell__item:hover {
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Restrained active state: a soft neutral wash, not a loud container. */
+.shell__item--active,
+.shell__item--active:hover {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+
+.shell__item-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.shell__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__archived {
+  margin-top: 8px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  padding-top: 6px;
+}
+
+.shell__archived-toggle,
+.shell__archived-row {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: none;
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: inherit;
+}
+
+.shell__archived-toggle {
+  cursor: pointer;
+  text-align: left;
+}
+
+.shell__archived-toggle:hover,
+.shell__archived-row:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.shell__archived-count {
+  margin-left: auto;
+}
+
+.shell__archived-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__archived-row:hover .shell__row-action,
+.shell__archived-row .shell__row-action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.shell__footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+}
+
+.shell__account {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+
+.shell__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.shell__account-id {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+}
+
+.shell__account-plan {
+  color: var(--md-sys-color-on-surface-variant);
+  text-transform: capitalize;
+}

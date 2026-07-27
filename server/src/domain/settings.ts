@@ -18,6 +18,12 @@ export interface Settings {
   ragRecall: RagRecall;
 }
 
+export interface SelectableModel {
+  model: string;
+  isDefault: boolean;
+  supportedReasoningEfforts?: readonly (string | { effort?: string; reasoningEffort?: string })[];
+}
+
 const REPLY_LENGTHS: ReplyLength[] = ["concise", "default", "chatty"];
 const PROBINGS: Probing[] = ["gentle", "default", "relentless"];
 const RAG_MODES: RagMode[] = ["off", "auto", "always"];
@@ -72,6 +78,33 @@ export class SettingsStore {
 
   get(): Settings {
     return this.settings;
+  }
+
+  /**
+   * Keep the persisted selection concrete so a turn cannot silently inherit a
+   * different model from the user's global Codex configuration.
+   */
+  async reconcileModel(models: readonly SelectableModel[]): Promise<Settings> {
+    if (models.length === 0) return this.settings;
+    const selected =
+      (this.settings.model ? models.find((entry) => entry.model === this.settings.model) : null) ??
+      models.find((entry) => entry.isDefault) ??
+      models[0];
+    if (!selected) return this.settings;
+
+    const supportedEfforts = new Set(
+      (selected.supportedReasoningEfforts ?? []).flatMap((entry) => {
+        if (typeof entry === "string") return [entry];
+        const effort = entry.reasoningEffort ?? entry.effort;
+        return effort ? [effort] : [];
+      }),
+    );
+    const effortUnsupported = this.settings.effort !== null && !supportedEfforts.has(this.settings.effort);
+    if (selected.model === this.settings.model && !effortUnsupported) return this.settings;
+    return this.update({
+      model: selected.model,
+      ...(effortUnsupported ? { effort: null } : {}),
+    });
   }
 
   async update(

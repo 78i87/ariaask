@@ -8,6 +8,7 @@ import { CoachSessionManager } from "./domain/coach-session.js";
 import { ensureKbIndex } from "./domain/kb.js";
 import { SettingsStore } from "./domain/settings.js";
 import { UsageStore } from "./domain/usage.js";
+import { CodexCliUpdater } from "./domain/codex-update.js";
 import { LoginTracker } from "./routes/auth.js";
 import { createApp } from "./app.js";
 
@@ -31,9 +32,19 @@ async function main(): Promise<void> {
 
   const settings = new SettingsStore(config.dataDir, { model: config.envModel, effort: config.envEffort });
   await settings.init();
+  try {
+    const listed = await client.listModels();
+    await settings.reconcileModel(listed.data.filter((model) => !model.hidden));
+  } catch (err) {
+    console.error("[aria] couldn't reconcile the selected model; keeping persisted settings:", err);
+  }
 
   const usage = new UsageStore(config.dataDir);
   await usage.init();
+  const codexUpdater = new CodexCliUpdater({
+    codexBin: config.codexBin,
+    restartAppServer: () => client.restart(),
+  });
 
   // Build (or freshness-check) the knowledge-base index in the background;
   // also pre-warms the shared embedding model for notebook retrieval.
@@ -43,7 +54,7 @@ async function main(): Promise<void> {
   const cyra = new CyraSessionManager(client, store, settings);
   const coach = new CoachSessionManager(client, store, settings, usage);
   const logins = new LoginTracker(client);
-  const app = createApp({ config, client, store, sessions, cyra, coach, logins, settings, usage });
+  const app = createApp({ config, client, store, sessions, cyra, coach, logins, settings, usage, codexUpdater });
 
   const server = app.listen(config.port, () => {
     console.log(`[aria] server listening on http://localhost:${config.port}`);

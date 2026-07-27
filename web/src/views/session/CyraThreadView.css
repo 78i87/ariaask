@@ -1,5 +1,6 @@
-/* Cyra is the expert teacher — everything here speaks the tertiary color
-   family so the user can never mistake who they're talking to. */
+/* Cyra is the expert teacher — the tertiary color family marks her banner,
+   streaming cursor, and composer accent so the user can never mistake who
+   they're talking to, while the messages themselves stay plain. */
 
 .cyra-avatar {
   display: flex;
@@ -37,15 +38,16 @@
   font-weight: 600;
 }
 
-/* The user's own messages — asking, not teaching. */
+/* The user's own messages — the same neutral pill as the other panes. */
 .msg__bubble--cyra-user {
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-  border-radius: 20px 4px 20px 20px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 10px 16px;
   white-space: pre-wrap;
 }
 
-/* Cyra's answers reuse the student-bubble markdown styles with tertiary accents. */
+/* Cyra's answers reuse the student-message markdown styles with tertiary accents. */
 .msg__bubble--cyra .msg__cursor {
   background: var(--md-sys-color-tertiary);
 }

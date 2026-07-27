@@ -79,6 +79,7 @@ export function settingsRoutes(settings: SettingsStore, client: AppServerClient)
     let models: ModelInfo[] = [];
     try {
       models = await loadModels();
+      await settings.reconcileModel(models);
     } catch (err) {
       console.error("[aria] model/list failed; settings UI degrades:", err);
     }

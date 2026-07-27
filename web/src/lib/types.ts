@@ -9,6 +9,8 @@ export interface SourceFile {
   origin?: "research";
   /** Original public URL for server-discovered online sources. */
   originUrl?: string;
+  /** Interview projects: candidate CV or job-description material. */
+  kind?: "cv" | "jd";
 }
 
 export interface DiscoverFailure {
@@ -38,15 +40,25 @@ export interface Intake {
 
 export type IntakeAnswerPayload = Record<string, { value?: string; custom?: string }>;
 
+export interface NotebookInterview {
+  role: string;
+  company: string | null;
+}
+
 export interface Notebook {
   id: string;
   title: string;
-  type: "topic" | "files";
+  type: "topic" | "files" | "interview";
   topic: string | null;
+  interview?: NotebookInterview | null;
   sourceFiles: SourceFile[];
   createdAt: string;
   lastTaughtAt: string | null;
   messageCount: number;
+  hasCoachChat: boolean;
+  hasTeachBackChat: boolean;
+  hasInterviewChat: boolean;
+  archivedAt: string | null;
 }
 
 export type MessageStatus = "complete" | "streaming" | "error";
@@ -240,6 +252,17 @@ export interface SettingsResponse {
   models: ModelInfo[];
 }
 
+export interface CodexCliStatus {
+  currentVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean | null;
+  installMethod: "npm" | "homebrew" | null;
+  canUpdate: boolean;
+  state: "idle" | "running" | "succeeded" | "unchanged" | "failed";
+  message?: string;
+  manualCommand?: string;
+}
+
 // Mirrors server/src/domain/knowledge.ts. Server-driven: arrives on
 // GET /api/notebooks/:id (`knowledgeState`) and via the "knowledge-state" SSE
 // event; rendered by the knowledge map pane (KnowledgeMapView).
@@ -288,7 +311,17 @@ export interface SessionStateEvent {
   ragBuilding?: boolean;
   /** True when the most recent index build failed (recall not actually ready). */
   ragBuildFailed?: boolean;
+  activity?: SessionActivity | null;
   /** In-flight streamed text keyed by agentMessage itemId. */
   partials: Record<string, string>;
   messageCount: number;
 }
+
+export type SessionActivity =
+  | { kind: "researching"; phase: "searching" | "downloading"; completed?: number; total?: number }
+  | { kind: "building-student-profile" }
+  | { kind: "building-knowledge-map" }
+  | { kind: "preparing-opening-question" }
+  | { kind: "evaluating-teaching" }
+  | { kind: "reading-sources" }
+  | { kind: "writing-response" };

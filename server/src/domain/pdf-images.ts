@@ -14,6 +14,10 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const RENDER_WIDTH = 1024;
+const MAX_PDF_PAGES = 200;
+const MAX_CANVAS_DIMENSION = 8192;
+const MAX_CANVAS_PIXELS = 12_000_000;
+const MAX_TOTAL_CANVAS_PIXELS = 64_000_000;
 
 interface PdfjsBundle {
   getDocument: (typeof import("pdfjs-dist"))["getDocument"];
@@ -58,18 +62,38 @@ export async function renderPdfPageImages(
       data,
       disableFontFace: true,
       useSystemFonts: true,
+      maxImageSize: MAX_CANVAS_PIXELS,
       verbosity: 0,
       standardFontDataUrl: path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/"),
     }).promise;
     try {
+      if (doc.numPages > MAX_PDF_PAGES) throw new Error(`PDF exceeds the ${MAX_PDF_PAGES}-page render limit`);
+      let totalPixels = 0;
       for (const pageNum of pageNumbers) {
         if (pageNum < 1 || pageNum > doc.numPages) continue;
         try {
           const page = await doc.getPage(pageNum);
           const base = page.getViewport({ scale: 1 });
+          if (!Number.isFinite(base.width) || !Number.isFinite(base.height) || base.width <= 0 || base.height <= 0) {
+            throw new Error("invalid PDF page geometry");
+          }
           const scale = Math.min(RENDER_WIDTH / base.width, 2);
           const vp = page.getViewport({ scale });
-          const canvas = createCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
+          const width = Math.ceil(vp.width);
+          const height = Math.ceil(vp.height);
+          const pixels = width * height;
+          if (
+            width <= 0 ||
+            height <= 0 ||
+            width > MAX_CANVAS_DIMENSION ||
+            height > MAX_CANVAS_DIMENSION ||
+            pixels > MAX_CANVAS_PIXELS ||
+            totalPixels + pixels > MAX_TOTAL_CANVAS_PIXELS
+          ) {
+            throw new Error("PDF page exceeds the canvas geometry budget");
+          }
+          totalPixels += pixels;
+          const canvas = createCanvas(width, height);
           const ctx = canvas.getContext("2d");
           await page.render({
             // @napi-rs/canvas structurally matches the browser canvas pdf.js expects.

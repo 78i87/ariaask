@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from "react";
-import { Outlet, useLocation, useMatch } from "react-router-dom";
+import { Outlet, useLocation, useMatch } from "react-router";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useNotebooks, type NotebooksController } from "../lib/useNotebooks";
 import { CoachSidebar } from "./CoachSidebar";

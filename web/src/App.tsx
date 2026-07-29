@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 import { Button } from "./components/Button";
 import { EmptyState } from "./components/EmptyState";
 import { ProgressIndicator } from "./components/ProgressIndicator";

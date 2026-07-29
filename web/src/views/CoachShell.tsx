@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
 import { Dialog } from "../components/Dialog";

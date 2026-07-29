@@ -251,10 +251,12 @@ function splitSections(lines: CleanLine[]): Section[] {
   return sections;
 }
 
-/** Heading-aware chunking: small sections pack together, oversized ones split at paragraph boundaries with overlap. */
-export function chunkFile(file: string, source: string, text: string): RagChunk[] {
+/** Heading-aware chunking with an early retained-chunk ceiling. */
+export function chunkFile(file: string, source: string, text: string, maxChunks = Number.POSITIVE_INFINITY): RagChunk[] {
   const chunks: RagChunk[] = [];
+  const atLimit = () => chunks.length >= maxChunks;
   const emit = (t: string, heading: string | null) => {
+    if (atLimit()) return;
     const trimmed = t.trim();
     if (trimmed.length >= MIN_CHUNK_CHARS) {
       chunks.push({ file, source, heading, text: trimmed, seq: chunks.length });
@@ -264,12 +266,14 @@ export function chunkFile(file: string, source: string, text: string): RagChunk[
   let buf = "";
   let bufHeading: string | null = null;
   for (const sec of splitSections(cleanLines(text))) {
+    if (atLimit()) break;
     const secText = sec.lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!secText) continue;
 
     if (secText.length <= CHUNK_MAX_CHARS) {
       if (buf && buf.length + secText.length + 2 > CHUNK_MAX_CHARS) {
         emit(buf, bufHeading);
+        if (atLimit()) break;
         buf = "";
         bufHeading = null;
       }
@@ -280,26 +284,30 @@ export function chunkFile(file: string, source: string, text: string): RagChunk[
 
     if (buf) {
       emit(buf, bufHeading);
+      if (atLimit()) break;
       buf = "";
       bufHeading = null;
     }
     let piece = "";
     for (const para of secText.split(/\n{2,}/)) {
+      if (atLimit()) break;
       const next = piece ? `${piece}\n\n${para}` : para;
       if (next.length > CHUNK_MAX_CHARS && piece) {
         emit(piece, sec.heading);
+        if (atLimit()) break;
         piece = `${piece.slice(-CHUNK_OVERLAP_CHARS)}\n\n${para}`;
       } else {
         piece = next;
       }
       while (piece.length > CHUNK_MAX_CHARS) {
         emit(piece.slice(0, CHUNK_MAX_CHARS), sec.heading);
+        if (atLimit()) break;
         piece = piece.slice(CHUNK_MAX_CHARS - CHUNK_OVERLAP_CHARS);
       }
     }
     emit(piece, sec.heading);
   }
-  if (buf) emit(buf, bufHeading);
+  if (buf && !atLimit()) emit(buf, bufHeading);
   return chunks;
 }
 
@@ -408,11 +416,17 @@ async function syncIndex(store: NotebookStore, settings: SettingsStore, id: stri
     const t0 = Date.now();
     let chunks: RagChunk[] = [];
     for (const f of nb.sourceFiles) {
+      if (chunks.length >= MAX_CHUNKS_PER_NOTEBOOK) break;
       const name = indexableName(f);
       if (!name) continue; // failed-extraction PDF — the student can't read it either
       try {
         const text = await fs.readFile(path.join(store.sourcesDir(id), name), "utf8");
-        chunks.push(...chunkFile(name, f.storedName, text));
+        const remaining = MAX_CHUNKS_PER_NOTEBOOK - chunks.length;
+        const next = chunkFile(name, f.storedName, text, remaining).map((chunk, offset) => ({
+          ...chunk,
+          seq: chunks.length + offset,
+        }));
+        chunks.push(...next);
       } catch (err) {
         // A file missing mid-add/delete is fine: the follow-up trigger's
         // fingerprint mismatch re-runs the build. Any other read error must
@@ -421,11 +435,6 @@ async function syncIndex(store: NotebookStore, settings: SettingsStore, id: stri
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
     }
-    if (chunks.length > MAX_CHUNKS_PER_NOTEBOOK) {
-      console.error(`[aria] rag: notebook ${id} corpus too large; indexing first ${MAX_CHUNKS_PER_NOTEBOOK} of ${chunks.length} chunks`);
-      chunks = chunks.slice(0, MAX_CHUNKS_PER_NOTEBOOK);
-    }
-
     const { dims, vectors } = chunks.length > 0 ? await embedBatched(chunks.map((c) => c.text)) : { dims: 0, vectors: new Float32Array(0) };
 
     if (!store.get(id)) return; // notebook deleted while embedding — don't resurrect its dir

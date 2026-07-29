@@ -663,7 +663,6 @@ export class SessionManager {
         effort: this.config.researchEffort,
         timeoutMs: 120_000,
         config: { web_search: "live" },
-        cwd: initial.sourceFiles.length > 0 ? this.store.sourcesDir(initial.id) : undefined,
         signal: controller.signal,
       });
       const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
@@ -933,7 +932,6 @@ export class SessionManager {
         effort: this.config.researchEffort,
         timeoutMs: 120_000,
         config: { web_search: "live" },
-        cwd: nb.sourceFiles.length > 0 ? this.store.sourcesDir(nb.id) : undefined,
         signal: session.researchAbort?.signal,
       });
       const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
@@ -1001,6 +999,13 @@ export class SessionManager {
     return parts.length > 0 ? parts.join("\n\n") : null;
   }
 
+  /** Server-read source packet for tool-free one-shot analysis. */
+  private async inlineSourcePacket(nb: Notebook, interview = false): Promise<string> {
+    const manifest = interview ? interviewMaterialsManifest(nb.sourceFiles) : sourcesManifest(nb.sourceFiles);
+    const excerpts = await this.readSourceHeads(nb, 8_000, 12);
+    return excerpts ? `${manifest}\n\nBounded source excerpts:\n\n${excerpts}` : manifest;
+  }
+
   /** One-line description of what the session is about, for the state-manager prompts. */
   private learningContext(nb: Notebook): string {
     const parts: string[] = [];
@@ -1042,13 +1047,12 @@ export class SessionManager {
         prompt: buildCoverageGraphPrompt({
           role: nb.interview?.role ?? nb.title,
           company: nb.interview?.company ?? null,
-          manifest: nb.sourceFiles.length > 0 ? interviewMaterialsManifest(nb.sourceFiles) : null,
+          manifest: nb.sourceFiles.length > 0 ? await this.inlineSourcePacket(nb, true) : null,
           format: nb.intake?.answers?.interviewFormat ?? null,
           round: nb.intake?.answers?.interviewRound ?? null,
         }),
         model: this.settings.get().model,
         effort: "medium",
-        ...(nb.sourceFiles.length > 0 ? { cwd: this.store.sourcesDir(nb.id) } : {}),
         timeoutMs: 120_000,
         signal,
       });
@@ -1063,12 +1067,11 @@ export class SessionManager {
       nb.sourceFiles.length > 0
         ? await this.client.runOneShotTurn({
             prompt: buildKnowledgeGraphPromptSources(
-              sourcesManifest(nb.sourceFiles),
+              await this.inlineSourcePacket(nb),
               nb.type === "topic" ? (nb.topic ?? nb.title) : null,
             ),
             model: s.model,
             effort: "medium",
-            cwd: this.store.sourcesDir(nb.id),
             timeoutMs: 120_000,
             signal,
           })
@@ -1162,14 +1165,13 @@ export class SessionManager {
         nb.sourceFiles.length > 0
           ? await this.client.runOneShotTurn({
               prompt: buildInitialStatePromptSources(
-                sourcesManifest(nb.sourceFiles),
+                await this.inlineSourcePacket(nb),
                 nb.type === "topic" ? (nb.topic ?? nb.title) : null,
                 tuning,
               ),
               model: s.model,
               // It has to actually read the sources — low effort skimps on that.
               effort: "medium",
-              cwd: this.store.sourcesDir(nb.id),
               timeoutMs: 120_000,
               signal,
             })

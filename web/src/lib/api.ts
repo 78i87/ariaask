@@ -37,7 +37,10 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, init);
+    const method = (init?.method ?? "GET").toUpperCase();
+    const headers = new Headers(init?.headers);
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("X-Aria-Local-Action", "1");
+    res = await fetch(path, { ...init, headers });
   } catch {
     throw new ApiError("network", "Can't reach Aria's backend");
   }

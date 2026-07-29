@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { Button } from "../components/Button";
 import { Chip } from "../components/Chip";
 import { Dialog } from "../components/Dialog";

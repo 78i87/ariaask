@@ -157,19 +157,16 @@ Output exactly this JSON shape:
 ${KNOWLEDGE_SCHEMA}`;
 }
 
-export function buildKnowledgeGraphPromptSources(manifest: string, topic: string | null): string {
+export function buildKnowledgeGraphPromptSources(materials: string, topic: string | null): string {
   return `You are designing the concept graph for a human teacher's knowledge map in a teaching app${
     topic ? ` about: ${topic}` : ""
   }. The graph shows what the system has evidence the human teacher knows. Source files define
 the territory of the map only; they are NOT evidence that the human understands anything.
 Output JSON only - no prose, no code fences.
 
-Read the assigned material - the files in your working directory:
+Use only this assigned-material packet:
 
-${manifest}
-
-Where a .txt sits alongside a PDF of the same name, read the .txt. If a file will not open
-or is empty, work with what you can read.
+${materials}
 
 Design the map of concepts covered by the material:
 - 10 to 25 entries covering the key ideas of the material, scaled to its size and breadth.

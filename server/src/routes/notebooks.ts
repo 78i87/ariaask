@@ -24,6 +24,7 @@ import { downloadJobDescriptionFile } from "../domain/discover.js";
 import { normalizeResearchMarkdown } from "../domain/source-normalize.js";
 import { parseNotebookPatch } from "../domain/notebook-patch.js";
 import { INTERVIEW_FORMAT_QUESTION, INTERVIEW_ROUND_QUESTION } from "../domain/intake.js";
+import { assertSourceQuota } from "../domain/source-quota.js";
 
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 const MAX_FILES = 10;
@@ -123,7 +124,14 @@ export function notebookRoutes(
       filename: (req: UploadRequest, file, cb) =>
         cb(null, sanitizeName(decodeOriginalName(file.originalname), req.usedNames!)),
     }),
-    limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
+    limits: {
+      files: MAX_FILES,
+      fileSize: MAX_FILE_SIZE,
+      fields: 32,
+      fieldNameSize: 200,
+      fieldSize: 250_000,
+      parts: MAX_FILES + 32,
+    },
     fileFilter: (_req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
       if (ALLOWED_EXTENSIONS.has(ext)) cb(null, true);
@@ -210,6 +218,11 @@ export function notebookRoutes(
       }
 
       const { sourceFiles, warnings } = await processUploads(store, id, files, req.usedNames!);
+      try {
+        assertSourceQuota([], sourceFiles);
+      } catch {
+        await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
+      }
       if (type === "interview") {
         for (const file of sourceFiles) file.kind = "cv";
         if (cvText) {
@@ -221,6 +234,11 @@ export function notebookRoutes(
               kind: "cv",
             }),
           );
+          try {
+            assertSourceQuota([], sourceFiles);
+          } catch {
+            await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
+          }
         }
         if (jobDescription) {
           sourceFiles.push(
@@ -231,13 +249,22 @@ export function notebookRoutes(
               kind: "jd",
             }),
           );
+          try {
+            assertSourceQuota([], sourceFiles);
+          } catch {
+            await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
+          }
         }
         if (jobDescriptionUrl) {
           try {
             sourceFiles.push(
               await downloadJobDescriptionFile(store.sourcesDir(id), jobDescriptionUrl, req.usedNames!),
             );
+            assertSourceQuota([], sourceFiles);
           } catch (err) {
+            if (err instanceof HttpError && err.code === "source_quota_exceeded") {
+              await fail(413, err.code, err.message);
+            }
             console.error(`[aria] job description fetch failed for notebook ${id}:`, err);
             warnings.push(
               "Couldn't fetch the job description link — you can paste the posting or add it as a source later.",
@@ -514,6 +541,12 @@ export function notebookRoutes(
       const nb = store.get(req.notebookId!)!;
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
       if (files.length === 0) throw new HttpError(400, "missing_files", "At least one file is required");
+      try {
+        assertSourceQuota(nb.sourceFiles, files);
+      } catch (err) {
+        await Promise.all(files.map((file) => fs.rm(file.path, { force: true }).catch(() => {})));
+        throw err;
+      }
 
       const { sourceFiles, warnings } = await processUploads(store, nb.id, files, req.usedNames!);
       if (nb.type === "interview" && (req.body as Record<string, string | undefined>).kind === "cv") {

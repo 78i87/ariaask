@@ -36,9 +36,31 @@ const KINDS: ReadingAnnotationKind[] = ["simplify", "compare", "connect", "judge
 const BATCH_CHAR_BUDGET = 45_000;
 const ONE_SHOT_TIMEOUT_MS = 180_000;
 const MAX_ANNOTATIONS = 60;
+const MAX_DOCUMENT_PAGES = 200;
+const MAX_READING_BATCHES = 16;
+const MAX_CONCURRENT_READING_TURNS = 4;
+const MAX_PROSE_TEXT_CHARS = 1_000_000;
 /** Page-image caps: enough for a paper or deck section, bounded for huge docs. */
 const MAX_IMAGE_PAGES = 24;
 const MAX_IMAGES_PER_BATCH = 12;
+
+let activeReadingTurns = 0;
+const readingTurnWaiters: Array<() => void> = [];
+
+async function withReadingTurnPermit<T>(run: () => Promise<T>): Promise<T> {
+  if (activeReadingTurns >= MAX_CONCURRENT_READING_TURNS) {
+    await new Promise<void>((resolve) => readingTurnWaiters.push(resolve));
+  } else {
+    activeReadingTurns++;
+  }
+  try {
+    return await run();
+  } finally {
+    const next = readingTurnWaiters.shift();
+    if (next) next();
+    else activeReadingTurns--;
+  }
+}
 
 /** Annotation density guidance per level (kb: scaffolds-to-independence). */
 const LEVEL_RULES: Record<ReadingLevel, string> = {
@@ -318,7 +340,17 @@ export async function createReadingSession(
     if (raw.trim().length < 200) {
       throw new HttpError(400, "source_too_short", "This source has too little text for a guided reading.");
     }
+    if (raw.length > MAX_PROSE_TEXT_CHARS) {
+      throw new HttpError(413, "reading_too_large", "Guided reading supports at most 1,000,000 prose characters.");
+    }
     textPages = splitProsePages(raw);
+    if (textPages.length > MAX_DOCUMENT_PAGES) {
+      throw new HttpError(
+        413,
+        "reading_too_large",
+        `Guided reading supports at most ${MAX_DOCUMENT_PAGES} document sections.`,
+      );
+    }
   }
 
   const now = new Date().toISOString();
@@ -374,6 +406,10 @@ async function runGeneration(
       await finish({ status: "failed", error: "Couldn't extract text from this document." });
       return;
     }
+    if (pages.length > MAX_DOCUMENT_PAGES) {
+      await finish({ status: "failed", error: `This document exceeds the ${MAX_DOCUMENT_PAGES}-page guided-reading limit.` });
+      return;
+    }
 
     // Batch pages so each one-shot call stays within a sane prompt budget.
     const batches: { startPage: number; texts: string[] }[] = [];
@@ -391,6 +427,13 @@ async function runGeneration(
       currentChars += text.length;
     });
     if (current.length > 0) batches.push({ startPage: currentStart, texts: current });
+    if (batches.length > MAX_READING_BATCHES) {
+      await finish({
+        status: "failed",
+        error: `This document exceeds the ${MAX_READING_BATCHES}-batch guided-reading limit.`,
+      });
+      return;
+    }
 
     // Page images give the model eyes for figures/diagrams/slides; fail-open,
     // capped, cleaned up after the calls land — PDFs only (prose has no render).
@@ -418,18 +461,19 @@ async function runGeneration(
             .filter((p): p is string => p !== undefined)
             .slice(0, MAX_IMAGES_PER_BATCH);
           const run = (withImages: boolean) =>
-            client.runOneShotTurn({
-              prompt: buildBatchPrompt(nb, level, pages, batch.startPage, batch.texts, withImages ? batchImages.length : 0, {
-                docType,
-                outline,
-                includePriming: batch.startPage === 1,
+            withReadingTurnPermit(() =>
+              client.runOneShotTurn({
+                prompt: buildBatchPrompt(nb, level, pages, batch.startPage, batch.texts, withImages ? batchImages.length : 0, {
+                  docType,
+                  outline,
+                  includePriming: batch.startPage === 1,
+                }),
+                model: s.model,
+                effort: config.readingEffort,
+                timeoutMs: ONE_SHOT_TIMEOUT_MS,
+                images: withImages ? batchImages : undefined,
               }),
-              model: s.model,
-              effort: config.readingEffort,
-              cwd: store.sourcesDir(notebookId),
-              timeoutMs: ONE_SHOT_TIMEOUT_MS,
-              images: withImages ? batchImages : undefined,
-            });
+            );
           let raw: string;
           try {
             raw = await run(batchImages.length > 0);

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { GlobalWorkerOptions, TextLayer, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
@@ -58,6 +58,12 @@ const CARD_GAP = 12;
 const EDGE_GAP = 10;
 /** Where the connector line attaches on the card's edge (below its top). */
 const ATTACH_Y = 18;
+const MAX_DOCUMENT_PAGES = 200;
+const MAX_CANVAS_DIMENSION = 8192;
+const MAX_CANVAS_PIXELS = 12_000_000;
+const MAX_RENDERED_PAGES = 8;
+const MAX_CONCURRENT_PAGE_RENDERS = 2;
+const MAX_PROSE_TEXT_CHARS = 1_000_000;
 
 interface FloatLine {
   id: string;
@@ -120,6 +126,10 @@ export function ReadingView() {
   const railRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
   const renderingRef = useRef(new Set<number>());
+  const activePageRendersRef = useRef(0);
+  const pendingPageRendersRef = useRef(new Map<number, HTMLDivElement>());
+  const renderedPageOrderRef = useRef<number[]>([]);
+  const drainRenderQueueRef = useRef<() => void>(() => {});
   const sessionRef = useRef<ReadingSession | null>(null);
   sessionRef.current = session;
 
@@ -160,16 +170,39 @@ export function ReadingView() {
   }, [id, rid]);
 
   const docType: "pdf" | "prose" = session?.docType === "prose" ? "prose" : "pdf";
+  const visibleProsePages = useMemo(() => {
+    const visible: string[] = [];
+    let remaining = MAX_PROSE_TEXT_CHARS;
+    for (const text of (session?.textPages ?? []).slice(0, MAX_DOCUMENT_PAGES)) {
+      if (remaining <= 0) break;
+      const clipped = text.length <= remaining ? text : text.slice(0, remaining);
+      visible.push(clipped);
+      remaining -= clipped.length;
+    }
+    return visible;
+  }, [session?.textPages]);
+  const proseTruncated =
+    docType === "prose" &&
+    ((session?.textPages?.length ?? 0) > visibleProsePages.length ||
+      (session?.textPages ?? []).reduce((sum, text) => sum + text.length, 0) > MAX_PROSE_TEXT_CHARS);
 
   // ---------- pdf load (independent of generation status; pdf docs only) ----------
 
   useEffect(() => {
     if (!id || !session?.source || session.docType === "prose") return;
     let cancelled = false;
-    const task = getDocument({ url: api.sourceUrl(id, session.source) });
+    const task = getDocument({
+      url: api.sourceUrl(id, session.source),
+      maxImageSize: MAX_CANVAS_PIXELS,
+    });
     task.promise.then(
       (doc) => {
         if (cancelled) return; // the cleanup's task.destroy() tears the doc down
+        if (doc.numPages > MAX_DOCUMENT_PAGES) {
+          setLoadError(`This PDF exceeds the ${MAX_DOCUMENT_PAGES}-page reader limit.`);
+          void task.destroy();
+          return;
+        }
         pdfRef.current = doc;
         setPdf(doc);
       },
@@ -201,13 +234,16 @@ export function ReadingView() {
         bodyWidth >= BREAK_WIDE && (sess?.status === "generating" || (sess?.annotations.length ?? 0) > 0);
       const avail = (reserve ? bodyWidth : scroller?.clientWidth ?? 800) - 32 - (reserve ? GUTTER_RESERVE * 2 : 0);
       const s = Math.min(Math.max(avail / base.width, 0.5), 2.5);
-      const states: PageState[] = [];
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = i === 1 ? first : await pdf.getPage(i);
-        const vp = page.getViewport({ scale: s });
-        states.push({ width: vp.width, height: vp.height, rendered: false });
-        if (cancelled) return;
-      }
+      const firstViewport = first.getViewport({ scale: s });
+      const states: PageState[] = Array.from({ length: pdf.numPages }, () => ({
+        width: firstViewport.width,
+        height: firstViewport.height,
+        rendered: false,
+      }));
+      if (cancelled) return;
+      renderingRef.current.clear();
+      pendingPageRendersRef.current.clear();
+      renderedPageOrderRef.current = [];
       setScale(s);
       setPages(states);
     })();
@@ -246,10 +282,22 @@ export function ReadingView() {
         const page = await doc.getPage(pageNum);
         const vp = page.getViewport({ scale });
         const dpr = window.devicePixelRatio || 1;
+        const pixelWidth = Math.floor(vp.width * dpr);
+        const pixelHeight = Math.floor(vp.height * dpr);
+        const pixels = pixelWidth * pixelHeight;
+        if (
+          pixelWidth <= 0 ||
+          pixelHeight <= 0 ||
+          pixelWidth > MAX_CANVAS_DIMENSION ||
+          pixelHeight > MAX_CANVAS_DIMENSION ||
+          pixels > MAX_CANVAS_PIXELS
+        ) {
+          throw new Error("PDF page exceeds the browser canvas budget");
+        }
 
         const canvas = document.createElement("canvas");
-        canvas.width = Math.floor(vp.width * dpr);
-        canvas.height = Math.floor(vp.height * dpr);
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
         canvas.style.width = `${vp.width}px`;
         canvas.style.height = `${vp.height}px`;
         const ctx = canvas.getContext("2d")!;
@@ -272,13 +320,60 @@ export function ReadingView() {
         await textLayer.render();
 
         applyAnnotations(pageNum, textLayerDiv);
-        setPages((prev) => prev.map((p, i) => (i === pageNum - 1 ? { ...p, rendered: true } : p)));
+        const order = renderedPageOrderRef.current.filter((value) => value !== pageNum);
+        order.push(pageNum);
+        const evicted = new Set<number>();
+        while (order.length > MAX_RENDERED_PAGES) {
+          const oldPage = order.shift()!;
+          evicted.add(oldPage);
+          renderingRef.current.delete(oldPage);
+          pagesRef.current
+            ?.querySelector<HTMLDivElement>(`.rd-page__host[data-page="${oldPage}"]`)
+            ?.replaceChildren();
+        }
+        renderedPageOrderRef.current = order;
+        setPages((prev) =>
+          prev.map((p, i) =>
+            i === pageNum - 1
+              ? { ...p, width: vp.width, height: vp.height, rendered: true }
+              : evicted.has(i + 1)
+                ? { ...p, rendered: false }
+                : p,
+          ),
+        );
       } catch (err) {
         console.error(`[reading] page ${pageNum} render failed:`, err);
         renderingRef.current.delete(pageNum); // allow a retry when re-observed
       }
     },
     [scale, applyAnnotations],
+  );
+
+  const schedulePageRender = useCallback(
+    (pageNum: number, host: HTMLDivElement) => {
+      if (renderingRef.current.has(pageNum) || pendingPageRendersRef.current.has(pageNum)) return;
+      pendingPageRendersRef.current.set(pageNum, host);
+      const drain = () => {
+        while (
+          activePageRendersRef.current < MAX_CONCURRENT_PAGE_RENDERS &&
+          pendingPageRendersRef.current.size > 0
+        ) {
+          const next = pendingPageRendersRef.current.entries().next().value as
+            | [number, HTMLDivElement]
+            | undefined;
+          if (!next) return;
+          pendingPageRendersRef.current.delete(next[0]);
+          activePageRendersRef.current++;
+          void renderPage(next[0], next[1]).finally(() => {
+            activePageRendersRef.current--;
+            drainRenderQueueRef.current();
+          });
+        }
+      };
+      drainRenderQueueRef.current = drain;
+      drain();
+    },
+    [renderPage],
   );
 
   // Lazy page rendering via IntersectionObserver over the placeholder hosts.
@@ -292,15 +387,14 @@ export function ReadingView() {
           if (!e.isIntersecting) continue;
           const host = e.target as HTMLDivElement;
           const pageNum = Number(host.dataset.page);
-          observer.unobserve(host);
-          void renderPage(pageNum, host);
+          schedulePageRender(pageNum, host);
         }
       },
       { root, rootMargin: "600px" },
     );
     root.querySelectorAll<HTMLDivElement>(".rd-page__host").forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [pages.length, renderPage]);
+  }, [pages.length, schedulePageRender]);
 
   // Late annotations (generation finishing after pages rendered) get applied
   // on arrival. Keyed on status + count, NOT session identity — response
@@ -741,11 +835,16 @@ export function ReadingView() {
                 </div>
               ))}
             {docType === "prose" &&
-              (session.textPages ?? []).map((text, i) => (
+              visibleProsePages.map((text, i) => (
                 <div key={i} className="rd-block" data-page={i + 1}>
                   <ProseBlock text={text} />
                 </div>
               ))}
+            {proseTruncated && (
+              <div className="rd__empty body-medium">
+                This legacy reading is truncated to {MAX_DOCUMENT_PAGES} sections / 1,000,000 characters.
+              </div>
+            )}
             {floating && afterBlock}
             {floating &&
               byPage.map((ann) => {

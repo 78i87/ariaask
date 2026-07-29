@@ -5,6 +5,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export const config = {
   port: Number(process.env.PORT ?? 5275),
+  /** Local-first security boundary: never bind the unauthenticated app to LAN interfaces. */
+  host: "127.0.0.1",
   dataDir: process.env.ARIA_DATA_DIR ?? path.resolve(here, "../../data"),
   codexBin: process.env.CODEX_BIN ?? "codex",
   /** Seed data/settings.json on first boot only; after that the file wins. null = account default. */

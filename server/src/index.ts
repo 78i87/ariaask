@@ -56,8 +56,8 @@ async function main(): Promise<void> {
   const logins = new LoginTracker(client);
   const app = createApp({ config, client, store, sessions, cyra, coach, logins, settings, usage, codexUpdater });
 
-  const server = app.listen(config.port, () => {
-    console.log(`[aria] server listening on http://localhost:${config.port}`);
+  const server = app.listen(config.port, config.host, () => {
+    console.log(`[aria] server listening on http://${config.host}:${config.port}`);
   });
 
   const shutdown = async () => {

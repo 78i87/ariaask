@@ -34,7 +34,7 @@ export function emptyCoverageState(label: string): KnowledgeState {
 export function buildCoverageGraphPrompt(opts: {
   role: string;
   company: string | null;
-  /** interviewMaterialsManifest; the one-shot runs with cwd = sources dir when non-null. */
+  /** Bounded interview-material packet, read by the server before the one-shot. */
   manifest: string | null;
   format: string | null;
   round: string | null;
@@ -46,13 +46,12 @@ export function buildCoverageGraphPrompt(opts: {
   const tuningBlock = tuning.length > 0 ? `\n${tuning.join("\n")}\nWeight the map toward what that kind of round actually probes.\n` : "";
   const materialsBlock = opts.manifest
     ? `
-Read the interview materials - the files in your working directory:
+Use only this bounded interview-material packet:
 
 ${opts.manifest}
 
-Where a .txt sits alongside a PDF of the same name, read the .txt. If a file will not open
-or is empty, work with what you can read. The materials define the territory of the map
-only; they are NOT evidence that the candidate can do anything.
+The materials define the territory of the map only; they are NOT evidence that the
+candidate can do anything.
 `
     : "";
   return `You are designing the coverage map for a simulated job interview in an interview-practice

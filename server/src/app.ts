@@ -16,6 +16,7 @@ import { journeyRoutes } from "./routes/journey.js";
 import { notebookRoutes } from "./routes/notebooks.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
+import { enforceLocalApi } from "./lib/local-security.js";
 
 export interface AppDeps {
   config: Config;
@@ -32,6 +33,7 @@ export interface AppDeps {
 
 export function createApp(deps: AppDeps): express.Express {
   const app = express();
+  app.use("/api", enforceLocalApi);
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/api/health", healthRoutes(deps.client, deps.config));

@@ -2,8 +2,10 @@ import { lookup } from "node:dns/promises";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { Agent, fetch as undiciFetch } from "undici";
 import { extractJsonObject } from "./learning.js";
 import { approxWordCount, extractPdfText } from "./extract.js";
+import { assertSourceQuota } from "./source-quota.js";
 import { htmlTableToMarkdown, normalizeResearchMarkdown, usefulMediaAlt } from "./source-normalize.js";
 import { sanitizeName, type NotebookStore, type SourceFile } from "./store.js";
 
@@ -305,7 +307,7 @@ async function lookupAll(hostname: string): Promise<{ address: string; family: n
   ]);
 }
 
-async function assertPublicUrl(u: URL): Promise<void> {
+async function assertPublicUrl(u: URL): Promise<{ address: string; family: 4 | 6 }[]> {
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("unsupported URL scheme");
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
@@ -319,8 +321,7 @@ async function assertPublicUrl(u: URL): Promise<void> {
     if (addr.family === 4 && isPrivateIpv4(addr.address)) throw new Error("private IPv4 address rejected");
     if (addr.family === 6 && isPrivateIpv6(addr.address)) throw new Error("private IPv6 address rejected");
   }
-  // DNS rebinding between this lookup and fetch is still theoretically
-  // possible. Aria is a local single-user app; redirects are re-checked below.
+  return addresses.map((addr) => ({ address: addr.address, family: addr.family as 4 | 6 }));
 }
 
 function withTimeout(signal: AbortSignal | undefined): { signal: AbortSignal; done: () => void } {
@@ -334,33 +335,60 @@ function withTimeout(signal: AbortSignal | undefined): { signal: AbortSignal; do
   };
 }
 
-async function fetchWithRedirects(url: string, signal: AbortSignal | undefined): Promise<{ response: Response; url: string }> {
+async function fetchWithRedirects(
+  url: string,
+  signal: AbortSignal | undefined,
+): Promise<{ response: Awaited<ReturnType<typeof undiciFetch>>; url: string; close: () => Promise<void> }> {
   let current = canonicalUrl(new URL(url));
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-    await assertPublicUrl(current);
+    const [target] = await assertPublicUrl(current);
+    if (!target) throw new Error("host has no public addresses");
+    const dispatcher = new Agent({
+      connect: {
+        // The original URL still supplies Host and TLS SNI, but the socket can
+        // connect only to the address that passed the private-range policy.
+        lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
+      },
+    });
     const timeout = withTimeout(signal);
-    let response: Response;
+    const close = async () => {
+      timeout.done();
+      await dispatcher.close();
+    };
+    let response: Awaited<ReturnType<typeof undiciFetch>>;
     try {
-      response = await fetch(current, {
+      response = await undiciFetch(current, {
         redirect: "manual",
         headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/pdf,text/plain,text/markdown,*/*;q=0.8" },
         signal: timeout.signal,
+        dispatcher,
       });
-    } finally {
-      timeout.done();
+    } catch (err) {
+      await close().catch(() => {});
+      throw err;
     }
     if (response.status >= 300 && response.status < 400 && response.headers.has("location")) {
-      if (redirects === MAX_REDIRECTS) throw new Error("too many redirects");
+      if (redirects === MAX_REDIRECTS) {
+        await response.body?.cancel().catch(() => {});
+        await close().catch(() => {});
+        throw new Error("too many redirects");
+      }
       current = canonicalUrl(new URL(response.headers.get("location")!, current));
+      await response.body?.cancel().catch(() => {});
+      await close().catch(() => {});
       continue;
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return { response, url: current.toString() };
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      await close().catch(() => {});
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return { response, url: current.toString(), close };
   }
   throw new Error("too many redirects");
 }
 
-async function readCapped(response: Response): Promise<Buffer> {
+async function readCapped(response: Awaited<ReturnType<typeof undiciFetch>>): Promise<Buffer> {
   const len = Number(response.headers.get("content-length") ?? 0);
   if (Number.isFinite(len) && len > MAX_RESPONSE_BYTES) throw new Error("response too large");
   if (!response.body) {
@@ -446,9 +474,14 @@ async function fetchSourcePage(
   signal?: AbortSignal,
   opts: { minWords?: number } = {},
 ): Promise<DownloadedContent> {
-  const { response, url: finalUrl } = await fetchWithRedirects(url, signal);
+  const { response, url: finalUrl, close } = await fetchWithRedirects(url, signal);
   const contentType = response.headers.get("content-type") ?? "";
-  const bytes = await readCapped(response);
+  let bytes: Buffer;
+  try {
+    bytes = await readCapped(response);
+  } finally {
+    await close().catch(() => {});
+  }
   const sniff = bytes.subarray(0, 5).toString("latin1");
   const final = new URL(finalUrl);
   const fallback = cleanTitle(fallbackTitle, final.hostname.replace(/^www\./, ""));
@@ -612,6 +645,7 @@ export async function downloadDiscoveredSources(
       let file: SourceFile;
       if (content.kind === "pdf") {
         const bytes = content.bytes!;
+        assertSourceQuota(nb.sourceFiles, [{ size: bytes.byteLength }]);
         const storedName = sanitizeName(`${title}.pdf`, used);
         const pdfPath = path.join(store.sourcesDir(notebookId), storedName);
         await fs.writeFile(pdfPath, bytes);
@@ -636,6 +670,7 @@ export async function downloadDiscoveredSources(
       } else {
         const text = content.text!;
         if (approxWordCount(text) < MIN_KEEP_WORDS) throw new Error("page had too little readable text");
+        assertSourceQuota(nb.sourceFiles, [{ size: Buffer.byteLength(text, "utf8") }]);
         const storedName = sanitizeName(`${title}.md`, used);
         await fs.writeFile(path.join(store.sourcesDir(notebookId), storedName), text, "utf8");
         file = {

@@ -182,6 +182,27 @@ export class AppServerClient extends EventEmitter {
   }): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 90_000;
     if (opts.signal?.aborted) throw new Error("one-shot turn aborted");
+    const requestedFeatures =
+      opts.config?.features && typeof opts.config.features === "object" && !Array.isArray(opts.config.features)
+        ? (opts.config.features as Record<string, unknown>)
+        : {};
+    const restrictedConfig = {
+      ...opts.config,
+      features: {
+        ...requestedFeatures,
+        // One-shot evaluators consume prompt/image inputs only. Removing host
+        // tools prevents source prompt injection from reading unrelated files.
+        shell_tool: false,
+        unified_exec: false,
+        code_mode: false,
+        computer_use: false,
+        browser_use: false,
+        in_app_browser: false,
+        apps: false,
+        multi_agent: false,
+        image_generation: false,
+      },
+    };
     const started = await this.threadStart({
       ephemeral: true,
       cwd: opts.cwd ?? null,
@@ -189,7 +210,9 @@ export class AppServerClient extends EventEmitter {
       approvalPolicy: "never",
       personality: "none",
       model: opts.model,
-      config: opts.config ?? null,
+      config: restrictedConfig,
+      developerInstructions:
+        "This is a bounded one-shot content transformation. Do not call host tools or read local files; use only the text and images supplied in this turn. If web search is explicitly enabled, web search is the only tool you may call.",
     });
     const threadId = started.thread.id;
 
@@ -200,7 +223,23 @@ export class AppServerClient extends EventEmitter {
       rejectDone = reject;
     });
 
-    const timer = setTimeout(() => rejectDone(new RpcError(-32000, `one-shot turn timed out after ${timeoutMs}ms`)), timeoutMs);
+    let turnId: string | null = null;
+    let interruptRequested = false;
+    let interruptedTurnId: string | null = null;
+    const interruptTurn = () => {
+      if (!turnId || interruptedTurnId === turnId) return;
+      interruptedTurnId = turnId;
+      void this.turnInterrupt(threadId, turnId).catch(() => {});
+    };
+    const rejectAndInterrupt = (err: Error) => {
+      interruptRequested = true;
+      interruptTurn();
+      rejectDone(err);
+    };
+    const timer = setTimeout(
+      () => rejectAndInterrupt(new RpcError(-32000, `one-shot turn timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
     // failAllPending only rejects in-flight RPCs — the wait for the
     // turn/completed notification needs its own disconnect handler. An
     // intentional replacement emits `restarting` and suppresses `crashed`.
@@ -240,10 +279,8 @@ export class AppServerClient extends EventEmitter {
 
     // Abort path: interrupt the ephemeral turn server-side (stops token burn)
     // and reject promptly so the caller unblocks without waiting for timeout.
-    let turnId: string | null = null;
     const onAbort = () => {
-      if (turnId) void this.turnInterrupt(threadId, turnId).catch(() => {});
-      rejectDone(new Error("one-shot turn aborted"));
+      rejectAndInterrupt(new Error("one-shot turn aborted"));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -259,7 +296,7 @@ export class AppServerClient extends EventEmitter {
       })
         .then((res) => {
           turnId = res.turn.id;
-          if (opts.signal?.aborted) onAbort();
+          if (interruptRequested || opts.signal?.aborted) interruptTurn();
         })
         .catch(rejectDone);
       return await done;

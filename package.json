@@ -15,5 +15,9 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
+  },
+  "overrides": {
+    "body-parser": "^2.3.0",
+    "protobufjs": "^7.6.5"
   }
 }

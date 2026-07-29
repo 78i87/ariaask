@@ -1,52 +1,92 @@
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
+import { fork } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
-// pdf-parse's index.js runs a debug block when it can't detect a parent module
-// (always the case under ESM) — import the implementation directly instead.
-const pdfParse: (
-  buf: Buffer,
-  options?: { pagerender?: (pageData: PdfPageData) => Promise<string> },
-) => Promise<{ text: string; numpages: number }> = require("pdf-parse/lib/pdf-parse.js");
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
+const PDF_WORKER_TIMEOUT_MS = 30_000;
+const MAX_CONCURRENT_PDF_WORKERS = 2;
+const MAX_QUEUED_PDF_WORKERS = 16;
 
-interface PdfTextItem {
-  str: string;
-  transform: number[];
+let activePdfWorkers = 0;
+const pdfWorkerWaiters: Array<() => void> = [];
+
+interface PdfWorkerSuccess {
+  ok: true;
+  pages: string[];
 }
 
-interface PdfPageData {
-  getTextContent(): Promise<{ items: PdfTextItem[] }>;
+interface PdfWorkerFailure {
+  ok: false;
+  error: string;
 }
 
-/** Line-aware page text: newline on vertical movement, space otherwise. */
-function renderPageText(pageData: PdfPageData): Promise<string> {
-  return pageData.getTextContent().then((tc) => {
-    let lastY: number | null = null;
-    let text = "";
-    for (const item of tc.items) {
-      const y = item.transform[5] ?? 0;
-      if (lastY !== null && Math.abs(y - lastY) > 1) {
-        if (!text.endsWith("\n")) text += "\n";
-      } else if (text && !text.endsWith("\n") && !text.endsWith(" ")) {
-        text += " ";
-      }
-      text += item.str;
-      lastY = y;
-    }
-    return text;
+async function withPdfWorkerPermit<T>(run: () => Promise<T>): Promise<T> {
+  if (activePdfWorkers >= MAX_CONCURRENT_PDF_WORKERS) {
+    if (pdfWorkerWaiters.length >= MAX_QUEUED_PDF_WORKERS) throw new Error("PDF parser is busy");
+    await new Promise<void>((resolve) => pdfWorkerWaiters.push(resolve));
+  } else {
+    activePdfWorkers++;
+  }
+  try {
+    return await run();
+  } finally {
+    const next = pdfWorkerWaiters.shift();
+    if (next) next();
+    else activePdfWorkers--;
+  }
+}
+
+function runPdfWorker(pdfPath: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const worker = fork(fileURLToPath(new URL("./pdf-worker.ts", import.meta.url)), [pdfPath], {
+      // A separate process contains parser crashes and native allocations.
+      execArgv: ["--import", "tsx", "--max-old-space-size=256", "--max-semi-space-size=32", "--stack-size=4096"],
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      finish(() => {
+        worker.kill("SIGKILL");
+        reject(new Error(`PDF extraction exceeded ${PDF_WORKER_TIMEOUT_MS}ms`));
+      });
+    }, PDF_WORKER_TIMEOUT_MS);
+    timer.unref();
+
+    worker.once("message", (message: PdfWorkerSuccess | PdfWorkerFailure) => {
+      finish(() => {
+        worker.kill();
+        if (message.ok) resolve(message.pages);
+        else reject(new Error(message.error));
+      });
+    });
+    worker.once("error", (err) => finish(() => reject(err)));
+    worker.once("exit", (code) => {
+      finish(() => reject(new Error(`PDF extraction worker exited before returning a result (code ${code ?? "unknown"})`)));
+    });
   });
 }
 
+async function extractPdfPages(pdfPath: string): Promise<string[]> {
+  const info = await fs.stat(pdfPath);
+  if (!info.isFile() || info.size > MAX_PDF_BYTES) throw new Error("PDF exceeds the 25MB parser limit");
+  return withPdfWorkerPermit(() => runPdfWorker(pdfPath));
+}
+
 /**
- * Extract plain text from a PDF. Returns null when the PDF yields no usable
- * text (e.g. scanned/image-only documents) or cannot be parsed.
+ * Extract plain text from a PDF. Parsing happens in a memory-limited,
+ * killable worker with eval disabled and page/text ceilings.
  */
 export async function extractPdfText(pdfPath: string): Promise<string | null> {
   try {
-    const buf = await fs.readFile(pdfPath);
-    const result = await pdfParse(buf);
-    const text = result.text?.trim();
-    return text && text.length >= 50 ? text : null;
+    const pages = await extractPdfPages(pdfPath);
+    const text = pages.join("\n\n").trim();
+    return text.length >= 50 ? text : null;
   } catch (err) {
     console.error(`[aria] pdf extraction failed for ${pdfPath}:`, err instanceof Error ? err.message : err);
     return null;
@@ -54,22 +94,13 @@ export async function extractPdfText(pdfPath: string): Promise<string | null> {
 }
 
 /**
- * Extract text per page (1-based order). Used by guided reading (reading.ts)
- * to anchor annotations to pages; computed on demand, never persisted.
- * Returns null when the PDF can't be parsed or yields no usable text.
+ * Extract text per page (1-based order). Used by guided reading to anchor
+ * annotations. Returns null when the bounded worker rejects the document.
  */
 export async function extractPdfPageTexts(pdfPath: string): Promise<string[] | null> {
   try {
-    const buf = await fs.readFile(pdfPath);
-    const pages: string[] = [];
-    await pdfParse(buf, {
-      pagerender: (pageData) =>
-        renderPageText(pageData).then((text) => {
-          pages.push(text);
-          return text;
-        }),
-    });
-    const total = pages.reduce((sum, p) => sum + p.trim().length, 0);
+    const pages = await extractPdfPages(pdfPath);
+    const total = pages.reduce((sum, page) => sum + page.trim().length, 0);
     return total >= 50 ? pages : null;
   } catch (err) {
     console.error(`[aria] per-page pdf extraction failed for ${pdfPath}:`, err instanceof Error ? err.message : err);

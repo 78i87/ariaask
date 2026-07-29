@@ -6,6 +6,7 @@ import path from "node:path";
 import { canonicalUrl, cleanTitle, downloadDiscoveredSources, markdownWithSource, truncateWords } from "./discover.js";
 import { approxWordCount } from "./extract.js";
 import { ensureRagIndex } from "./rag.js";
+import { assertSourceQuota } from "./source-quota.js";
 import { sanitizeName, type Notebook, type NotebookStore, type SourceFile } from "./store.js";
 import type { SettingsStore } from "./settings.js";
 
@@ -139,6 +140,7 @@ async function ingestYouTube(
   const niceTitle = cleanTitle(title, "youtube-video");
   const storedName = sanitizeName(`${niceTitle}.md`, used);
   const markdown = markdownWithSource(niceTitle, watchUrl, truncateWords(text, watchUrl));
+  assertSourceQuota(fresh.sourceFiles, [{ size: Buffer.byteLength(markdown) }]);
   await fs.writeFile(path.join(store.sourcesDir(notebookId), storedName), markdown, "utf8");
 
   const file: SourceFile = {

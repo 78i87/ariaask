@@ -5,11 +5,10 @@ import { ProgressIndicator } from "./components/ProgressIndicator";
 import { SnackbarProvider } from "./components/Snackbar";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
-import { CoachShell } from "./views/CoachShell";
+import { ActivityView } from "./views/ActivityView";
 import { LearningShell } from "./views/LearningShell";
 import { ProjectView } from "./views/ProjectView";
 import { ReadingView } from "./views/reading/ReadingView";
-import { SessionView } from "./views/SessionView";
 import { SignInView } from "./views/SignInView";
 
 function Gate() {
@@ -45,10 +44,9 @@ function Gate() {
       <Route element={<LearningShell />}>
         <Route index element={<ProjectView />} />
         <Route path="/project/:id" element={<ProjectView />} />
-        <Route path="/learn/:id" element={<CoachShell />} />
-        <Route path="/notebook/:id" element={<SessionView />} />
+        <Route path="/project/:id/activity/:aid" element={<ActivityView />} />
+        <Route path="/project/:id/read/:rid" element={<ReadingView />} />
       </Route>
-      <Route path="/learn/:id/read/:rid" element={<ReadingView />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

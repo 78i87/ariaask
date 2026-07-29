@@ -11,3 +11,8 @@
 .learning-shell .m3-top-app-bar {
   height: 56px;
 }
+
+.learning-shell > .rd {
+  flex: 1;
+  min-width: 0;
+}

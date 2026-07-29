@@ -31,8 +31,10 @@ export function requestNewProject() {
 export interface CoachSidebarProps {
   /** Active notebook id, supplied by the persistent route shell. */
   notebookId?: string;
-  /** Which nested row of the active project is highlighted (default "coach"). */
-  activeChat?: "project" | "coach" | "teach";
+  /** Activity row highlighted by the canonical activity route. */
+  activeActivityId?: string;
+  /** Guided reading row highlighted by the project-level reading route. */
+  activeReadingId?: string;
   /** Shared project list so the persistent sidebar and coach route stay in sync. */
   projects: NotebooksController;
   /**
@@ -68,7 +70,8 @@ export interface CoachSidebarProps {
  */
 export function CoachSidebar({
   notebookId: id,
-  activeChat = "coach",
+  activeActivityId,
+  activeReadingId,
   projects,
   collapsed: collapsedProp,
   onCollapsedChange,
@@ -104,16 +107,13 @@ export function CoachSidebar({
   const [renameTarget, setRenameTarget] = useState<Notebook | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renaming, setRenaming] = useState(false);
-  const [addMenuId, setAddMenuId] = useState<string | null>(null);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
-  const [addedChats, setAddedChats] = useState<Record<string, { coach?: boolean; main?: boolean }>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [readings, setReadings] = useState<Record<string, ReadingSessionSummary[]>>({});
   const [globalDue, setGlobalDue] = useState<GlobalDueTopic[]>([]);
   const readingsRequested = useRef(new Set<string>());
   const accountAnchor = useRef<HTMLButtonElement>(null);
-  const addChatAnchor = useRef<HTMLButtonElement>(null);
   const projectMenuAnchor = useRef<HTMLButtonElement>(null);
   const [accountOpen, setAccountOpen] = useState(false);
 
@@ -184,15 +184,6 @@ export function CoachSidebar({
     navigate(`/project/${notebookId}`);
   };
 
-  const addChat = (notebookId: string, kind: "coach" | "main") => {
-    setAddedChats((current) => ({
-      ...current,
-      [notebookId]: { ...current[notebookId], [kind]: true },
-    }));
-    setExpanded((current) => ({ ...current, [notebookId]: true }));
-    navigate(kind === "coach" ? `/learn/${notebookId}` : `/notebook/${notebookId}`);
-  };
-
   const beginRename = (notebook: Notebook) => {
     setRenameTarget(notebook);
     setRenameDraft(notebook.title);
@@ -253,7 +244,6 @@ export function CoachSidebar({
 
   const activeProjects = notebooks?.filter((notebook) => !notebook.archivedAt) ?? [];
   const archivedProjects = notebooks?.filter((notebook) => notebook.archivedAt) ?? [];
-  const addMenuNotebook = notebooks?.find((notebook) => notebook.id === addMenuId);
   const projectMenuNotebook = notebooks?.find((notebook) => notebook.id === projectMenuId);
 
   return (
@@ -275,7 +265,7 @@ export function CoachSidebar({
 
         <button type="button" className="shell__new body-medium" onClick={() => setCreateOpen(true)}>
           <Icon name="add" size={20} />
-          <span>New learning project</span>
+          <span>New project</span>
         </button>
 
         {globalDue.length > 0 && (
@@ -286,7 +276,15 @@ export function CoachSidebar({
                 key={`${due.notebookId}:${due.topic}`}
                 type="button"
                 className="shell__due-chip"
-                onClick={() => navigate(`/learn/${due.notebookId}`)}
+                onClick={() => {
+                  const project = notebooks?.find((candidate) => candidate.id === due.notebookId);
+                  const coachActivity = project?.activities.find((activity) => activity.kind === "coach");
+                  navigate(
+                    coachActivity
+                      ? `/project/${due.notebookId}/activity/${coachActivity.id}`
+                      : `/project/${due.notebookId}`,
+                  );
+                }}
                 title={`${due.topic} — ${due.daysSince} days since, in ${due.notebookTitle}`}
               >
                 <Icon name="history_edu" size={16} />
@@ -311,11 +309,6 @@ export function CoachSidebar({
             const isOpen = !!expanded[nb.id];
             const isActive = nb.id === id;
             const nbReadings = readings[nb.id] ?? [];
-            const hasCoach = nb.hasCoachChat || addedChats[nb.id]?.coach === true;
-            const hasMain =
-              (nb.type === "interview" ? nb.hasInterviewChat : nb.hasTeachBackChat) ||
-              addedChats[nb.id]?.main === true;
-            const canAddChat = !hasCoach || !hasMain;
             return (
               <div key={nb.id} className={`shell__group${isOpen ? " shell__group--open" : ""}`}>
                 <div className={`shell__group-header${isActive ? " shell__group-header--active" : ""}`}>
@@ -331,21 +324,6 @@ export function CoachSidebar({
                   <button type="button" className="shell__group-title body-medium" onClick={() => openProject(nb.id)}>
                     {nb.title}
                   </button>
-                  {canAddChat && (
-                    <button
-                      type="button"
-                      className="shell__row-action"
-                      aria-label={`Add chat to ${nb.title}`}
-                      title="Add chat"
-                      onClick={(event) => {
-                        addChatAnchor.current = event.currentTarget;
-                        setProjectMenuId(null);
-                        setAddMenuId(nb.id);
-                      }}
-                    >
-                      <Icon name="add" size={18} />
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="shell__row-action"
@@ -353,7 +331,6 @@ export function CoachSidebar({
                     title="Project options"
                     onClick={(event) => {
                       projectMenuAnchor.current = event.currentTarget;
-                      setAddMenuId(null);
                       setProjectMenuId(nb.id);
                     }}
                   >
@@ -362,34 +339,37 @@ export function CoachSidebar({
                 </div>
                 {isOpen && (
                   <div className="shell__group-items">
-                    {hasCoach && (
+                    {nb.activities.map((activity) => (
                       <button
+                        key={activity.id}
                         type="button"
-                        className={`shell__item body-medium${isActive && activeChat === "coach" ? " shell__item--active" : ""}`}
-                        onClick={() => navigate(`/learn/${nb.id}`)}
+                        className={`shell__item body-medium${
+                          isActive && activeActivityId === activity.id ? " shell__item--active" : ""
+                        }`}
+                        onClick={() => navigate(`/project/${nb.id}/activity/${activity.id}`)}
                       >
-                        <Icon name="psychology" size={18} className="shell__item-icon" />
-                        <span className="shell__item-label">Learning coach</span>
+                        <Icon
+                          name={
+                            activity.kind === "coach"
+                              ? "psychology"
+                              : activity.kind === "interview"
+                                ? "work"
+                                : "school"
+                          }
+                          size={18}
+                          className="shell__item-icon"
+                        />
+                        <span className="shell__item-label">{activity.title}</span>
                       </button>
-                    )}
-                    {hasMain && (
-                      <button
-                        type="button"
-                        className={`shell__item body-medium${isActive && activeChat === "teach" ? " shell__item--active" : ""}`}
-                        onClick={() => navigate(`/notebook/${nb.id}`)}
-                      >
-                        <Icon name={nb.type === "interview" ? "work" : "school"} size={18} className="shell__item-icon" />
-                        <span className="shell__item-label">
-                          {nb.type === "interview" ? "Interview practice" : "Reverse tutor"}
-                        </span>
-                      </button>
-                    )}
+                    ))}
                     {nbReadings.map((r) => (
                       <button
                         key={r.id}
                         type="button"
-                        className="shell__item body-medium"
-                        onClick={() => navigate(`/learn/${nb.id}/read/${r.id}`)}
+                        className={`shell__item body-medium${
+                          isActive && activeReadingId === r.id ? " shell__item--active" : ""
+                        }`}
+                        onClick={() => navigate(`/project/${nb.id}/read/${r.id}`)}
                       >
                         <Icon name="auto_stories" size={18} className="shell__item-icon" />
                         <span className="shell__item-label">{r.source}</span>
@@ -422,7 +402,6 @@ export function CoachSidebar({
                       aria-label={`More options for ${notebook.title}`}
                       onClick={(event) => {
                         projectMenuAnchor.current = event.currentTarget;
-                        setAddMenuId(null);
                         setProjectMenuId(notebook.id);
                       }}
                     >
@@ -467,41 +446,6 @@ export function CoachSidebar({
       </aside>
 
       {narrow && drawerOpen && <div className="shell__scrim" onClick={() => setDrawerOpen(false)} />}
-
-      <Menu
-        open={addMenuId !== null}
-        onClose={() => setAddMenuId(null)}
-        anchorRef={addChatAnchor}
-        header={<span className="label-medium">Add a chat</span>}
-        items={[
-          ...(!addMenuNotebook?.hasCoachChat && !addedChats[addMenuNotebook?.id ?? ""]?.coach
-            ? [
-                {
-                  icon: "psychology" as const,
-                  label: "Learning coach",
-                  onSelect: () => {
-                    if (addMenuId) addChat(addMenuId, "coach");
-                  },
-                },
-              ]
-            : []),
-          ...(!(
-            addMenuNotebook?.type === "interview"
-              ? addMenuNotebook.hasInterviewChat
-              : addMenuNotebook?.hasTeachBackChat
-          ) && !addedChats[addMenuNotebook?.id ?? ""]?.main
-            ? [
-                {
-                  icon: addMenuNotebook?.type === "interview" ? ("work" as const) : ("school" as const),
-                  label: addMenuNotebook?.type === "interview" ? "Interview practice" : "Reverse tutor",
-                  onSelect: () => {
-                    if (addMenuId) addChat(addMenuId, "main");
-                  },
-                },
-              ]
-            : []),
-        ]}
-      />
 
       <Menu
         open={projectMenuId !== null}

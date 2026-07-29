@@ -1,0 +1,42 @@
+.add-activity__choices,
+.add-activity__interview {
+  display: grid;
+  gap: 16px;
+}
+
+.add-activity__choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 20px;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-low);
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-activity__choice:hover {
+  background: var(--md-sys-color-secondary-container);
+}
+
+.add-activity__choice > span {
+  display: grid;
+  gap: 4px;
+}
+
+.add-activity__field {
+  display: grid;
+  gap: 10px;
+}
+
+.add-activity__select {
+  min-height: 52px;
+  padding: 0 14px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 12px;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container);
+}

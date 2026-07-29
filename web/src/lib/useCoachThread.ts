@@ -48,8 +48,9 @@ function toCompleteMessages(snapshot: CoachSnapshot): CoachChatMessage[] {
  * notebookId only (one coach per notebook), plus a once-guarded auto-kickoff:
  * a fresh coach greets the user without them having to type first.
  */
-export function useCoachThread(notebookId: string): CoachThreadSession {
-  const cached = coachThreadCache.get(notebookId);
+export function useCoachThread(notebookId: string, activityId: string): CoachThreadSession {
+  const cacheKey = `${notebookId}:${activityId}`;
+  const cached = coachThreadCache.get(cacheKey);
   const [messages, setMessages] = useState<CoachChatMessage[]>(() => (cached ? toCompleteMessages(cached) : []));
   // Cached messages avoid a blank repaint, but controls stay disabled until the
   // fresh snapshot has rebuilt the reconciliation refs below.
@@ -92,29 +93,29 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
   }, [flushDeltas]);
 
   const loadCoach = useCallback(async () => {
-    const res = await api.getCoach(notebookId);
-    cacheCoach(notebookId, res);
+    const res = await api.getCoach(notebookId, activityId);
+    cacheCoach(cacheKey, res);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(toCompleteMessages(res));
     return res;
-  }, [notebookId]);
+  }, [notebookId, activityId, cacheKey]);
 
   useEffect(() => {
-    const prior = coachThreadCache.get(notebookId);
+    const prior = coachThreadCache.get(cacheKey);
     if (!prior) return;
-    cacheCoach(notebookId, {
+    cacheCoach(cacheKey, {
       ...prior,
       turnActive: status === "waiting" || status === "streaming",
       messages: messages
         .filter((message) => message.status === "complete" && !message.id.startsWith(STREAMING_ID_PREFIX))
         .map(({ id, role, text, interrupted, createdAt }) => ({ id, role, text, interrupted, createdAt })),
     });
-  }, [notebookId, messages, status]);
+  }, [cacheKey, messages, status]);
 
   // Initial load (and full reset when switching projects), plus auto-kickoff.
   useEffect(() => {
-    const previous = coachThreadCache.get(notebookId);
+    const previous = coachThreadCache.get(cacheKey);
     initialLoaded.current = false;
     kickoffTried.current = false;
     persistedCount.current = 0;
@@ -133,7 +134,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
         if (!res.coach.kickoffDone && res.messages.length === 0 && !res.turnActive && !kickoffTried.current) {
           kickoffTried.current = true;
           setStatus("waiting");
-          void api.coachKickoff(notebookId).catch((err) => {
+          void api.coachKickoff(notebookId, activityId).catch((err) => {
             if (cancelled) return;
             setStatus("error");
             setError(err instanceof Error ? err.message : "The coach couldn't start");
@@ -152,11 +153,11 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       rafPending.current = false;
       deltaBuffers.current.clear();
     };
-  }, [notebookId, loadCoach]);
+  }, [cacheKey, notebookId, activityId, loadCoach]);
 
   // SSE channel — one per open project.
   useEffect(() => {
-    const es = new EventSource(api.coachEventsUrl(notebookId));
+    const es = new EventSource(api.coachEventsUrl(notebookId, activityId));
 
     es.addEventListener("state", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as {
@@ -261,7 +262,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
     });
 
     return () => es.close();
-  }, [notebookId, loadCoach, scheduleFlush]);
+  }, [notebookId, activityId, loadCoach, scheduleFlush]);
 
   const send = useCallback(
     (text: string) => {
@@ -276,7 +277,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       persistedCount.current += 1;
       setError(null);
       setStatus("waiting");
-      void api.sendCoachMessage(notebookId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
+      void api.sendCoachMessage(notebookId, activityId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
         if (err instanceof ApiError && err.code === "turn_active") return; // SSE will drive the UI
         if (err instanceof ApiError && err.code === "turn_cancelled") {
           setStatus("idle");
@@ -289,7 +290,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
         setError(err instanceof Error ? err.message : "Failed to reach the coach");
       });
     },
-    [notebookId],
+    [notebookId, activityId],
   );
 
   const editMessage = useCallback(
@@ -311,7 +312,7 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
       ]);
       setError(null);
       setStatus("waiting");
-      void api.editCoachMessage(notebookId, messageId, trimmed, optimisticId).then(
+      void api.editCoachMessage(notebookId, activityId, messageId, trimmed, optimisticId).then(
         () => onSuccess?.(),
         (err) => {
           // A rejected edit leaves this tab's optimistic truncation wrong — resync.
@@ -325,24 +326,26 @@ export function useCoachThread(notebookId: string): CoachThreadSession {
         },
       );
     },
-    [notebookId, messages, loadCoach],
+    [notebookId, activityId, messages, loadCoach],
   );
 
   const interrupt = useCallback(() => {
-    void api.interruptCoach(notebookId).catch(() => {});
-  }, [notebookId]);
+    void api.interruptCoach(notebookId, activityId).catch(() => {});
+  }, [notebookId, activityId]);
 
   const retry = useCallback(() => {
     setError(null);
     setStatus("waiting");
     // A failed kickoff has no user message to retry — re-kickoff instead.
     const hasUserMessage = messages.some((m) => m.role === "user");
-    const call = hasUserMessage ? api.sendCoachMessage(notebookId, { retry: true }) : api.coachKickoff(notebookId);
+    const call = hasUserMessage
+      ? api.sendCoachMessage(notebookId, activityId, { retry: true })
+      : api.coachKickoff(notebookId, activityId);
     void call.catch((err) => {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Failed to reach the coach");
     });
-  }, [notebookId, messages]);
+  }, [notebookId, activityId, messages]);
 
   return { messages, status, activity, error, send, editMessage, interrupt, retry };
 }

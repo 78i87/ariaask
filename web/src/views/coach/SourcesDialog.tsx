@@ -16,6 +16,7 @@ import "./SourcesDialog.css";
 interface SourcesDialogProps {
   open: boolean;
   notebook: Notebook;
+  discovering: boolean;
   onClose: () => void;
   /** Open the add-materials dialog (upload / find online). */
   onAddMaterials: () => void;
@@ -31,7 +32,15 @@ interface SourcesDialogProps {
  * delete, and — for guided-reading-eligible PDFs — a one-tap reading action
  * that resumes the existing session when one exists, else starts the setup.
  */
-export function SourcesDialog({ open, notebook, onClose, onAddMaterials, onNewReading, onRefresh }: SourcesDialogProps) {
+export function SourcesDialog({
+  open,
+  notebook,
+  discovering,
+  onClose,
+  onAddMaterials,
+  onNewReading,
+  onRefresh,
+}: SourcesDialogProps) {
   const navigate = useNavigate();
   const snackbar = useSnackbar();
   const [readings, setReadings] = useState<ReadingSessionSummary[] | null>(null);
@@ -57,7 +66,7 @@ export function SourcesDialog({ open, notebook, onClose, onAddMaterials, onNewRe
     const existing = readingFor(f.storedName);
     if (existing) {
       onClose();
-      navigate(`/learn/${notebook.id}/read/${existing.id}`);
+      navigate(`/project/${notebook.id}/read/${existing.id}`);
     } else {
       onNewReading(f.storedName);
     }
@@ -93,7 +102,12 @@ export function SourcesDialog({ open, notebook, onClose, onAddMaterials, onNewRe
           </>
         }
       >
-        {notebook.sourceFiles.length === 0 ? (
+        {notebook.sourceFiles.length === 0 && discovering ? (
+          <div className="srcs__empty body-medium" aria-live="polite">
+            <ProgressIndicator size={20} />
+            <span>Finding sources… Useful pages will appear as Aria adds them.</span>
+          </div>
+        ) : notebook.sourceFiles.length === 0 ? (
           <p className="srcs__empty body-medium">
             No sources yet. Add lecture slides, chapters, papers or links — or ask your coach to find
             some online.

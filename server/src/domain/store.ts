@@ -132,16 +132,19 @@ export interface CoachState {
    */
   appliedMode?: string;
   /**
-   * originalNames of sources added AFTER the coach's pinned manifest was
-   * baked (uploads, discovery, link ingestion) — consumed as one hidden
-   * preamble line on the next coach turn, then cleared. The coach-side
-   * analogue of Aria's pendingNewSources (deliberately separate: session.ts
-   * consumes and clears that one).
+   * Sources changed AFTER the coach's pinned manifest was baked — consumed
+   * as one hidden preamble on the next coach turn, then cleared. Legacy
+   * strings are additions from schema-v1 and remain readable.
    */
-  pendingSourceNotes?: string[];
+  pendingSourceNotes?: Array<string | CoachSourceNotice>;
   createdAt: string;
   updatedAt: string;
   messages: CoachMessage[];
+}
+
+export interface CoachSourceNotice {
+  kind: "added" | "removed";
+  name: string;
 }
 
 export type ReadingLevel = "beginner" | "intermediate" | "experienced";
@@ -272,7 +275,7 @@ export interface StudyPlan {
   tasks: StudyPlanTask[];
 }
 
-/** Lazily initialize a notebook's coach conversation (caller persists). */
+/** Lazily initialize a coach activity's conversation (caller persists). */
 export function ensureCoachState(nb: Notebook): CoachState {
   if (!nb.coach) {
     const now = new Date().toISOString();
@@ -281,95 +284,133 @@ export function ensureCoachState(nb: Notebook): CoachState {
   return nb.coach;
 }
 
-/** Interview-project identity collected at creation. */
+/** Interview-activity identity collected when the activity is added. */
 export interface InterviewSetup {
   role: string;
   company: string | null;
 }
 
-export interface Notebook {
-  schemaVersion: 1;
+export type ActivityKind = "coach" | "reverse-tutor" | "interview";
+
+interface ActivityBase {
   id: string;
+  kind: ActivityKind;
   title: string;
-  type: "topic" | "files" | "interview";
-  topic: string | null;
-  sourceFiles: SourceFile[];
-  threadId: string | null;
-  /** Legacy (pre-settings); superseded by the global settings model. Kept so old files parse. */
-  model: string | null;
-  /**
-   * Student style baked into the current thread's developerInstructions at
-   * thread creation (instruction overrides cannot be changed on an existing
-   * thread). Absent on pre-settings notebooks = default/default.
-   */
-  appliedStyle?: { replyLength: string; probing: string };
-  /** storedNames added after thread creation that the student hasn't been told about yet. */
-  pendingNewSources?: string[];
-  /** originalNames of deleted sources the student still believes are assigned reading. */
-  pendingRemovedSources?: string[];
-  /**
-   * The student's belief inventory (see learning.ts) — what it currently
-   * knows, including prescribed misconceptions. Server-owned: injected into
-   * every student turn, updated only by the evaluator pass. Absent on
-   * pre-feature notebooks and when generation failed (full fallback to the
-   * self-invented-misconceptions behavior).
-   */
-  learningState?: LearningState;
-  /**
-   * The user's visible knowledge map (see knowledge.ts) — what the system infers
-   * the human teacher knows from teacher messages only. Kept separate from
-   * learningState, which remains Aria's private student-belief inventory.
-   */
-  userKnowledgeState?: KnowledgeState;
-  /**
-   * Pre-session setup form state (see intake.ts). Absent on pre-feature
-   * notebooks and when ARIA_NO_INTAKE=1 — absence means auto-kickoff as before.
-   */
-  intake?: Intake;
-  /** "Ask Cyra" expert conversations (see cyra-session.ts). Absent = none yet. */
-  cyraThreads?: CyraThread[];
-  /** A timestamp hides this project from the active section without deleting it. */
-  archivedAt?: string | null;
-  /** Interview practice configuration. Absent on ordinary learning projects. */
-  interview?: InterviewSetup;
-  /** The learning-coach conversation. Absent = never opened in the coach shell. */
-  coach?: CoachState;
-  /**
-   * Calibration answers gathered at project creation (coach shell). All
-   * optional; woven into the coach's pinned context and kickoff so the coach
-   * doesn't re-ask what's already answered.
-   */
-  coachIntake?: { goal?: string; current?: string; deadline?: string };
-  /** Guided readings of PDF sources (see reading.ts). Absent = none yet. */
-  readingSessions?: ReadingSession[];
-  /** The learning log (see journey.ts). Absent = no entries yet. */
-  learningLog?: LearningLogEntry[];
-  /** The study plan (see journey.ts). Absent = none drafted yet. */
-  studyPlan?: StudyPlan;
-  /**
-   * Creation path. Both values defer Aria intake until the reverse tutor is
-   * first opened, so a project that never uses teach-back spends no setup turn.
-   */
-  createdVia?: "coach" | "project";
-  kickoffDone: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MainActivityState {
+  threadId: string | null;
+  model: string | null;
+  appliedStyle?: { replyLength: string; probing: string };
+  pendingNewSources?: string[];
+  pendingRemovedSources?: string[];
+  learningState?: LearningState;
+  intake?: Intake;
+  cyraThreads?: CyraThread[];
+  kickoffDone: boolean;
+  messages: ChatMessage[];
+}
+
+export interface CoachActivity extends ActivityBase {
+  kind: "coach";
+  state: CoachState;
+}
+
+export interface ReverseTutorActivity extends ActivityBase, MainActivityState {
+  kind: "reverse-tutor";
+}
+
+export interface InterviewActivity extends ActivityBase, MainActivityState {
+  kind: "interview";
+  interview: InterviewSetup;
+  /** Shared project source selected as the candidate CV. */
+  cvSource: string | null;
+  /** Optional shared project source selected as the job description. */
+  jobDescriptionSource: string | null;
+  /** Interview coverage is activity-local, unlike the shared learner map. */
+  coverageState?: KnowledgeState;
+}
+
+export type NotebookActivity = CoachActivity | ReverseTutorActivity | InterviewActivity;
+
+export interface ActivitySummary {
+  id: string;
+  kind: ActivityKind;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  setupComplete: boolean;
+  interview?: InterviewSetup;
+}
+
+export function toActivitySummary(activity: NotebookActivity): ActivitySummary {
+  const state = activity.kind === "coach" ? activity.state : activity;
+  return {
+    id: activity.id,
+    kind: activity.kind,
+    title: activity.title,
+    createdAt: activity.createdAt,
+    updatedAt: activity.updatedAt,
+    messageCount: state.messages.length,
+    setupComplete: activity.kind !== "interview" || activity.cvSource !== null,
+    ...(activity.kind === "interview" ? { interview: activity.interview } : {}),
+  };
+}
+
+export interface Notebook {
+  schemaVersion: 2;
+  id: string;
+  title: string;
+  /** Immutable prompt context seeded from the creation field. */
+  goal: string;
+  sourceFiles: SourceFile[];
+  activities: NotebookActivity[];
+  /** Shared learner knowledge inferred across every reverse-tutor activity. */
+  userKnowledgeState?: KnowledgeState;
+  /** A timestamp hides this project from the active section without deleting it. */
+  archivedAt?: string | null;
+  /** Guided readings remain project-level and source-derived. */
+  readingSessions?: ReadingSession[];
+  /** Durable project-level learning memory shared by coach activities. */
+  learningLog?: LearningLogEntry[];
+  studyPlan?: StudyPlan;
+  createdAt: string;
+  updatedAt: string;
+
+  /*
+   * Activity-session facade fields. Raw schema-v2 project records do not
+   * serialize these at the root. NotebookStore.getSession() exposes a proxy
+   * that maps them to one concrete activity so the mature session engines can
+   * stay focused on turn behavior while activities become first-class.
+   */
+  type: "topic" | "interview";
+  topic: string | null;
+  threadId: string | null;
+  model: string | null;
+  appliedStyle?: { replyLength: string; probing: string };
+  pendingNewSources?: string[];
+  pendingRemovedSources?: string[];
+  learningState?: LearningState;
+  intake?: Intake;
+  cyraThreads?: CyraThread[];
+  interview?: InterviewSetup;
+  coach?: CoachState;
+  coachIntake?: { goal?: string; current?: string; deadline?: string };
+  kickoffDone: boolean;
   messages: ChatMessage[];
 }
 
 export interface NotebookSummary {
   id: string;
   title: string;
-  type: "topic" | "files" | "interview";
-  topic: string | null;
-  interview?: InterviewSetup;
+  goal: string;
   sourceFiles: SourceFile[];
+  activities: ActivitySummary[];
   createdAt: string;
-  lastTaughtAt: string | null;
-  messageCount: number;
-  hasCoachChat: boolean;
-  hasTeachBackChat: boolean;
-  hasInterviewChat: boolean;
+  updatedAt: string;
   archivedAt: string | null;
 }
 
@@ -378,24 +419,14 @@ export function isInterview(nb: Pick<Notebook, "type">): boolean {
 }
 
 export function toSummary(nb: Notebook): NotebookSummary {
-  const lastMsg = nb.messages[nb.messages.length - 1];
   return {
     id: nb.id,
     title: nb.title,
-    type: nb.type,
-    topic: nb.topic,
-    ...(nb.interview ? { interview: nb.interview } : {}),
+    goal: nb.goal,
     sourceFiles: nb.sourceFiles,
+    activities: nb.activities.map(toActivitySummary),
     createdAt: nb.createdAt,
-    lastTaughtAt: lastMsg ? lastMsg.createdAt : null,
-    messageCount: nb.messages.length,
-    hasCoachChat: nb.coach !== undefined,
-    hasTeachBackChat:
-      nb.type !== "interview" &&
-      (nb.intake !== undefined || nb.kickoffDone || nb.messages.length > 0 || nb.threadId !== null),
-    hasInterviewChat:
-      nb.type === "interview" &&
-      (nb.intake !== undefined || nb.kickoffDone || nb.messages.length > 0 || nb.threadId !== null),
+    updatedAt: nb.updatedAt,
     archivedAt: nb.archivedAt ?? null,
   };
 }
@@ -404,6 +435,9 @@ export class NotebookStore {
   private notebooks = new Map<string, Notebook>();
   /** Per-notebook promise chain so saves apply in order (no last-writer-wins loss). */
   private saveChains = new Map<string, Promise<void>>();
+  /** Session proxies resolve back to their raw project for persistence. */
+  private sessionRoots = new WeakMap<object, Notebook>();
+  private sessionKeys = new WeakMap<object, string>();
 
   constructor(private dataDir: string) {}
 
@@ -427,8 +461,13 @@ export class NotebookStore {
       const file = path.join(this.notebooksDir, entry.name, "notebook.json");
       try {
         const raw = await fs.readFile(file, "utf8");
-        const nb = JSON.parse(raw) as Notebook;
-        if (nb.schemaVersion === 1 && nb.id) this.notebooks.set(nb.id, nb);
+        const parsed = JSON.parse(raw) as { schemaVersion?: number; id?: string; activities?: unknown };
+        if (parsed.schemaVersion === 2 && parsed.id && Array.isArray(parsed.activities)) {
+          const nb = parsed as unknown as Notebook;
+          this.notebooks.set(nb.id, nb);
+        } else if (parsed.schemaVersion === 1) {
+          console.error(`[aria] skipping legacy project at ${file}; schema-v1 migration is intentionally unsupported`);
+        }
       } catch {
         console.error(`[aria] skipping unreadable notebook at ${file}`);
       }
@@ -438,30 +477,26 @@ export class NotebookStore {
   list(): NotebookSummary[] {
     return [...this.notebooks.values()]
       .map(toSummary)
-      .sort((a, b) => (b.lastTaughtAt ?? b.createdAt).localeCompare(a.lastTaughtAt ?? a.createdAt));
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   get(id: string): Notebook | undefined {
     return this.notebooks.get(id);
   }
 
-  /** Create the notebook directory structure and register an empty notebook. */
-  async create(fields: { title: string; type: Notebook["type"]; topic: string | null }, id: string = randomUUID()): Promise<Notebook> {
+  /** Create the project directory structure and register a neutral project. */
+  async create(fields: { title: string; goal: string }, id: string = randomUUID()): Promise<Notebook> {
     const now = new Date().toISOString();
-    const nb: Notebook = {
-      schemaVersion: 1,
+    const nb = {
+      schemaVersion: 2,
       id,
       title: fields.title,
-      type: fields.type,
-      topic: fields.topic,
+      goal: fields.goal,
       sourceFiles: [],
-      threadId: null,
-      model: null,
-      kickoffDone: false,
+      activities: [],
       createdAt: now,
       updatedAt: now,
-      messages: [],
-    };
+    } as unknown as Notebook;
     await fs.mkdir(this.sourcesDir(id), { recursive: true });
     this.notebooks.set(id, nb);
     await this.save(nb);
@@ -474,14 +509,268 @@ export class NotebookStore {
   }
 
   async save(nb: Notebook): Promise<void> {
-    nb.updatedAt = new Date().toISOString();
+    const root = this.sessionRoots.get(nb) ?? nb;
+    root.updatedAt = new Date().toISOString();
     // Snapshot synchronously so a queued save can't serialize a later mutation.
-    const json = JSON.stringify(nb, null, 2);
-    const file = path.join(this.notebookDir(nb.id), "notebook.json");
-    const prev = this.saveChains.get(nb.id) ?? Promise.resolve();
+    const json = JSON.stringify(root, null, 2);
+    const file = path.join(this.notebookDir(root.id), "notebook.json");
+    const prev = this.saveChains.get(root.id) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(() => writeFileAtomic(file, json));
-    this.saveChains.set(nb.id, next);
+    this.saveChains.set(root.id, next);
     await next;
+  }
+
+  getActivity(projectId: string, activityId: string): NotebookActivity | undefined {
+    return this.notebooks.get(projectId)?.activities.find((activity) => activity.id === activityId);
+  }
+
+  activityKey(projectId: string, activityId: string): string {
+    return `${projectId}:${activityId}`;
+  }
+
+  parseActivityKey(key: string): { projectId: string; activityId: string } | null {
+    const split = key.indexOf(":");
+    if (split < 1) return null;
+    return { projectId: key.slice(0, split), activityId: key.slice(split + 1) };
+  }
+
+  /**
+   * Return an activity-scoped facade for the existing turn engines. Direct
+   * project ids still resolve to the raw project for project SSE/discovery.
+   */
+  getSession(key: string): Notebook | undefined {
+    const parsed = this.parseActivityKey(key);
+    if (!parsed) return this.notebooks.get(key);
+    const root = this.notebooks.get(parsed.projectId);
+    const activity = root?.activities.find((candidate) => candidate.id === parsed.activityId);
+    if (!root || !activity) return undefined;
+
+    const main = activity.kind === "coach" ? null : activity;
+    const proxy = new Proxy(root, {
+      get: (target, property, receiver) => {
+        if (property === "type") return activity.kind === "interview" ? "interview" : "topic";
+        if (property === "topic") return target.goal;
+        if (property === "coach") return activity.kind === "coach" ? activity.state : undefined;
+        if (property === "coachIntake") return activity.kind === "coach" ? { goal: target.goal } : undefined;
+        if (property === "interview") return activity.kind === "interview" ? activity.interview : undefined;
+        if (property === "userKnowledgeState") {
+          return activity.kind === "interview" ? activity.coverageState : target.userKnowledgeState;
+        }
+        if (property === "sourceFiles" && activity.kind === "interview") {
+          return target.sourceFiles.map((source) => ({
+            ...source,
+            ...(source.storedName === activity.cvSource ? { kind: "cv" as const } : {}),
+            ...(source.storedName === activity.jobDescriptionSource ? { kind: "jd" as const } : {}),
+          }));
+        }
+        if (
+          main &&
+          [
+            "threadId",
+            "model",
+            "appliedStyle",
+            "pendingNewSources",
+            "pendingRemovedSources",
+            "learningState",
+            "intake",
+            "cyraThreads",
+            "kickoffDone",
+            "messages",
+          ].includes(String(property))
+        ) {
+          return Reflect.get(main, property);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      set: (target, property, value, receiver) => {
+        if (property === "userKnowledgeState") {
+          if (activity.kind === "interview") activity.coverageState = value as KnowledgeState | undefined;
+          else target.userKnowledgeState = value as KnowledgeState | undefined;
+          activity.updatedAt = new Date().toISOString();
+          return true;
+        }
+        if (property === "coach" && activity.kind === "coach") {
+          activity.state = value as CoachState;
+          activity.updatedAt = new Date().toISOString();
+          return true;
+        }
+        if (
+          main &&
+          [
+            "threadId",
+            "model",
+            "appliedStyle",
+            "pendingNewSources",
+            "pendingRemovedSources",
+            "learningState",
+            "intake",
+            "cyraThreads",
+            "kickoffDone",
+            "messages",
+          ].includes(String(property))
+        ) {
+          Reflect.set(main, property, value);
+          activity.updatedAt = new Date().toISOString();
+          return true;
+        }
+        return Reflect.set(target, property, value, receiver);
+      },
+      deleteProperty: (target, property) => {
+        if (property === "userKnowledgeState") {
+          if (activity.kind === "interview") delete activity.coverageState;
+          else delete target.userKnowledgeState;
+          return true;
+        }
+        if (property === "coach" && activity.kind === "coach") return false;
+        if (
+          main &&
+          [
+            "appliedStyle",
+            "pendingNewSources",
+            "pendingRemovedSources",
+            "learningState",
+            "intake",
+            "cyraThreads",
+          ].includes(String(property))
+        ) {
+          return Reflect.deleteProperty(main, property);
+        }
+        return Reflect.deleteProperty(target, property);
+      },
+    });
+    this.sessionRoots.set(proxy, root);
+    this.sessionKeys.set(proxy, key);
+    return proxy;
+  }
+
+  sessionKey(nb: Notebook): string {
+    return this.sessionKeys.get(nb) ?? nb.id;
+  }
+
+  async createActivity(
+    projectId: string,
+    input:
+      | { kind: "coach" | "reverse-tutor"; title?: string }
+      | {
+          kind: "interview";
+          title?: string;
+          interview: InterviewSetup;
+          cvSource: string;
+          jobDescriptionSource?: string | null;
+        },
+  ): Promise<NotebookActivity> {
+    const project = this.notebooks.get(projectId);
+    if (!project) throw new Error("notebook_not_found");
+    const now = new Date().toISOString();
+    const interviewInput = input.kind === "interview" ? input : null;
+    const label =
+      input.kind === "coach"
+        ? "Learning coach"
+        : input.kind === "reverse-tutor"
+          ? "Reverse tutor"
+          : interviewInput!.interview.company
+            ? `${interviewInput!.interview.role} — ${interviewInput!.interview.company}`
+            : interviewInput!.interview.role;
+    const requested = input.title?.trim() || label;
+    const used = new Set(project.activities.map((activity) => activity.title.toLocaleLowerCase()));
+    let title = requested;
+    let suffix = 2;
+    while (used.has(title.toLocaleLowerCase())) title = `${requested} ${suffix++}`;
+
+    const base = { id: randomUUID(), title, createdAt: now, updatedAt: now };
+    const activity: NotebookActivity =
+      input.kind === "coach"
+        ? {
+            ...base,
+            kind: "coach",
+            state: { threadId: null, kickoffDone: false, createdAt: now, updatedAt: now, messages: [] },
+          }
+        : input.kind === "reverse-tutor"
+          ? {
+              ...base,
+              kind: "reverse-tutor",
+              threadId: null,
+              model: null,
+              kickoffDone: false,
+              messages: [],
+            }
+          : {
+              ...base,
+              kind: "interview",
+              interview: interviewInput!.interview,
+              cvSource: interviewInput!.cvSource,
+              jobDescriptionSource: interviewInput!.jobDescriptionSource ?? null,
+              threadId: null,
+              model: null,
+              kickoffDone: false,
+              messages: [],
+            };
+    project.activities.push(activity);
+    await this.save(project);
+    return activity;
+  }
+
+  async renameActivity(projectId: string, activityId: string, title: string): Promise<NotebookActivity | undefined> {
+    const project = this.notebooks.get(projectId);
+    const activity = project?.activities.find((candidate) => candidate.id === activityId);
+    if (!project || !activity) return undefined;
+    activity.title = title;
+    activity.updatedAt = new Date().toISOString();
+    await this.save(project);
+    return activity;
+  }
+
+  queueSourceAdditions(project: Notebook, files: SourceFile[]): void {
+    for (const activity of project.activities) {
+      if (activity.kind === "coach") {
+        if (activity.state.kickoffDone) {
+          activity.state.pendingSourceNotes = [
+            ...(activity.state.pendingSourceNotes ?? []),
+            ...files.map((file) => ({ kind: "added" as const, name: file.originalName })),
+          ].slice(-10);
+        }
+      } else if (activity.kickoffDone || activity.threadId) {
+        activity.pendingNewSources = [
+          ...(activity.pendingNewSources ?? []),
+          ...files.map((file) => file.storedName),
+        ];
+      }
+    }
+  }
+
+  queueSourceRemoval(project: Notebook, file: SourceFile): void {
+    for (const activity of project.activities) {
+      if (activity.kind === "coach") {
+        if (activity.state.kickoffDone) {
+          activity.state.pendingSourceNotes = [
+            ...(activity.state.pendingSourceNotes ?? []),
+            { kind: "removed" as const, name: file.originalName },
+          ].slice(-10);
+        }
+        continue;
+      }
+      const neverAnnounced = (activity.pendingNewSources ?? []).includes(file.storedName);
+      if (activity.pendingNewSources?.length) {
+        activity.pendingNewSources = activity.pendingNewSources.filter((name) => name !== file.storedName);
+      }
+      if (!neverAnnounced && (activity.kickoffDone || activity.threadId)) {
+        activity.pendingRemovedSources = [...(activity.pendingRemovedSources ?? []), file.originalName];
+      }
+      if (activity.kind === "interview") {
+        if (activity.cvSource === file.storedName) activity.cvSource = null;
+        if (activity.jobDescriptionSource === file.storedName) activity.jobDescriptionSource = null;
+      }
+    }
+  }
+
+  async deleteActivity(projectId: string, activityId: string): Promise<NotebookActivity | undefined> {
+    const project = this.notebooks.get(projectId);
+    if (!project) return undefined;
+    const index = project.activities.findIndex((candidate) => candidate.id === activityId);
+    if (index < 0) return undefined;
+    const [activity] = project.activities.splice(index, 1);
+    await this.save(project);
+    return activity;
   }
 
   /** Wait for all in-flight saves to land. Used to drain before shutdown. */

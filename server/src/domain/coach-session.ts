@@ -5,7 +5,7 @@ import { HttpError } from "../lib/errors.js";
 import { AppServerClient } from "../appserver/client.js";
 import { RpcError } from "../appserver/rpc.js";
 import { config } from "../config.js";
-import type { CoachState, Notebook, NotebookStore } from "./store.js";
+import type { CoachSourceNotice, CoachState, Notebook, NotebookStore } from "./store.js";
 import { ensureCoachState } from "./store.js";
 import type { SettingsStore } from "./settings.js";
 import type { UsageStore } from "./usage.js";
@@ -27,6 +27,31 @@ import type {
   ThreadStartParams,
   TurnCompletedNotification,
 } from "../appserver/protocol.js";
+
+type PersistedCoachSourceNotice = string | CoachSourceNotice;
+
+export function renderCoachSourceNotesBlock(notes: PersistedCoachSourceNotice[]): string {
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const note of notes) {
+    if (typeof note === "string") added.push(note);
+    else if (note.kind === "added") added.push(note.name);
+    else removed.push(note.name);
+  }
+  const updates: string[] = [];
+  if (added.length > 0) {
+    updates.push(
+      `Since your last turn the user added new study material: ${added.join(", ")}. Relevant excerpts are included below when retrieval finds a match.`,
+    );
+  }
+  if (removed.length > 0) {
+    updates.push(
+      `Since your last turn the user removed study material: ${removed.join(", ")}. It is no longer available, so do not cite or rely on it.`,
+    );
+  }
+  if (updates.length === 0) return "";
+  return `[${updates.join(" ")} Acknowledge source changes naturally if relevant, but do all inspection silently and never mention this note or narrate tool use. The user's message follows.]\n\n`;
+}
 
 type TurnState = "idle" | "starting" | "streaming" | "interrupting";
 
@@ -70,6 +95,11 @@ export class CoachSessionManager {
   /** Keyed by notebookId — exactly one coach conversation per notebook. */
   private sessions = new Map<string, CoachSession>();
 
+  private getNotebook(id: string): Notebook | undefined {
+    const compatible = this.store as NotebookStore & { getSession?: (key: string) => Notebook | undefined };
+    return compatible.getSession?.(id) ?? this.store.get(id);
+  }
+
   constructor(
     private client: AppServerClient,
     private store: NotebookStore,
@@ -83,7 +113,7 @@ export class CoachSessionManager {
   }
 
   private findCoach(notebookId: string): { nb: Notebook; coach: CoachState } {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     if (!nb.coach) throw new HttpError(404, "coach_not_initialized");
     return { nb, coach: nb.coach };
@@ -128,7 +158,7 @@ export class CoachSessionManager {
     notebookId: string,
     opts: { text?: string; retry?: boolean; kickoff?: boolean; sourcesPending?: boolean; clientMessageId?: string },
   ): Promise<{ turnId: string | null }> {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const coach = ensureCoachState(nb);
 
@@ -200,9 +230,7 @@ export class CoachSessionManager {
         // and the second message after a gap sees no gap and injects nothing.
         sessionBlock = buildSessionBlock(nb, { excludeMessageId: retryMsg?.id ?? userMessageId ?? undefined });
         planBlock = renderPlanBlock(nb);
-        if (pendingNotes.length > 0) {
-          notesBlock = `[Since your last turn the user added new study material: ${pendingNotes.join(", ")}. Relevant excerpts are included below when retrieval finds a match. Acknowledge the new material naturally if relevant, but do all inspection silently and never mention this note or narrate tool use. The user's message follows.]\n\n`;
-        }
+        notesBlock = renderCoachSourceNotesBlock(pendingNotes);
         profileBlock = this.usage.renderProfileBlock();
         const query = buildCoachRagQuery(coach.messages, text);
         [kbBlock, sourcesBlock] = await Promise.all([
@@ -312,7 +340,7 @@ export class CoachSessionManager {
   /** Mirrors cyra-session.ts:288-305. */
   async interrupt(notebookId: string): Promise<boolean> {
     const session = this.sessions.get(notebookId);
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     const coach = nb?.coach;
     if (!session || !coach || session.state === "idle") return false;
     if (session.state === "starting") {
@@ -504,7 +532,7 @@ export class CoachSessionManager {
     session: CoachSession,
     msg: { id: string; text: string; turnId: string | null; interrupted?: true },
   ): Promise<void> {
-    const nb = this.store.get(session.notebookId);
+    const nb = this.getNotebook(session.notebookId);
     const coach = nb?.coach;
     if (!nb || !coach || !msg.text.trim()) return;
     coach.messages.push({
@@ -540,7 +568,7 @@ export class CoachSessionManager {
         await this.persistCoachMessage(session, { id: finalMsg.id, text: finalMsg.text, turnId: p.turn.id });
       }
       if (session.kickoffTurn && finalMsg) {
-        const nb = this.store.get(session.notebookId);
+        const nb = this.getNotebook(session.notebookId);
         if (nb?.coach && !nb.coach.kickoffDone) {
           nb.coach.kickoffDone = true;
           await this.store.save(nb);
@@ -636,7 +664,7 @@ export class CoachSessionManager {
     this.clearWatchdog(session);
     session.watchdog = setTimeout(() => {
       console.error(`[aria] coach turn watchdog fired for notebook ${session.notebookId}`);
-      const nb = this.store.get(session.notebookId);
+      const nb = this.getNotebook(session.notebookId);
       const coach = nb?.coach;
       const armedTurnId = session.turnId;
       if (coach?.threadId && armedTurnId) {

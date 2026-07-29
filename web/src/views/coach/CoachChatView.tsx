@@ -431,8 +431,11 @@ function CoachBubble({ message, interactive, send, onCopy, onEdit }: CoachBubble
  * edit-rewind affordance, no create-on-first-send (the coach kickoff greets
  * the user instead, driven by useCoachThread).
  */
-export function CoachChatView({ notebookId }: { notebookId: string }) {
-  const { messages, status, activity, error, send, editMessage, interrupt, retry } = useCoachThread(notebookId);
+export function CoachChatView({ notebookId, activityId }: { notebookId: string; activityId: string }) {
+  const { messages, status, activity, error, send, editMessage, interrupt, retry } = useCoachThread(
+    notebookId,
+    activityId,
+  );
   /** Rewind-and-resend edit: the message being edited + its draft text. */
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const snackbar = useSnackbar();
@@ -441,7 +444,7 @@ export function CoachChatView({ notebookId }: { notebookId: string }) {
 
   useEffect(() => {
     setEditing(null); // an edit drafted for one project must not leak into another
-  }, [notebookId]);
+  }, [notebookId, activityId]);
 
   const onCopy = (m: CoachChatMessage) => {
     navigator.clipboard.writeText(m.text).then(

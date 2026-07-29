@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { HttpError } from "../lib/errors.js";
-import type { LearningLogEntry, NotebookStore, SourceFile, StudyPlanTask } from "../domain/store.js";
-import { ensureCoachState, sanitizeName, toCyraThreadSummary, toSummary } from "../domain/store.js";
+import type { ActivityKind, LearningLogEntry, NotebookActivity, NotebookStore, SourceFile, StudyPlanTask } from "../domain/store.js";
+import { ensureCoachState, sanitizeName, toActivitySummary, toCyraThreadSummary, toSummary } from "../domain/store.js";
 import { SESSION_GAP_MS, computeDueTopics } from "../domain/journey.js";
 import type { SessionManager } from "../domain/session.js";
 import type { CyraSessionManager } from "../domain/cyra-session.js";
@@ -20,7 +20,7 @@ import { composeIntakeQuestions, type IntakeAnswers, type IntakeLevel } from "..
 import { dropRagIndex, ensureRagIndex } from "../domain/rag.js";
 import type { SettingsStore } from "../domain/settings.js";
 import { config } from "../config.js";
-import { downloadJobDescriptionFile } from "../domain/discover.js";
+import { downloadJobDescriptionFile, type DiscoveryRefinement } from "../domain/discover.js";
 import { normalizeResearchMarkdown } from "../domain/source-normalize.js";
 import { parseNotebookPatch } from "../domain/notebook-patch.js";
 import { INTERVIEW_FORMAT_QUESTION, INTERVIEW_ROUND_QUESTION } from "../domain/intake.js";
@@ -51,51 +51,66 @@ async function processUploads(
 ): Promise<{ sourceFiles: SourceFile[]; warnings: string[] }> {
   const warnings: string[] = [];
   const sourceFiles: SourceFile[] = [];
-  for (const f of files) {
-    const originalName = decodeOriginalName(f.originalname);
-    const ext = path.extname(f.filename).toLowerCase();
-    let extractedName: string | null = null;
-    let approxWords: number | null = null;
-    if (ext === ".pdf") {
-      const text = await extractPdfText(f.path);
-      if (text) {
-        // Reserve the extracted name against uploads too — an uploaded
-        // "lecture.extracted.txt" must not be overwritten by extraction.
-        const stem = path.basename(f.filename, ext);
-        let name = `${stem}.extracted.txt`;
-        let n = 1;
-        while (usedNames.has(name)) name = `${stem}.extracted-${n++}.txt`;
-        usedNames.add(name);
-        extractedName = name;
-        await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
-        approxWords = approxWordCount(text);
+  const createdNames = new Set(files.map((file) => file.filename));
+  try {
+    for (const f of files) {
+      const originalName = decodeOriginalName(f.originalname);
+      const ext = path.extname(f.filename).toLowerCase();
+      let extractedName: string | null = null;
+      let approxWords: number | null = null;
+      if (ext === ".pdf") {
+        const text = await extractPdfText(f.path);
+        if (text) {
+          // Reserve the extracted name against uploads too — an uploaded
+          // "lecture.extracted.txt" must not be overwritten by extraction.
+          const stem = path.basename(f.filename, ext);
+          let name = `${stem}.extracted.txt`;
+          let n = 1;
+          while (usedNames.has(name)) name = `${stem}.extracted-${n++}.txt`;
+          usedNames.add(name);
+          extractedName = name;
+          createdNames.add(extractedName);
+          await fs.writeFile(path.join(store.sourcesDir(id), extractedName), text, "utf8");
+          approxWords = approxWordCount(text);
+        } else {
+          warnings.push(`"${originalName}" appears to be a scanned or unreadable PDF; it may not be readable during the session.`);
+        }
       } else {
-        warnings.push(`"${originalName}" appears to be a scanned or unreadable PDF; it may not be readable during the session.`);
+        const text = await fs.readFile(f.path, "utf8").catch(() => "");
+        approxWords = approxWordCount(text);
       }
-    } else {
-      const text = await fs.readFile(f.path, "utf8").catch(() => "");
-      approxWords = approxWordCount(text);
+      sourceFiles.push({
+        originalName,
+        storedName: f.filename,
+        extractedName,
+        mimeType: f.mimetype,
+        size: f.size,
+        approxWords,
+      });
     }
-    sourceFiles.push({
-      originalName,
-      storedName: f.filename,
-      extractedName,
-      mimeType: f.mimetype,
-      size: f.size,
-      approxWords,
-    });
+    return { sourceFiles, warnings };
+  } catch (err) {
+    await Promise.all(
+      [...createdNames].map((name) => fs.rm(path.join(store.sourcesDir(id), name), { force: true }).catch(() => {})),
+    );
+    throw err;
   }
-  return { sourceFiles, warnings };
 }
 
 async function writePastedSource(
   store: NotebookStore,
   id: string,
   usedNames: Set<string>,
-  opts: { baseName: string; originalName: string; text: string; kind: "cv" | "jd" },
+  opts: { baseName: string; originalName: string; text: string },
 ): Promise<SourceFile> {
   const storedName = sanitizeName(opts.baseName, usedNames);
-  await fs.writeFile(path.join(store.sourcesDir(id), storedName), opts.text, "utf8");
+  const storedPath = path.join(store.sourcesDir(id), storedName);
+  try {
+    await fs.writeFile(storedPath, opts.text, "utf8");
+  } catch (err) {
+    await fs.rm(storedPath, { force: true }).catch(() => {});
+    throw err;
+  }
   return {
     originalName: opts.originalName,
     storedName,
@@ -103,8 +118,18 @@ async function writePastedSource(
     mimeType: "text/plain",
     size: Buffer.byteLength(opts.text, "utf8"),
     approxWords: approxWordCount(opts.text),
-    kind: opts.kind,
   };
+}
+
+async function removeSourceArtifacts(store: NotebookStore, id: string, files: readonly SourceFile[]): Promise<void> {
+  await Promise.all(
+    files.flatMap((file) => [
+      fs.rm(path.join(store.sourcesDir(id), file.storedName), { force: true }).catch(() => {}),
+      ...(file.extractedName
+        ? [fs.rm(path.join(store.sourcesDir(id), file.extractedName), { force: true }).catch(() => {})]
+        : []),
+    ]),
+  );
 }
 
 export function notebookRoutes(
@@ -145,6 +170,18 @@ export function notebookRoutes(
 
   const uploadFiles = upload.array("files", MAX_FILES);
 
+  const activitySession = (projectId: string, activityId: string, kinds?: ActivityKind[]) => {
+    const project = store.get(projectId);
+    if (!project) throw new HttpError(404, "notebook_not_found");
+    const activity = store.getActivity(projectId, activityId);
+    if (!activity) throw new HttpError(404, "activity_not_found");
+    if (kinds && !kinds.includes(activity.kind)) throw new HttpError(400, "wrong_activity_kind");
+    const key = store.activityKey(projectId, activityId);
+    const notebook = store.getSession(key);
+    if (!notebook) throw new HttpError(404, "activity_not_found");
+    return { project, activity, key, notebook };
+  };
+
   router.post(
     "/",
     async (req: UploadRequest, _res, next) => {
@@ -179,42 +216,17 @@ export function notebookRoutes(
     async (req: UploadRequest, res) => {
       const id = req.notebookId!;
       const body = req.body as Record<string, string | undefined>;
-      const type =
-        body.type === "files"
-          ? "files"
-          : body.type === "topic"
-            ? "topic"
-            : body.type === "interview"
-              ? "interview"
-              : null;
-      const topic = body.topic?.trim() || null;
+      const goal = body.goal?.trim().slice(0, 500) || null;
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-      const role = body.role?.trim().slice(0, 200) || null;
-      const company = body.company?.trim().slice(0, 200) || null;
-      const jobDescription = body.jobDescription?.trim().slice(0, 50_000) || null;
-      const cvText = body.cvText?.trim().slice(0, 200_000) || null;
-      const jdUrlRaw = body.jobDescriptionUrl?.trim().slice(0, 2000) || null;
-      const jobDescriptionUrl = jdUrlRaw && !/^https?:\/\//i.test(jdUrlRaw) ? `https://${jdUrlRaw}` : jdUrlRaw;
 
       const fail = async (status: number, code: string, message?: string) => {
         await fs.rm(store.notebookDir(id), { recursive: true, force: true });
         throw new HttpError(status, code, message);
       };
 
-      if (!type) await fail(400, "invalid_type", 'type must be "topic", "files" or "interview"');
-      if (type === "topic" && !topic) await fail(400, "missing_topic", "A topic is required");
-      if (type === "files" && files.length === 0) await fail(400, "missing_files", "At least one source file is required");
-      if (type === "interview" && !role) await fail(400, "missing_role", "A target role is required");
-      if (type === "interview" && files.length === 0 && !cvText) {
-        await fail(400, "missing_cv", "Provide a CV file or paste its text");
-      }
-      if (jobDescriptionUrl) {
-        try {
-          const url = new URL(jobDescriptionUrl);
-          if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("not http(s)");
-        } catch {
-          await fail(400, "invalid_jd_url", "The job description link isn't a valid URL");
-        }
+      if (!goal) {
+        await fail(400, "missing_goal", "Tell Aria what you're working on");
+        return;
       }
 
       const { sourceFiles, warnings } = await processUploads(store, id, files, req.usedNames!);
@@ -223,99 +235,9 @@ export function notebookRoutes(
       } catch {
         await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
       }
-      if (type === "interview") {
-        for (const file of sourceFiles) file.kind = "cv";
-        if (cvText) {
-          sourceFiles.push(
-            await writePastedSource(store, id, req.usedNames!, {
-              baseName: "cv.txt",
-              originalName: "CV (pasted)",
-              text: cvText,
-              kind: "cv",
-            }),
-          );
-          try {
-            assertSourceQuota([], sourceFiles);
-          } catch {
-            await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
-          }
-        }
-        if (jobDescription) {
-          sourceFiles.push(
-            await writePastedSource(store, id, req.usedNames!, {
-              baseName: "job-description.txt",
-              originalName: "Job description",
-              text: jobDescription,
-              kind: "jd",
-            }),
-          );
-          try {
-            assertSourceQuota([], sourceFiles);
-          } catch {
-            await fail(413, "source_quota_exceeded", "A notebook can contain at most 100 sources and 250MB of source files.");
-          }
-        }
-        if (jobDescriptionUrl) {
-          try {
-            sourceFiles.push(
-              await downloadJobDescriptionFile(store.sourcesDir(id), jobDescriptionUrl, req.usedNames!),
-            );
-            assertSourceQuota([], sourceFiles);
-          } catch (err) {
-            if (err instanceof HttpError && err.code === "source_quota_exceeded") {
-              await fail(413, err.code, err.message);
-            }
-            console.error(`[aria] job description fetch failed for notebook ${id}:`, err);
-            warnings.push(
-              "Couldn't fetch the job description link — you can paste the posting or add it as a source later.",
-            );
-          }
-        }
-      }
-
-      const title =
-        body.title?.trim() ||
-        (type === "topic"
-          ? topic!
-          : type === "interview"
-            ? company
-              ? `${role!} — ${company}`
-              : role!
-            : path.basename(
-                decodeOriginalName(files[0]!.originalname),
-                path.extname(decodeOriginalName(files[0]!.originalname)),
-              ));
-
-      const nb = await store.create({ title, type: type as "topic" | "files" | "interview", topic }, id);
+      const nb = await store.create({ title: goal, goal }, id);
       nb.sourceFiles = sourceFiles;
-      if (type === "interview") nb.interview = { role: role!, company };
-      if (body.coachFirst === "1") {
-        // Coach-shell creation: the coach conversation is the front door and
-        // Aria intake init is DEFERRED to the first teach-back open (GET /:id)
-        // so a project that never launches teach-back never spends a one-shot
-        // call generating intake questions.
-        nb.createdVia = "coach";
-        ensureCoachState(nb);
-        const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 300) : undefined);
-        const goal = clip(body.goal);
-        const current = clip(body.current);
-        const deadline = clip(body.deadline);
-        if (goal || current || deadline) nb.coachIntake = { goal, current, deadline };
-      } else if (body.projectFirst === "1" || type === "interview") {
-        // Project-first creation: sources and metadata exist before the user
-        // chooses a conversation. Coach and teach-back state are both lazily
-        // initialized from the sidebar's add-chat menu.
-        nb.createdVia = "project";
-        const clip = (s: string | undefined) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 300) : undefined);
-        const current = clip(body.current);
-        if (current) nb.coachIntake = { current };
-      } else if (!config.intakeDisabled) {
-        nb.intake = { status: "pending", generatedQuestions: null, answers: null, research: "none", submittedAt: null };
-      }
       await store.save(nb);
-      // Head start: generate the model-authored setup questions while the
-      // user's browser navigates to the session.
-      if (nb.intake) void sessions.ensureIntakeQuestions(nb);
       void ensureRagIndex(store, settings, nb);
 
       // Pasted links download in the background; the coach kickoff waits for
@@ -331,31 +253,223 @@ export function notebookRoutes(
     },
   );
 
-  router.get("/:id", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.get("/:id/activities", (req, res) => {
+    const project = store.get(req.params.id);
+    if (!project) throw new HttpError(404, "notebook_not_found");
+    res.json({ activities: project.activities.map(toActivitySummary) });
+  });
 
-    // Deferred Aria intake for coach-first projects: only the teach-back view
-    // calls this endpoint, so the first open is the moment to initialize the
-    // setup form (precedent: this handler already mutates intake state below).
-    if (
-      (nb.createdVia === "coach" || nb.createdVia === "project") &&
-      !nb.intake &&
-      !nb.kickoffDone &&
-      nb.messages.length === 0 &&
-      !config.intakeDisabled
-    ) {
-      nb.intake = {
-        status: "pending",
-        generatedQuestions: nb.type === "interview" ? [] : null,
-        answers: null,
-        research: "none",
-        submittedAt: null,
+  router.post(
+    "/:id/activities",
+    (req: UploadRequest, _res, next) => {
+      const project = store.get(req.params.id as string);
+      if (!project) return next(new HttpError(404, "notebook_not_found"));
+      req.notebookId = project.id;
+      req.usedNames = new Set(
+        project.sourceFiles.flatMap((file) =>
+          file.extractedName ? [file.storedName, file.extractedName] : [file.storedName],
+        ),
+      );
+      next();
+    },
+    (req: UploadRequest, _res, next) => {
+      uploadFiles(req, _res, (err: unknown) => {
+        if (!err) return next();
+        const written = (req.files as Express.Multer.File[] | undefined) ?? [];
+        for (const file of written) void fs.rm(file.path, { force: true }).catch(() => {});
+        next(
+          err instanceof multer.MulterError
+            ? new HttpError(400, "upload_rejected", err.message)
+            : err,
+        );
+      });
+    },
+    async (req: UploadRequest, res) => {
+      const project = store.get(req.params.id as string)!;
+      const body = req.body as Record<string, string | undefined>;
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      let uploaded: SourceFile[] = [];
+      let committed = false;
+      try {
+        const kind =
+          body.kind === "coach" || body.kind === "reverse-tutor" || body.kind === "interview"
+            ? body.kind
+            : null;
+        if (!kind) throw new HttpError(400, "invalid_activity_kind");
+      try {
+        assertSourceQuota(project.sourceFiles, files);
+      } catch (err) {
+        await Promise.all(files.map((file) => fs.rm(file.path, { force: true }).catch(() => {})));
+        throw err;
+      }
+      const processed = await processUploads(
+        store,
+        project.id,
+        files,
+        req.usedNames!,
+      );
+      uploaded = processed.sourceFiles;
+      const warnings = processed.warnings;
+      const requireSourceQuota = async (incoming: readonly { size: number }[]) => {
+        try {
+          assertSourceQuota(project.sourceFiles, incoming);
+        } catch (err) {
+          await removeSourceArtifacts(store, project.id, uploaded);
+          throw err;
+        }
       };
-      await store.save(nb);
-      if (nb.type !== "interview") void sessions.ensureIntakeQuestions(nb);
-    }
+      await requireSourceQuota(uploaded);
 
+      let activity: NotebookActivity;
+      if (kind === "interview") {
+        const role = body.role?.trim().slice(0, 200) || null;
+        const company = body.company?.trim().slice(0, 200) || null;
+        if (!role) throw new HttpError(400, "missing_role", "A target role is required");
+
+        let cvSource = body.cvSource?.trim() || uploaded[0]?.storedName || null;
+        if (body.cvText?.trim()) {
+          const text = body.cvText.trim().slice(0, 200_000);
+          await requireSourceQuota([...uploaded, { size: Buffer.byteLength(text, "utf8") }]);
+          const pasted = await writePastedSource(store, project.id, req.usedNames!, {
+            baseName: "cv.txt",
+            originalName: "CV (pasted)",
+            text,
+          });
+          uploaded.push(pasted);
+          cvSource = pasted.storedName;
+        }
+        if (!cvSource || ![...project.sourceFiles, ...uploaded].some((source) => source.storedName === cvSource)) {
+          throw new HttpError(400, "missing_cv", "Provide or select a CV");
+        }
+
+        let jobDescriptionSource = body.jobDescriptionSource?.trim() || null;
+        if (body.jobDescription?.trim()) {
+          const text = body.jobDescription.trim().slice(0, 50_000);
+          await requireSourceQuota([...uploaded, { size: Buffer.byteLength(text, "utf8") }]);
+          const pasted = await writePastedSource(store, project.id, req.usedNames!, {
+            baseName: "job-description.txt",
+            originalName: "Job description",
+            text,
+          });
+          uploaded.push(pasted);
+          jobDescriptionSource = pasted.storedName;
+        } else if (body.jobDescriptionUrl?.trim()) {
+          const raw = body.jobDescriptionUrl.trim().slice(0, 2000);
+          const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+          try {
+            const parsed = new URL(url);
+            if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("not http(s)");
+            const downloaded = await downloadJobDescriptionFile(store.sourcesDir(project.id), url, req.usedNames!);
+            delete downloaded.kind;
+            uploaded.push(downloaded);
+            await requireSourceQuota(uploaded);
+            jobDescriptionSource = downloaded.storedName;
+          } catch (err) {
+            if (err instanceof HttpError && err.code === "source_quota_exceeded") throw err;
+            warnings.push("Couldn't fetch the job description link; the interview was created without it.");
+          }
+        }
+        if (
+          jobDescriptionSource &&
+          ![...project.sourceFiles, ...uploaded].some((source) => source.storedName === jobDescriptionSource)
+        ) {
+          throw new HttpError(400, "invalid_job_description_source");
+        }
+
+        project.sourceFiles.push(...uploaded);
+        activity = await store.createActivity(project.id, {
+          kind,
+          interview: { role, company },
+          cvSource,
+          jobDescriptionSource,
+        });
+      } else {
+        if (uploaded.length > 0) {
+          project.sourceFiles.push(...uploaded);
+        }
+        activity = await store.createActivity(project.id, { kind });
+      }
+      committed = true;
+
+      const key = store.activityKey(project.id, activity.id);
+      const sessionNotebook = store.getSession(key)!;
+      if (kind !== "coach" && !config.intakeDisabled) {
+        sessionNotebook.intake = {
+          status: "pending",
+          generatedQuestions: kind === "interview" ? [] : null,
+          answers: null,
+          research: "none",
+          submittedAt: null,
+        };
+        await store.save(sessionNotebook);
+        if (kind === "reverse-tutor") void sessions.ensureIntakeQuestions(sessionNotebook);
+      }
+      if (uploaded.length > 0) {
+        store.queueSourceAdditions(project, uploaded);
+        await store.save(project);
+        void ensureRagIndex(store, settings, project, { retryNow: true });
+        sessions.broadcastSourcesUpdated(project.id);
+      }
+      res.status(201).json({
+        activity: toActivitySummary(activity),
+        notebook: toSummary(project),
+        warnings,
+      });
+      } catch (err) {
+        if (!committed) {
+          const uploadedNames = new Set(uploaded.map((file) => file.storedName));
+          project.sourceFiles = project.sourceFiles.filter((file) => !uploadedNames.has(file.storedName));
+          await removeSourceArtifacts(store, project.id, uploaded);
+          await Promise.all(files.map((file) => fs.rm(file.path, { force: true }).catch(() => {})));
+        }
+        throw err;
+      }
+    },
+  );
+
+  router.patch("/:id/activities/:aid", async (req, res) => {
+    const { project, activity } = activitySession(req.params.id, req.params.aid);
+    let changed = false;
+    if (req.body?.title !== undefined) {
+      const title = typeof req.body.title === "string" ? req.body.title.trim().slice(0, 200) : "";
+      if (!title) throw new HttpError(400, "missing_title");
+      activity.title = title;
+      changed = true;
+    }
+    if (req.body?.cvSource !== undefined) {
+      if (activity.kind !== "interview") throw new HttpError(400, "wrong_activity_kind");
+      const cvSource = typeof req.body.cvSource === "string" ? req.body.cvSource.trim() : "";
+      if (!project.sourceFiles.some((source) => source.storedName === cvSource)) {
+        throw new HttpError(400, "invalid_cv_source");
+      }
+      activity.cvSource = cvSource;
+      changed = true;
+    }
+    if (!changed) throw new HttpError(400, "empty_activity_patch");
+    activity.updatedAt = new Date().toISOString();
+    await store.save(project);
+    res.json({ activity: toActivitySummary(activity), notebook: toSummary(project) });
+  });
+
+  router.delete("/:id/activities/:aid", async (req, res) => {
+    const { project, activity, key } = activitySession(req.params.id, req.params.aid);
+    await sessions.dispose(key);
+    await cyra.disposeNotebook(key);
+    await coach.disposeNotebook(key);
+    await store.deleteActivity(project.id, activity.id);
+    if (activity.kind === "reverse-tutor") {
+      project.userKnowledgeState = undefined;
+      await store.save(project);
+      await sessions.rebuildKnowledgeStateForProjectSerialized(project.id);
+    }
+    res.status(204).end();
+  });
+
+  router.get("/:id/activities/:aid/session", async (req, res) => {
+    const { project, activity, key, notebook: nb } = activitySession(req.params.id, req.params.aid, [
+      "reverse-tutor",
+      "interview",
+    ]);
     if (nb.intake && nb.intake.status === "pending" && nb.intake.generatedQuestions === null) {
       // Wait briefly for question generation; past the cap, lock in the
       // deterministic-only form so it can never change under the user.
@@ -366,21 +480,22 @@ export function notebookRoutes(
       }
     }
     // Crash recovery: research marked running but no live session → failed.
-    if (nb.intake?.research === "running" && !sessions.getState(nb.id).turnActive) {
+    if (nb.intake?.research === "running" && !sessions.getState(key).turnActive) {
       nb.intake.research = "failed";
       await store.save(nb);
     }
 
-    const sessionState = sessions.getState(nb.id);
+    const sessionState = sessions.getState(key);
     const intakePending = nb.intake?.status === "pending" && nb.messages.length === 0;
     const knowledgeState = config.learningStateDisabled
       ? null
       : sessionState.turnActive || intakePending
         ? (nb.userKnowledgeState ?? null)
-        : sessions.ensureKnowledgeState(nb.id);
+        : sessions.ensureKnowledgeState(key);
 
     res.json({
-      notebook: toSummary(nb),
+      notebook: toSummary(project),
+      activity: toActivitySummary(activity),
       messages: nb.messages,
       turnActive: sessionState.turnActive,
       // Gated so the kill switch hides the map UI too — otherwise a previously
@@ -392,15 +507,14 @@ export function notebookRoutes(
     });
   });
 
-  router.post("/:id/intake", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.post("/:id/activities/:aid/intake", async (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["reverse-tutor", "interview"]);
     if (!nb.intake) throw new HttpError(409, "intake_unavailable", "This notebook has no setup form.");
     if (nb.intake.status === "done" || nb.kickoffDone || nb.messages.length > 0) {
       res.status(202).json({}); // idempotent no-op (double submit)
       return;
     }
-    if (sessions.getState(nb.id).turnActive) throw new HttpError(409, "turn_active");
+    if (sessions.getState(key).turnActive) throw new HttpError(409, "turn_active");
 
     const body = (req.body ?? {}) as {
       skip?: boolean;
@@ -484,9 +598,15 @@ export function notebookRoutes(
 
     // Call before responding: the pipeline's synchronous prefix occupies the
     // turn state machine, closing the race with a concurrent /messages POST.
-    const pipeline = sessions.runIntakePipeline(nb.id);
+    const pipeline = sessions.runIntakePipeline(key);
     res.status(202).json({});
     void pipeline.catch((err) => console.error("[aria] intake pipeline failed:", err));
+  });
+
+  router.get("/:id", (req, res) => {
+    const project = store.get(req.params.id);
+    if (!project) throw new HttpError(404, "notebook_not_found");
+    res.json({ notebook: toSummary(project) });
   });
 
   router.patch("/:id", async (req, res) => {
@@ -549,23 +669,15 @@ export function notebookRoutes(
       }
 
       const { sourceFiles, warnings } = await processUploads(store, nb.id, files, req.usedNames!);
-      if (nb.type === "interview" && (req.body as Record<string, string | undefined>).kind === "cv") {
-        for (const file of sourceFiles) file.kind = "cv";
-      }
       nb.sourceFiles.push(...sourceFiles);
-      // The live thread's instructions can't change — the student learns about
-      // these on the next turn via a hidden note (see session.ts).
-      nb.pendingNewSources = [...(nb.pendingNewSources ?? []), ...sourceFiles.map((f) => f.storedName)];
-      // Same for the coach's pinned manifest (its own note list — see coach-session.ts).
-      if (nb.coach?.kickoffDone) {
-        nb.coach.pendingSourceNotes = [...(nb.coach.pendingSourceNotes ?? []), ...sourceFiles.map((f) => f.originalName)].slice(-10);
-      }
+      store.queueSourceAdditions(nb, sourceFiles);
       await store.save(nb);
       // An explicit upload is also the user's signal to retry a failed embedder.
       void ensureRagIndex(store, settings, nb, { retryNow: true });
       void sessions.rebuildKnowledgeStateForNotebook(nb.id).catch((err) =>
         console.error(`[aria] user knowledge rebuild after upload failed for notebook ${nb.id}:`, err),
       );
+      sessions.broadcastSourcesUpdated(nb.id);
 
       res.status(201).json({ notebook: toSummary(nb), added: sourceFiles, warnings });
     },
@@ -582,31 +694,58 @@ export function notebookRoutes(
       await fs.rm(path.join(store.sourcesDir(nb.id), file.extractedName), { force: true });
     }
     nb.sourceFiles = nb.sourceFiles.filter((f) => f.storedName !== file.storedName);
-    // If the student was never told about this file (added and deleted between
-    // turns), drop the announcement and say nothing. Otherwise the pinned
-    // instructions still list it as reading — queue a removal note so the
-    // student stops treating it as assigned (see session.ts).
-    const neverAnnounced = (nb.pendingNewSources ?? []).includes(file.storedName);
-    if (nb.pendingNewSources?.length) {
-      nb.pendingNewSources = nb.pendingNewSources.filter((s) => s !== file.storedName);
-    }
-    if (!neverAnnounced) {
-      nb.pendingRemovedSources = [...(nb.pendingRemovedSources ?? []), file.originalName];
-    }
+    store.queueSourceRemoval(nb, file);
     await store.save(nb);
     // Retrieval already filters deleted sources by storedName; the rebuild compacts.
     void ensureRagIndex(store, settings, nb, { retryNow: true });
     void sessions.rebuildKnowledgeStateForNotebook(nb.id).catch((err) =>
       console.error(`[aria] user knowledge rebuild after source delete failed for notebook ${nb.id}:`, err),
     );
+    sessions.broadcastSourcesUpdated(nb.id);
 
     res.json({ notebook: toSummary(nb) });
   });
 
+  router.post("/:id/discover/clarify", async (req, res) => {
+    const body = (req.body ?? {}) as { request?: unknown; activityId?: unknown };
+    const request =
+      typeof body.request === "string" && body.request.trim() ? body.request.trim().slice(0, 1_000) : null;
+    if (!request) throw new HttpError(400, "missing_discovery_request", "Describe what the sources should help with.");
+    const activityId =
+      typeof body.activityId === "string" && body.activityId.trim() ? body.activityId.trim().slice(0, 200) : null;
+    res.json(await sessions.clarifyDiscovery(req.params.id, request, activityId));
+  });
+
   router.post("/:id/discover", async (req, res) => {
-    const body = (req.body ?? {}) as { query?: string };
-    const query = typeof body.query === "string" && body.query.trim() ? body.query.trim().slice(0, 300) : null;
-    const result = await sessions.startDiscovery(req.params.id, query);
+    const body = (req.body ?? {}) as {
+      request?: unknown;
+      /** Backward-compatible alias for older clients during this refactor. */
+      query?: unknown;
+      activityId?: unknown;
+      refinements?: unknown;
+    };
+    const rawRequest = typeof body.request === "string" ? body.request : body.query;
+    const request =
+      typeof rawRequest === "string" && rawRequest.trim() ? rawRequest.trim().slice(0, 1_000) : null;
+    const activityId =
+      typeof body.activityId === "string" && body.activityId.trim() ? body.activityId.trim().slice(0, 200) : null;
+    if (body.refinements !== undefined && !Array.isArray(body.refinements)) {
+      throw new HttpError(400, "invalid_discovery_refinements");
+    }
+    const refinements: DiscoveryRefinement[] = [];
+    for (const item of (body.refinements ?? []) as unknown[]) {
+      if (refinements.length >= 2) break;
+      if (typeof item !== "object" || item === null) throw new HttpError(400, "invalid_discovery_refinements");
+      const candidate = item as { question?: unknown; answer?: unknown };
+      if (typeof candidate.question !== "string" || typeof candidate.answer !== "string") {
+        throw new HttpError(400, "invalid_discovery_refinements");
+      }
+      const question = candidate.question.trim().slice(0, 160);
+      const answer = candidate.answer.trim().slice(0, 500);
+      if (!question || !answer) throw new HttpError(400, "invalid_discovery_refinements");
+      refinements.push({ question, answer });
+    }
+    const result = await sessions.startDiscovery(req.params.id, { request, refinements, activityId });
     res.status(202).json(result);
   });
 
@@ -653,9 +792,13 @@ export function notebookRoutes(
   router.delete("/:id", async (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
+    for (const activity of nb.activities) {
+      const key = store.activityKey(nb.id, activity.id);
+      await sessions.dispose(key);
+      await cyra.disposeNotebook(key);
+      await coach.disposeNotebook(key);
+    }
     await sessions.dispose(nb.id);
-    await cyra.disposeNotebook(nb.id);
-    await coach.disposeNotebook(nb.id);
     dropRagIndex(nb.id);
     await store.delete(nb.id);
     res.status(204).end();
@@ -676,22 +819,17 @@ export function notebookRoutes(
     }
   };
 
-  router.get("/:id/cyra", (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.get("/:id/activities/:aid/cyra", (req, res) => {
+    const { notebook: nb } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
     res.json({ threads: (nb.cyraThreads ?? []).map(toCyraThreadSummary) });
   });
 
   // Create-on-first-send: thread record + seed message + first turn, atomically.
-  router.post("/:id/cyra", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
-    if (nb.type === "interview") {
-      throw new HttpError(400, "cyra_unavailable", "Interview projects don't have Ask-Cyra side threads.");
-    }
+  router.post("/:id/activities/:aid/cyra", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string; sourceMessageId?: string };
     checkMessageLength(body.text);
-    const result = await cyra.startTurn(nb.id, {
+    const result = await cyra.startTurn(key, {
       cyraThreadId: null,
       text: body.text,
       clientMessageId: validClientMessageId(body.clientMessageId),
@@ -701,9 +839,8 @@ export function notebookRoutes(
     res.status(201).json(result);
   });
 
-  router.get("/:id/cyra/:tid", (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.get("/:id/activities/:aid/cyra/:tid", (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
     const ct = nb.cyraThreads?.find((t) => t.id === req.params.tid);
     if (!ct) throw new HttpError(404, "cyra_thread_not_found");
     res.json({
@@ -713,10 +850,11 @@ export function notebookRoutes(
     });
   });
 
-  router.post("/:id/cyra/:tid/messages", async (req, res) => {
+  router.post("/:id/activities/:aid/cyra/:tid/messages", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
     checkMessageLength(body.text);
-    const result = await cyra.startTurn(req.params.id, {
+    const result = await cyra.startTurn(key, {
       cyraThreadId: req.params.tid,
       text: body.text,
       retry: body.retry === true,
@@ -726,11 +864,12 @@ export function notebookRoutes(
   });
 
   // Rewind-and-resend within a Cyra conversation.
-  router.post("/:id/cyra/:tid/messages/:mid/edit", async (req, res) => {
+  router.post("/:id/activities/:aid/cyra/:tid/messages/:mid/edit", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
     checkMessageLength(body.text);
     const result = await cyra.editTurn(
-      req.params.id,
+      key,
       req.params.tid,
       req.params.mid,
       body.text,
@@ -739,15 +878,15 @@ export function notebookRoutes(
     res.status(202).json({ turnId: result.turnId });
   });
 
-  router.post("/:id/cyra/:tid/interrupt", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
-    await cyra.interrupt(nb.id, req.params.tid);
+  router.post("/:id/activities/:aid/cyra/:tid/interrupt", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
+    await cyra.interrupt(key, req.params.tid);
     res.status(202).json({});
   });
 
-  router.get("/:id/cyra/:tid/events", (req, res) => {
-    cyra.attach(req.params.id, req.params.tid, res);
+  router.get("/:id/activities/:aid/cyra/:tid/events", (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor"]);
+    cyra.attach(key, req.params.tid, res);
   });
 
   // ---------- Learning coach ----------
@@ -755,46 +894,43 @@ export function notebookRoutes(
   // Lazily initialize the coach conversation (pre-pivot notebooks get one on
   // first open in the coach shell). Read-check-then-set on the live object;
   // concurrent inits write identical values through the per-notebook save chain.
-  router.get("/:id/coach", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.get("/:id/activities/:aid/coach", async (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["coach"]);
     const hadCoach = nb.coach !== undefined;
     const state = ensureCoachState(nb);
     if (!hadCoach) await store.save(nb);
     res.json({
       coach: { kickoffDone: state.kickoffDone },
       messages: state.messages,
-      turnActive: coach.getState(nb.id).turnActive,
+      turnActive: coach.getState(key).turnActive,
     });
   });
 
   // Idempotent kickoff: no-op once done or while a turn is active.
-  router.post("/:id/coach/kickoff", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.post("/:id/activities/:aid/coach/kickoff", async (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["coach"]);
     const state = ensureCoachState(nb);
-    if (state.kickoffDone || coach.getState(nb.id).turnActive) {
+    if (state.kickoffDone || coach.getState(key).turnActive) {
       res.status(202).json({ turnId: null });
       return;
     }
     // Give pasted links a chance to land so the greeting knows the materials.
     const { stillRunning } = await awaitLinkIngestion(nb.id, 45_000);
     // Re-check after the wait: another tab may have kicked off meanwhile.
-    if (state.kickoffDone || coach.getState(nb.id).turnActive) {
+    if (state.kickoffDone || coach.getState(key).turnActive) {
       res.status(202).json({ turnId: null });
       return;
     }
-    const result = await coach.startTurn(nb.id, { kickoff: true, sourcesPending: stillRunning });
+    const result = await coach.startTurn(key, { kickoff: true, sourcesPending: stillRunning });
     res.status(202).json({ turnId: result.turnId });
   });
 
-  router.post("/:id/coach/messages", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.post("/:id/activities/:aid/coach/messages", async (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["coach"]);
     ensureCoachState(nb);
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
     checkMessageLength(body.text);
-    const result = await coach.startTurn(nb.id, {
+    const result = await coach.startTurn(key, {
       text: body.text,
       retry: body.retry === true,
       clientMessageId: validClientMessageId(body.clientMessageId),
@@ -803,25 +939,24 @@ export function notebookRoutes(
   });
 
   // Rewind-and-resend within the coach conversation.
-  router.post("/:id/coach/messages/:mid/edit", async (req, res) => {
+  router.post("/:id/activities/:aid/coach/messages/:mid/edit", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["coach"]);
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
     checkMessageLength(body.text);
-    const result = await coach.editTurn(req.params.id, req.params.mid, body.text, validClientMessageId(body.clientMessageId));
+    const result = await coach.editTurn(key, req.params.mid, body.text, validClientMessageId(body.clientMessageId));
     res.status(202).json({ turnId: result.turnId });
   });
 
-  router.post("/:id/coach/interrupt", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
-    await coach.interrupt(nb.id);
+  router.post("/:id/activities/:aid/coach/interrupt", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["coach"]);
+    await coach.interrupt(key);
     res.status(202).json({});
   });
 
-  router.get("/:id/coach/events", (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
+  router.get("/:id/activities/:aid/coach/events", (req, res) => {
+    const { key, notebook: nb } = activitySession(req.params.id, req.params.aid, ["coach"]);
     if (!nb.coach) ensureCoachState(nb); // benign in-memory init; persisted on first real write
-    coach.attach(nb.id, res);
+    coach.attach(key, res);
   });
 
   // ---------- Guided reading ----------
@@ -1042,16 +1177,23 @@ export function notebookRoutes(
     res.status(204).end();
   });
 
-  router.post("/:id/messages", async (req, res) => {
+  router.post("/:id/activities/:aid/messages", async (req, res) => {
     const body = (req.body ?? {}) as { text?: string; retry?: boolean; clientMessageId?: string };
     checkMessageLength(body.text);
     // A teach-back "use" is a teaching session, not a message: count when the
     // notebook has no messages yet or the last one is more than 4 hours old.
-    const nbBefore = store.get(req.params.id);
+    const { key, notebook: nbBefore } = activitySession(req.params.id, req.params.aid, [
+      "reverse-tutor",
+      "interview",
+    ]);
+    const activity = store.getActivity(req.params.id, req.params.aid);
+    if (activity?.kind === "interview" && !activity.cvSource) {
+      throw new HttpError(409, "interview_setup_incomplete", "Choose a CV before continuing this interview");
+    }
     const lastMsg = nbBefore?.messages[nbBefore.messages.length - 1];
     const newSession = !lastMsg || Date.now() - new Date(lastMsg.createdAt).getTime() > SESSION_GAP_MS;
     const result = await sessions.startTurn(
-      req.params.id,
+      key,
       body.text,
       body.retry === true,
       validClientMessageId(body.clientMessageId),
@@ -1067,11 +1209,12 @@ export function notebookRoutes(
   });
 
   // Rewind-and-resend: replaces the message and deletes everything after it.
-  router.post("/:id/messages/:mid/edit", async (req, res) => {
+  router.post("/:id/activities/:aid/messages/:mid/edit", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor", "interview"]);
     const body = (req.body ?? {}) as { text?: string; clientMessageId?: string };
     checkMessageLength(body.text);
     const result = await sessions.editTurn(
-      req.params.id,
+      key,
       req.params.mid,
       body.text,
       validClientMessageId(body.clientMessageId),
@@ -1079,17 +1222,21 @@ export function notebookRoutes(
     res.status(202).json(result);
   });
 
-  router.post("/:id/interrupt", async (req, res) => {
-    const nb = store.get(req.params.id);
-    if (!nb) throw new HttpError(404, "notebook_not_found");
-    await sessions.interrupt(nb.id);
+  router.post("/:id/activities/:aid/interrupt", async (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor", "interview"]);
+    await sessions.interrupt(key);
     res.status(202).json({});
+  });
+
+  router.get("/:id/activities/:aid/events", (req, res) => {
+    const { key } = activitySession(req.params.id, req.params.aid, ["reverse-tutor", "interview"]);
+    sessions.attach(key, res);
   });
 
   router.get("/:id/events", (req, res) => {
     const nb = store.get(req.params.id);
     if (!nb) throw new HttpError(404, "notebook_not_found");
-    sessions.attach(nb.id, res);
+    sessions.attachProject(nb.id, res);
   });
 
   return router;

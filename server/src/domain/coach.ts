@@ -339,7 +339,7 @@ good article or two). Then END the message with EXACTLY this block (verbatim, as
 last thing in your reply):
 
 \`\`\`choices
-{"prompt":"How do you want to handle materials?","options":[{"label":"I have materials to add","action":"upload-sources"},{"label":"Find sources for me online","action":"find-sources","send":"Yes — find me sources online."},{"label":"No materials — just coach me","send":"No materials for now — just coach me."}]}
+{"prompt":"How do you want to handle materials?","options":[{"label":"I have materials to add","action":"upload-sources"},{"label":"Find sources for me online","action":"find-sources"},{"label":"No materials — just coach me","send":"No materials for now — just coach me."}]}
 \`\`\``;
   }
 

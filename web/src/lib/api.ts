@@ -4,12 +4,15 @@ import type {
   ChatMessage,
   CyraThreadSummary,
   DueTopic,
+  DiscoveryClarificationQuestion,
+  DiscoveryRequest,
   GlobalDueTopic,
   Intake,
   IntakeAnswerPayload,
   KnowledgeState,
   LearningLogEntry,
   Notebook,
+  ProjectActivity,
   ReadingAnnotation,
   ReadingLevel,
   ReadingSession,
@@ -75,16 +78,17 @@ export const api = {
   listNotebooks: () => request<{ notebooks: Notebook[] }>("/api/notebooks"),
   createNotebook: (form: FormData) =>
     request<{ notebook: Notebook; warnings: string[] }>("/api/notebooks", { method: "POST", body: form }),
-  getNotebook: (id: string) =>
+  getNotebook: (id: string, activityId: string) =>
     request<{
       notebook: Notebook;
+      activity: ProjectActivity;
       messages: { id: string; role: "teacher" | "student"; text: string; interrupted?: boolean }[];
       turnActive: boolean;
       knowledgeState: KnowledgeState | null;
       intake: Intake | null;
-    }>(`/api/notebooks/${id}`),
-  submitIntake: (id: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>
-    request<Record<string, never>>(`/api/notebooks/${id}/intake`, json(payload)),
+    }>(`/api/notebooks/${id}/activities/${activityId}/session`),
+  submitIntake: (id: string, activityId: string, payload: { skip?: boolean; answers?: IntakeAnswerPayload }) =>
+    request<Record<string, never>>(`/api/notebooks/${id}/activities/${activityId}/intake`, json(payload)),
   renameNotebook: (id: string, title: string) =>
     request<{ notebook: Notebook }>(`/api/notebooks/${id}`, { ...json({ title }), method: "PATCH" }),
   updateNotebook: (id: string, patch: { title?: string; archived?: boolean }) =>
@@ -94,54 +98,91 @@ export const api = {
       body: JSON.stringify(patch),
     }),
   deleteNotebook: (id: string) => request<void>(`/api/notebooks/${id}`, { method: "DELETE" }),
+  createActivity: (id: string, form: FormData) =>
+    request<{ activity: ProjectActivity; notebook: Notebook; warnings: string[] }>(
+      `/api/notebooks/${id}/activities`,
+      { method: "POST", body: form },
+    ),
+  renameActivity: (id: string, activityId: string, title: string) =>
+    request<{ activity: ProjectActivity; notebook: Notebook }>(
+      `/api/notebooks/${id}/activities/${activityId}`,
+      { ...json({ title }), method: "PATCH" },
+    ),
+  updateActivity: (id: string, activityId: string, patch: { title?: string; cvSource?: string }) =>
+    request<{ activity: ProjectActivity; notebook: Notebook }>(
+      `/api/notebooks/${id}/activities/${activityId}`,
+      { ...json(patch), method: "PATCH" },
+    ),
+  deleteActivity: (id: string, activityId: string) =>
+    request<void>(`/api/notebooks/${id}/activities/${activityId}`, { method: "DELETE" }),
 
-  sendMessage: (id: string, text?: string, retry?: boolean, clientMessageId?: string) =>
+  sendMessage: (id: string, activityId: string, text?: string, retry?: boolean, clientMessageId?: string) =>
     request<{ turnId: string | null }>(
-      `/api/notebooks/${id}/messages`,
+      `/api/notebooks/${id}/activities/${activityId}/messages`,
       json(retry ? { retry: true } : text !== undefined ? { text, clientMessageId } : {}),
     ),
-  interrupt: (id: string) => request<unknown>(`/api/notebooks/${id}/interrupt`, { method: "POST" }),
+  interrupt: (id: string, activityId: string) =>
+    request<unknown>(`/api/notebooks/${id}/activities/${activityId}/interrupt`, { method: "POST" }),
   /** Rewind-and-resend: replaces the message and deletes everything after it. */
-  editMessage: (id: string, messageId: string, text: string, clientMessageId?: string) =>
-    request<{ turnId: string | null }>(`/api/notebooks/${id}/messages/${messageId}/edit`, json({ text, clientMessageId })),
+  editMessage: (id: string, activityId: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(
+      `/api/notebooks/${id}/activities/${activityId}/messages/${messageId}/edit`,
+      json({ text, clientMessageId }),
+    ),
 
-  listCyraThreads: (id: string) => request<{ threads: CyraThreadSummary[] }>(`/api/notebooks/${id}/cyra`),
-  createCyraThread: (id: string, body: { text: string; clientMessageId?: string; sourceMessageId?: string }) =>
-    request<{ thread: CyraThreadSummary; turnId: string | null }>(`/api/notebooks/${id}/cyra`, json(body)),
-  getCyraThread: (id: string, tid: string) =>
+  listCyraThreads: (id: string, activityId: string) =>
+    request<{ threads: CyraThreadSummary[] }>(`/api/notebooks/${id}/activities/${activityId}/cyra`),
+  createCyraThread: (id: string, activityId: string, body: { text: string; clientMessageId?: string; sourceMessageId?: string }) =>
+    request<{ thread: CyraThreadSummary; turnId: string | null }>(
+      `/api/notebooks/${id}/activities/${activityId}/cyra`,
+      json(body),
+    ),
+  getCyraThread: (id: string, activityId: string, tid: string) =>
     request<{
       thread: CyraThreadSummary;
       messages: { id: string; role: "user" | "cyra"; text: string; interrupted?: boolean }[];
       turnActive: boolean;
-    }>(`/api/notebooks/${id}/cyra/${tid}`),
-  sendCyraMessage: (id: string, tid: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
-    request<{ turnId: string | null }>(`/api/notebooks/${id}/cyra/${tid}/messages`, json(body)),
-  /** Rewind-and-resend within a Cyra conversation. */
-  editCyraMessage: (id: string, tid: string, messageId: string, text: string, clientMessageId?: string) =>
+    }>(`/api/notebooks/${id}/activities/${activityId}/cyra/${tid}`),
+  sendCyraMessage: (id: string, activityId: string, tid: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
     request<{ turnId: string | null }>(
-      `/api/notebooks/${id}/cyra/${tid}/messages/${messageId}/edit`,
+      `/api/notebooks/${id}/activities/${activityId}/cyra/${tid}/messages`,
+      json(body),
+    ),
+  /** Rewind-and-resend within a Cyra conversation. */
+  editCyraMessage: (id: string, activityId: string, tid: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(
+      `/api/notebooks/${id}/activities/${activityId}/cyra/${tid}/messages/${messageId}/edit`,
       json({ text, clientMessageId }),
     ),
-  interruptCyra: (id: string, tid: string) =>
-    request<unknown>(`/api/notebooks/${id}/cyra/${tid}/interrupt`, { method: "POST" }),
+  interruptCyra: (id: string, activityId: string, tid: string) =>
+    request<unknown>(`/api/notebooks/${id}/activities/${activityId}/cyra/${tid}/interrupt`, { method: "POST" }),
   /** Raw URL for the per-thread EventSource. */
-  cyraEventsUrl: (id: string, tid: string) => `/api/notebooks/${id}/cyra/${tid}/events`,
+  cyraEventsUrl: (id: string, activityId: string, tid: string) =>
+    `/api/notebooks/${id}/activities/${activityId}/cyra/${tid}/events`,
 
-  getCoach: (id: string) =>
+  getCoach: (id: string, activityId: string) =>
     request<{
       coach: { kickoffDone: boolean };
       messages: { id: string; role: "user" | "coach"; text: string; interrupted?: boolean; createdAt?: string }[];
       turnActive: boolean;
-    }>(`/api/notebooks/${id}/coach`),
-  coachKickoff: (id: string) => request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/kickoff`, { method: "POST" }),
-  sendCoachMessage: (id: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
-    request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/messages`, json(body)),
+    }>(`/api/notebooks/${id}/activities/${activityId}/coach`),
+  coachKickoff: (id: string, activityId: string) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/activities/${activityId}/coach/kickoff`, { method: "POST" }),
+  sendCoachMessage: (id: string, activityId: string, body: { text?: string; retry?: boolean; clientMessageId?: string }) =>
+    request<{ turnId: string | null }>(`/api/notebooks/${id}/activities/${activityId}/coach/messages`, json(body)),
   /** Rewind-and-resend within the coach conversation. */
-  editCoachMessage: (id: string, messageId: string, text: string, clientMessageId?: string) =>
-    request<{ turnId: string | null }>(`/api/notebooks/${id}/coach/messages/${messageId}/edit`, json({ text, clientMessageId })),
-  interruptCoach: (id: string) => request<unknown>(`/api/notebooks/${id}/coach/interrupt`, { method: "POST" }),
+  editCoachMessage: (id: string, activityId: string, messageId: string, text: string, clientMessageId?: string) =>
+    request<{ turnId: string | null }>(
+      `/api/notebooks/${id}/activities/${activityId}/coach/messages/${messageId}/edit`,
+      json({ text, clientMessageId }),
+    ),
+  interruptCoach: (id: string, activityId: string) =>
+    request<unknown>(`/api/notebooks/${id}/activities/${activityId}/coach/interrupt`, { method: "POST" }),
   /** Raw URL for the coach EventSource. */
-  coachEventsUrl: (id: string) => `/api/notebooks/${id}/coach/events`,
+  coachEventsUrl: (id: string, activityId: string) =>
+    `/api/notebooks/${id}/activities/${activityId}/coach/events`,
+  activityEventsUrl: (id: string, activityId: string) =>
+    `/api/notebooks/${id}/activities/${activityId}/events`,
   /** Raw URL for the notebook (teach-back) EventSource — sources/discovery updates. */
   notebookEventsUrl: (id: string) => `/api/notebooks/${id}/events`,
 
@@ -187,7 +228,12 @@ export const api = {
       method: "POST",
       body: form,
     }),
-  discoverSources: (id: string, body: { query?: string }) =>
+  clarifyDiscovery: (id: string, body: { request: string; activityId?: string }) =>
+    request<{ questions: DiscoveryClarificationQuestion[]; tailored: boolean }>(
+      `/api/notebooks/${id}/discover/clarify`,
+      json(body),
+    ),
+  discoverSources: (id: string, body: DiscoveryRequest) =>
     request<{ accepted: true }>(`/api/notebooks/${id}/discover`, json(body)),
   deleteSource: (id: string, storedName: string) =>
     request<{ notebook: Notebook }>(`/api/notebooks/${id}/sources/${encodeURIComponent(storedName)}`, {

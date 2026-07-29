@@ -77,6 +77,7 @@ function CyraBubble({ message, onCopy, onEdit }: CyraBubbleProps) {
 
 interface CyraThreadViewProps {
   notebookId: string;
+  activityId: string;
   /** null = the new-question view (draft composer, thread created on first send). */
   threadId: string | null;
   draft: string;
@@ -105,6 +106,7 @@ interface CyraThreadViewProps {
  */
 export function CyraThreadView({
   notebookId,
+  activityId,
   threadId,
   draft,
   onDraftChange,
@@ -118,6 +120,7 @@ export function CyraThreadView({
 }: CyraThreadViewProps) {
   const { messages, status, activity, error, send, editMessage, interrupt, retry } = useCyraThread(
     notebookId,
+    activityId,
     threadId,
   );
   /** The seed text while the create-on-first-send POST is in flight. */
@@ -181,7 +184,7 @@ export function CyraThreadView({
   const createThread = (text: string) => {
     setCreating(text);
     void api
-      .createCyraThread(notebookId, {
+      .createCyraThread(notebookId, activityId, {
         text,
         clientMessageId: crypto.randomUUID(),
         sourceMessageId: sourceMessageId ?? undefined,

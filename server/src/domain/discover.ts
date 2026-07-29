@@ -41,6 +41,23 @@ export interface DiscoverFailure {
   reason: string;
 }
 
+export interface DiscoveryClarificationOption {
+  value: string;
+  label: string;
+}
+
+export interface DiscoveryClarificationQuestion {
+  id: string;
+  question: string;
+  options: DiscoveryClarificationOption[];
+  allowsCustom: true;
+}
+
+export interface DiscoveryRefinement {
+  question: string;
+  answer: string;
+}
+
 interface DownloadedContent {
   title: string;
   url: string;
@@ -83,11 +100,107 @@ function loadHtmlTools(): Promise<HtmlTools> {
   return htmlToolsPromise;
 }
 
+export function buildDiscoveryClarificationPrompt(opts: {
+  topic: string;
+  activity: "workspace" | "coach" | "reverse-tutor" | "interview";
+  activityTitle: string | null;
+  interviewTarget: string | null;
+  focus: string | null;
+  request: string;
+  manifest: string | null;
+}): string {
+  return `You are shaping an online source search for a learning project. The user has described
+what they want sources to help with. Ask at most two short multiple-choice clarification
+questions only when the answers would materially improve which sources should be selected.
+Output JSON only — no prose and no markdown fence.
+
+Project goal: ${opts.topic}
+Search request: ${opts.request}
+Originating activity: ${opts.activity}${opts.activityTitle ? ` ("${opts.activityTitle}")` : ""}
+${opts.interviewTarget ? `Interview target: ${opts.interviewTarget}` : ""}
+${opts.focus ? `Existing session focus: ${opts.focus}` : ""}
+${opts.manifest ? `Existing project sources:\n${opts.manifest}` : ""}
+
+Good clarification targets include the concrete outcome, desired depth, source type, or
+which part of a broad subject matters now. Do not ask for information already explicit
+above. Do not ask about search keywords, number of sources, or permission to search.
+For interview work, prioritize the interview stage, competency, or company/role evidence
+the candidate wants. For teaching or coaching, prioritize what the learner needs to
+understand, practise, or produce.
+
+Rules:
+- Return zero questions when the request is already specific enough. This is a normal outcome.
+- Otherwise return one or two questions, each under 100 characters.
+- Give each question 3 to 5 distinct, concise options under 70 characters.
+- The UI adds an "Other…" option, so do not include one.
+- Use stable kebab-case ids.
+
+Output exactly:
+{"questions":[{"id":"short-id","question":"...","options":["...","...","..."]}]}`;
+}
+
+function clarificationSlug(value: string, used: Set<string>): string {
+  const base =
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "question";
+  let id = base;
+  let suffix = 2;
+  while (used.has(id)) id = `${base}-${suffix++}`;
+  used.add(id);
+  return id;
+}
+
+/** [] is a valid, specific-enough response; null means malformed model output. */
+export function parseDiscoveryClarificationQuestions(raw: string): DiscoveryClarificationQuestion[] | null {
+  const obj = extractJsonObject(raw);
+  if (!obj || !Array.isArray(obj.questions)) return null;
+  const used = new Set<string>();
+  const questions: DiscoveryClarificationQuestion[] = [];
+  for (const item of obj.questions.slice(0, 2)) {
+    if (typeof item !== "object" || item === null) continue;
+    const candidate = item as Record<string, unknown>;
+    if (typeof candidate.question !== "string" || !candidate.question.trim()) continue;
+    if (!Array.isArray(candidate.options)) continue;
+    const seen = new Set<string>();
+    const options: DiscoveryClarificationOption[] = [];
+    for (const rawOption of candidate.options.slice(0, 5)) {
+      if (typeof rawOption !== "string") continue;
+      const label = rawOption.trim().slice(0, 70);
+      if (!label || seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      options.push({ value: label, label });
+    }
+    if (options.length < 3) continue;
+    questions.push({
+      id: clarificationSlug(
+        typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : candidate.question,
+        used,
+      ),
+      question: candidate.question.trim().slice(0, 100),
+      options,
+      allowsCustom: true,
+    });
+  }
+  return questions;
+}
+
+function renderDiscoveryBrief(request: string | null, refinements: DiscoveryRefinement[]): string {
+  const lines = [
+    request ? `What the user needs these sources to help with: ${request}` : null,
+    ...refinements.map(({ question, answer }) => `- ${question}: ${answer}`),
+  ].filter((line): line is string => line !== null);
+  return lines.length > 0 ? lines.join("\n") : "No additional request; infer the best source mix from the project context.";
+}
+
 export function buildDiscoverPrompt(opts: {
   topic: string;
   focus: string | null;
   note: string | null;
-  query: string | null;
+  request: string | null;
+  refinements?: DiscoveryRefinement[];
   manifest: string | null;
   knownUrls: string[];
   max: number;
@@ -98,7 +211,8 @@ teach a simulated student named Aria. Use the web search tool now and return rea
 publicly available source URLs that the server can download into the session.
 
 Subject: ${opts.topic}
-${opts.query ? `Specific source request from the teacher: ${opts.query}` : ""}
+Search brief:
+${renderDiscoveryBrief(opts.request, opts.refinements ?? [])}
 ${opts.focus ? `The teacher plans to focus the session on: ${opts.focus}.` : ""}
 ${opts.note ? `The teacher's note about what to find: ${opts.note}` : ""}
 ${
@@ -140,7 +254,8 @@ export function buildInterviewDiscoverPrompt(opts: {
   role: string;
   company: string | null;
   note: string | null;
-  query: string | null;
+  request: string | null;
+  refinements?: DiscoveryRefinement[];
   manifest: string | null;
   knownUrls: string[];
   max: number;
@@ -150,7 +265,8 @@ export function buildInterviewDiscoverPrompt(opts: {
   return `You are gathering background material for a simulated job interview. An AI interviewer is
 about to interview a human candidate for: ${target}. Use the web search tool now and return
 real, publicly available URLs that the server can download to prepare the interviewer.
-${opts.query ? `Specific request from the candidate: ${opts.query}` : ""}
+Search brief:
+${renderDiscoveryBrief(opts.request, opts.refinements ?? [])}
 ${opts.note ? `The candidate's note about what to find: ${opts.note}` : ""}
 
 Find, in order of value:
@@ -324,6 +440,24 @@ async function assertPublicUrl(u: URL): Promise<{ address: string; family: 4 | 6
   return addresses.map((addr) => ({ address: addr.address, family: addr.family as 4 | 6 }));
 }
 
+type PinnedLookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | { address: string; family: number }[],
+  family?: number,
+) => void;
+
+/** Match both scalar and `all: true` lookup callback shapes used by Node/Undici. */
+export function createPinnedLookup(target: { address: string; family: 4 | 6 }) {
+  return (
+    _hostname: string,
+    options: { all?: boolean },
+    callback: PinnedLookupCallback,
+  ): void => {
+    if (options.all) callback(null, [{ address: target.address, family: target.family }]);
+    else callback(null, target.address, target.family);
+  };
+}
+
 function withTimeout(signal: AbortSignal | undefined): { signal: AbortSignal; done: () => void } {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
@@ -347,7 +481,7 @@ async function fetchWithRedirects(
       connect: {
         // The original URL still supplies Host and TLS SNI, but the socket can
         // connect only to the address that passed the private-range policy.
-        lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
+        lookup: createPinnedLookup(target),
       },
     });
     const timeout = withTimeout(signal);
@@ -390,7 +524,10 @@ async function fetchWithRedirects(
 
 async function readCapped(response: Awaited<ReturnType<typeof undiciFetch>>): Promise<Buffer> {
   const len = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(len) && len > MAX_RESPONSE_BYTES) throw new Error("response too large");
+  if (Number.isFinite(len) && len > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("response too large");
+  }
   if (!response.body) {
     const buf = Buffer.from(await response.arrayBuffer());
     if (buf.byteLength > MAX_RESPONSE_BYTES) throw new Error("response too large");
@@ -424,6 +561,13 @@ function decodeText(bytes: Buffer, contentType: string): string {
 
 export function cleanTitle(title: string, fallback: string): string {
   return title.replace(/\s+/g, " ").trim().slice(0, 140) || fallback;
+}
+
+export function preferReadableTitle(title: string, fallback: string): string {
+  const cleaned = cleanTitle(title, fallback);
+  const looksLikeUiToken = /^[a-z0-9]+(?:[-_][a-z0-9]+){2,}$/i.test(cleaned);
+  const containsPlaceholder = /(?:^|[-_\s])(empty|undefined|null)(?:$|[-_\s])/i.test(cleaned);
+  return looksLikeUiToken || containsPlaceholder ? fallback : cleaned;
 }
 
 /**
@@ -507,7 +651,7 @@ async function fetchSourcePage(
       if (!article || !article.textContent || approxWordCount(article.textContent) < (opts.minWords ?? MIN_KEEP_WORDS)) {
         throw new Error("no readable article text");
       }
-      const title = cleanTitle(article.title || dom.window.document.title, fallback);
+      const title = preferReadableTitle(article.title || dom.window.document.title, fallback);
       const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
       turndown.addRule("tables", {
         filter: ["table"],
@@ -731,33 +875,45 @@ export async function downloadJobDescriptionFile(
     const bytes = content.bytes!;
     const storedName = sanitizeName("job-description.pdf", usedNames);
     const pdfPath = path.join(sourcesDir, storedName);
-    await fs.writeFile(pdfPath, bytes);
-    // Extraction failure keeps the PDF (mirrors uploads): the kickoff read may
-    // still manage, and the preview shows the original either way.
-    const extracted = await extractPdfText(pdfPath);
     let extractedName: string | null = null;
-    let approxWords: number | null = null;
-    if (extracted && extracted.trim()) {
-      extractedName = reserveExtractedName(storedName, usedNames);
-      const extractedText = truncateWords(extracted, finalUrl);
-      await fs.writeFile(path.join(sourcesDir, extractedName), extractedText, "utf8");
-      approxWords = approxWordCount(extractedText);
+    try {
+      await fs.writeFile(pdfPath, bytes);
+      // Extraction failure keeps the PDF (mirrors uploads): the kickoff read may
+      // still manage, and the preview shows the original either way.
+      const extracted = await extractPdfText(pdfPath);
+      let approxWords: number | null = null;
+      if (extracted && extracted.trim()) {
+        extractedName = reserveExtractedName(storedName, usedNames);
+        const extractedText = truncateWords(extracted, finalUrl);
+        await fs.writeFile(path.join(sourcesDir, extractedName), extractedText, "utf8");
+        approxWords = approxWordCount(extractedText);
+      }
+      return {
+        originalName: "Job description",
+        storedName,
+        extractedName,
+        mimeType: "application/pdf",
+        size: bytes.byteLength,
+        approxWords,
+        originUrl: finalUrl,
+        kind: "jd",
+      };
+    } catch (err) {
+      await fs.rm(pdfPath, { force: true }).catch(() => {});
+      if (extractedName) await fs.rm(path.join(sourcesDir, extractedName), { force: true }).catch(() => {});
+      throw err;
     }
-    return {
-      originalName: "Job description",
-      storedName,
-      extractedName,
-      mimeType: "application/pdf",
-      size: bytes.byteLength,
-      approxWords,
-      originUrl: finalUrl,
-      kind: "jd",
-    };
   }
 
   const text = content.text!;
   const storedName = sanitizeName("job-description.md", usedNames);
-  await fs.writeFile(path.join(sourcesDir, storedName), text, "utf8");
+  const storedPath = path.join(sourcesDir, storedName);
+  try {
+    await fs.writeFile(storedPath, text, "utf8");
+  } catch (err) {
+    await fs.rm(storedPath, { force: true }).catch(() => {});
+    throw err;
+  }
   return {
     originalName: "Job description",
     storedName,

@@ -55,6 +55,11 @@ export class CyraSessionManager {
   /** Keyed by cyraThreadId (uuid — globally unique, no notebook prefix needed). */
   private sessions = new Map<string, CyraSession>();
 
+  private getNotebook(id: string): Notebook | undefined {
+    const compatible = this.store as NotebookStore & { getSession?: (key: string) => Notebook | undefined };
+    return compatible.getSession?.(id) ?? this.store.get(id);
+  }
+
   constructor(
     private client: AppServerClient,
     private store: NotebookStore,
@@ -66,7 +71,7 @@ export class CyraSessionManager {
   }
 
   private findThread(notebookId: string, cyraThreadId: string): { nb: Notebook; ct: CyraThread } {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const ct = nb.cyraThreads?.find((t) => t.id === cyraThreadId);
     if (!ct) throw new HttpError(404, "cyra_thread_not_found");
@@ -114,7 +119,7 @@ export class CyraSessionManager {
       sourceMessageId?: string | null;
     },
   ): Promise<{ thread: CyraThreadSummary; turnId: string | null }> {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
 
     let ct: CyraThread;
@@ -310,7 +315,7 @@ export class CyraSessionManager {
   /** Mirrors session.ts:303-324. */
   async interrupt(notebookId: string, cyraThreadId: string): Promise<boolean> {
     const session = this.sessions.get(cyraThreadId);
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     const ct = nb?.cyraThreads?.find((t) => t.id === cyraThreadId);
     if (!session || !ct || session.state === "idle") return false;
     if (session.state === "starting") {
@@ -497,7 +502,7 @@ export class CyraSessionManager {
     session: CyraSession,
     msg: { id: string; text: string; turnId: string | null; interrupted?: true },
   ): Promise<void> {
-    const nb = this.store.get(session.notebookId);
+    const nb = this.getNotebook(session.notebookId);
     const ct = nb?.cyraThreads?.find((t) => t.id === session.cyraThreadId);
     if (!nb || !ct || !msg.text.trim()) return;
     ct.messages.push({
@@ -575,7 +580,7 @@ export class CyraSessionManager {
     this.clearWatchdog(session);
     session.watchdog = setTimeout(() => {
       console.error(`[aria] cyra turn watchdog fired for thread ${session.cyraThreadId}`);
-      const nb = this.store.get(session.notebookId);
+      const nb = this.getNotebook(session.notebookId);
       const ct = nb?.cyraThreads?.find((t) => t.id === session.cyraThreadId);
       const armedTurnId = session.turnId;
       if (ct?.threadId && armedTurnId) {

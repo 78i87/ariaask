@@ -32,7 +32,7 @@ import "./CoachShell.css";
  * practice; the top-right Sources control owns the desktop panel toggle.
  */
 export function CoachShell() {
-  const { id } = useParams<{ id: string }>();
+  const { id, aid } = useParams<{ id: string; aid: string }>();
   const navigate = useNavigate();
   const {
     narrow,
@@ -47,6 +47,7 @@ export function CoachShell() {
 
   const [sourcesHubOpen, setSourcesHubOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [sourcesInitialMode, setSourcesInitialMode] = useState<"upload" | "online">("upload");
   const [readingOpen, setReadingOpen] = useState(false);
   const [readingPreselect, setReadingPreselect] = useState<string | null>(null);
   const [journeyOpen, setJourneyOpen] = useState(false);
@@ -68,7 +69,7 @@ export function CoachShell() {
   // Link ingestion, uploads from other tabs and online discovery all announce
   // on the project SSE channel. Keep every source surface in sync.
   useEffect(() => {
-    if (!id) return;
+    if (!id || !aid) return;
     setDiscovering(false);
     const es = new EventSource(api.notebookEventsUrl(id));
     const onRefresh = () => void refresh();
@@ -108,18 +109,16 @@ export function CoachShell() {
 
   const coachActions = useMemo<CoachActions>(
     () => ({
-      openAddSources: () => setSourcesOpen(true),
+      openAddSources: () => {
+        setSourcesInitialMode("upload");
+        setSourcesOpen(true);
+      },
       findSources: () => {
-        if (!id) return;
-        setDiscovering(true);
-        const query = current?.topic ?? current?.title ?? "";
-        void api.discoverSources(id, query ? { query } : {}).catch((error) => {
-          setDiscovering(false);
-          snackbar.show(error instanceof Error ? error.message : "Couldn't start the search");
-        });
+        setSourcesInitialMode("online");
+        setSourcesOpen(true);
       },
     }),
-    [id, current, snackbar],
+    [],
   );
 
   const [logEntries, setLogEntries] = useState<LearningLogEntry[]>([]);
@@ -179,10 +178,11 @@ export function CoachShell() {
   );
 
   const sendJourneyMessage = (text: string) => {
-    if (!id) return;
+    const activityId = aid;
+    if (!id || !activityId) return;
     setJourneyOpen(false);
     void api
-      .sendCoachMessage(id, { text, clientMessageId: crypto.randomUUID() })
+      .sendCoachMessage(id, activityId, { text, clientMessageId: crypto.randomUUID() })
       .catch((error) => snackbar.show(error instanceof Error ? error.message : "Couldn't reach the coach"));
   };
 
@@ -270,7 +270,7 @@ export function CoachShell() {
 
                 <CoachActionsContext.Provider value={coachActions}>
                   <JourneyContext.Provider value={journey}>
-                    <CoachChatView key={current.id} notebookId={current.id} />
+                    <CoachChatView key={`${current.id}:${aid}`} notebookId={current.id} activityId={aid!} />
                   </JourneyContext.Provider>
                 </CoachActionsContext.Provider>
               </div>
@@ -283,7 +283,10 @@ export function CoachShell() {
                   ragBuildFailed={ragBuildFailed}
                   onOpenFile={setPreview}
                   onDeleteFile={setDeleteTarget}
-                  onAddSource={() => setSourcesOpen(true)}
+                  onAddSource={() => {
+                    setSourcesInitialMode("upload");
+                    setSourcesOpen(true);
+                  }}
                 />
               </div>
             </div>
@@ -339,9 +342,11 @@ export function CoachShell() {
         <SourcesDialog
           open={sourcesHubOpen}
           notebook={current}
+          discovering={discovering}
           onClose={() => setSourcesHubOpen(false)}
           onAddMaterials={() => {
             setSourcesHubOpen(false);
+            setSourcesInitialMode("upload");
             setSourcesOpen(true);
           }}
           onNewReading={(storedName) => {
@@ -357,23 +362,22 @@ export function CoachShell() {
         <AddSourcesDialog
           open={sourcesOpen}
           notebookId={current.id}
-          topicSuggestion={
-            current.type === "interview"
-              ? `${current.interview?.role ?? current.title}${current.interview?.company ? ` at ${current.interview.company}` : ""} interview questions`
-              : (current.topic ?? current.title)
-          }
           discovering={discovering}
           kickoffRunning={false}
           intakePending={false}
-          interview={current.type === "interview"}
+          interview={false}
+          activityId={aid}
+          initialMode={sourcesInitialMode}
           onClose={() => setSourcesOpen(false)}
           onAdded={() => void refresh()}
-          onDiscover={(query) => {
+          onDiscover={async (request) => {
             setDiscovering(true);
-            void api.discoverSources(current.id, { query }).catch((error) => {
+            try {
+              await api.discoverSources(current.id, request);
+            } catch (error) {
               setDiscovering(false);
-              snackbar.show(error instanceof Error ? error.message : "Couldn't start the search");
-            });
+              throw error;
+            }
           }}
         />
       )}

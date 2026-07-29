@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AppServerClient } from "../appserver/client.js";
-import { CoachSessionManager } from "./coach-session.js";
+import { CoachSessionManager, renderCoachSourceNotesBlock } from "./coach-session.js";
 import type { CoachMessage } from "./store.js";
 
 test("coach kickoff persists only the final agent message", async () => {
@@ -148,4 +148,16 @@ test("coach tool preambles are discarded while a real stopped response is preser
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.text, "A useful answer in progress.");
   assert.equal(messages[0]?.interrupted, true);
+});
+
+test("coach source notes distinguish additions, removals, and legacy additions", () => {
+  const block = renderCoachSourceNotesBlock([
+    "legacy-notes.md",
+    { kind: "added", name: "new-paper.pdf" },
+    { kind: "removed", name: "outdated-guide.md" },
+  ]);
+
+  assert.match(block, /added new study material: legacy-notes\.md, new-paper\.pdf/);
+  assert.match(block, /removed study material: outdated-guide\.md/);
+  assert.match(block, /do not cite or rely on it/);
 });

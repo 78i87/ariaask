@@ -33,12 +33,12 @@ const PIN_THRESHOLD = 80;
 const END_INTERVIEW_MESSAGE = "Let's end the interview here — please give me your debrief.";
 
 export function SessionView() {
-  const { id } = useParams<{ id: string }>();
-  return <NotebookSessionView key={id} id={id!} />;
+  const { id, aid } = useParams<{ id: string; aid: string }>();
+  return <NotebookSessionView key={`${id}:${aid}`} id={id!} activityId={aid!} />;
 }
 
-function NotebookSessionView({ id }: { id: string }) {
-  const session = useTeachingSession(id!);
+function NotebookSessionView({ id, activityId }: { id: string; activityId: string }) {
+  const session = useTeachingSession(id, activityId);
   const {
     notebook,
     messages,
@@ -61,7 +61,8 @@ function NotebookSessionView({ id }: { id: string }) {
     retry,
     updateNotebook,
   } = session;
-  const isInterview = notebook?.type === "interview";
+  const currentActivity = notebook?.activities.find((activity) => activity.id === activityId);
+  const isInterview = currentActivity?.kind === "interview";
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -92,8 +93,9 @@ function NotebookSessionView({ id }: { id: string }) {
   const [newDraft, setNewDraft] = useState<string | null>(null);
   const [seedSourceMessageId, setSeedSourceMessageId] = useState<string | null>(null);
   const { threads: cyraThreads, loaded: cyraLoaded, refresh: refreshCyraThreads } = useCyraThreads(
-    id!,
-    notebook !== null && notebook.type !== "interview",
+    id,
+    activityId,
+    notebook !== null && !isInterview,
   );
 
   // ---- split chat (Aria left, Cyra right) ----
@@ -485,6 +487,7 @@ function NotebookSessionView({ id }: { id: string }) {
         ) : (
           <CyraThreadView
             notebookId={id!}
+            activityId={activityId}
             threadId={activeThread.threadId}
             draft={newDraft ?? ""}
             onDraftChange={setNewDraft}
@@ -519,6 +522,7 @@ function NotebookSessionView({ id }: { id: string }) {
                 </div>
                 <CyraThreadView
                   notebookId={id!}
+                  activityId={activityId}
                   threadId={splitThreadId}
                   draft={newDraft ?? ""}
                   onDraftChange={setNewDraft}
@@ -563,15 +567,11 @@ function NotebookSessionView({ id }: { id: string }) {
         <AddSourcesDialog
           open={addOpen}
           notebookId={notebook.id}
-          topicSuggestion={
-            isInterview
-              ? `${notebook.interview?.role ?? notebook.title}${notebook.interview?.company ? ` at ${notebook.interview.company}` : ""} interview questions`
-              : (notebook.topic ?? notebook.title)
-          }
           discovering={discovering}
           kickoffRunning={kickoffRunning}
           intakePending={intakePending}
           interview={isInterview}
+          activityId={activityId}
           onClose={() => setAddOpen(false)}
           onAdded={updateNotebook}
           onDiscover={discoverSources}

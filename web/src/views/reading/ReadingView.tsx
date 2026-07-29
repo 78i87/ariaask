@@ -11,10 +11,10 @@ import { ProgressIndicator } from "../../components/ProgressIndicator";
 import { useSnackbar } from "../../components/Snackbar";
 import { api } from "../../lib/api";
 import { useMediaQuery } from "../../lib/useMediaQuery";
-import { useNotebooks } from "../../lib/useNotebooks";
 import type { ReadingAnnotation, ReadingAnnotationKind, ReadingSession } from "../../lib/types";
 import { markAnchor, markAnchorProse } from "./anchors";
 import { TechText } from "../coach/TechTerm";
+import { useLearningShell } from "../LearningShell";
 import "./ReadingView.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -101,7 +101,11 @@ export function ReadingView() {
   const { id, rid } = useParams<{ id: string; rid: string }>();
   const navigate = useNavigate();
   const snackbar = useSnackbar();
-  const { notebooks } = useNotebooks();
+  const {
+    narrow,
+    setDrawerOpen,
+    projects: { notebooks },
+  } = useLearningShell();
 
   const [session, setSession] = useState<ReadingSession | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -129,6 +133,8 @@ export function ReadingView() {
   const floatingRef = useRef(false);
 
   const notebook = useMemo(() => notebooks?.find((n) => n.id === id) ?? null, [notebooks, id]);
+  const coachActivity = notebook?.activities.find((activity) => activity.kind === "coach");
+  const backUrl = coachActivity ? `/project/${id}/activity/${coachActivity.id}` : `/project/${id}`;
   const sourceName = useMemo(() => {
     const f = notebook?.sourceFiles.find((s) => s.storedName === session?.source);
     return f?.originalName ?? session?.source ?? "";
@@ -582,7 +588,11 @@ export function ReadingView() {
   };
 
   const discussWithCoach = (ann: ReadingAnnotation, draft: string) => {
-    if (!id) return;
+    if (!id || !coachActivity) {
+      snackbar.show("Add a learning coach to discuss this reading");
+      navigate(`/project/${id}`);
+      return;
+    }
     if (draft.trim() && draft !== ann.userResponse) patchAnnotation(ann.id, { userResponse: draft });
     const text = [
       `From my guided reading of "${sourceName}" (page ${ann.page}):`,
@@ -591,13 +601,17 @@ export function ReadingView() {
       draft.trim() ? `My answer: ${draft.trim()}` : "I'm stuck on this one — can you scaffold it for me?",
     ].join("\n\n");
     void api
-      .sendCoachMessage(id, { text, clientMessageId: crypto.randomUUID() })
-      .then(() => navigate(`/learn/${id}`))
+      .sendCoachMessage(id, coachActivity.id, { text, clientMessageId: crypto.randomUUID() })
+      .then(() => navigate(backUrl))
       .catch((err) => snackbar.show(err instanceof Error ? err.message : "Couldn't reach the coach"));
   };
 
   const finishWithCoach = () => {
-    if (!id || !session) return;
+    if (!id || !session || !coachActivity) {
+      snackbar.show("Add a learning coach to continue");
+      navigate(`/project/${id}`);
+      return;
+    }
     const done = session.annotations.filter((a) => a.resolved).length;
     const text = [
       `I've finished the guided reading of "${sourceName}" (${done}/${session.annotations.length} prompts worked through).`,
@@ -607,8 +621,8 @@ export function ReadingView() {
       .filter(Boolean)
       .join("\n\n");
     void api
-      .sendCoachMessage(id, { text, clientMessageId: crypto.randomUUID() })
-      .then(() => navigate(`/learn/${id}`))
+      .sendCoachMessage(id, coachActivity.id, { text, clientMessageId: crypto.randomUUID() })
+      .then(() => navigate(backUrl))
       .catch((err) => snackbar.show(err instanceof Error ? err.message : "Couldn't reach the coach"));
   };
 
@@ -619,7 +633,7 @@ export function ReadingView() {
       <div className="rd rd--message">
         <Icon name="error" size={32} />
         <p className="body-large">{loadError}</p>
-        <Button onClick={() => navigate(`/learn/${id}`)}>Back to your coach</Button>
+        <Button onClick={() => navigate(backUrl)}>Back to project</Button>
       </div>
     );
   }
@@ -635,7 +649,7 @@ export function ReadingView() {
       <div className="rd rd--message">
         <Icon name="error" size={32} />
         <p className="body-large">{session.error ?? "The coach couldn't prepare this reading."}</p>
-        <Button onClick={() => navigate(`/learn/${id}`)}>Back to your coach</Button>
+        <Button onClick={() => navigate(backUrl)}>Back to project</Button>
       </div>
     );
   }
@@ -667,7 +681,14 @@ export function ReadingView() {
   return (
     <div className="rd">
       <header className="rd__header">
-        <IconButton icon="arrow_back" ariaLabel="Back to your coach" onClick={() => navigate(`/learn/${id}`)} />
+        <IconButton
+          icon={narrow ? "menu" : "arrow_back"}
+          ariaLabel={narrow ? "Projects" : "Back to project"}
+          onClick={() => {
+            if (narrow) setDrawerOpen(true);
+            else navigate(backUrl);
+          }}
+        />
         <div className="rd__title">
           <span className="title-medium">{sourceName}</span>
           <span className="rd__subtitle label-medium">

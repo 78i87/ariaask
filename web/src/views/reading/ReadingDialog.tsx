@@ -93,7 +93,7 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
     try {
       const res = await api.createReading(notebook.id, { source, level });
       onClose();
-      navigate(`/learn/${notebook.id}/read/${res.session.id}`);
+      navigate(`/project/${notebook.id}/read/${res.session.id}`);
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Couldn't start the reading");
     } finally {
@@ -144,7 +144,7 @@ export function ReadingDialog({ open, notebook, onClose, preselectSource }: Read
                   className="rdd__session-open"
                   onClick={() => {
                     onClose();
-                    navigate(`/learn/${notebook.id}/read/${s.id}`);
+                    navigate(`/project/${notebook.id}/read/${s.id}`);
                   }}
                 >
                   <Icon name="auto_stories" size={18} />

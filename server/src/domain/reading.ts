@@ -166,7 +166,7 @@ function buildBatchPrompt(
   const pageBlocks = batch
     .map((text, i) => `--- PAGE ${startPage + i} ---\n${text.trim() || "(no extractable text on this page)"}`)
     .join("\n\n");
-  const context = nb.topic ?? nb.title;
+  const context = nb.goal ?? nb.topic ?? nb.title;
   const imagesNote =
     imageCount > 0
       ? `

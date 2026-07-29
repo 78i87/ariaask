@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import { activityFromSessionState } from "./sessionActivity";
-import type { ChatMessage, DiscoverFailure, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionActivity, SessionStateEvent, SourceFile } from "./types";
+import type { ChatMessage, DiscoverFailure, DiscoveryRequest, Intake, IntakeAnswerPayload, KnowledgeState, Notebook, SessionActivity, SessionStateEvent, SourceFile } from "./types";
 
 export type SessionStatus = "loading" | "idle" | "waiting" | "streaming" | "error";
 
@@ -27,7 +27,7 @@ export interface TeachingSession {
   ragBuildFailed: boolean;
   clearNotice: () => void;
   submitIntake: (payload: { skip?: boolean; answers?: IntakeAnswerPayload }) => void;
-  discoverSources: (query: string) => void;
+  discoverSources: (request: DiscoveryRequest) => Promise<void>;
   send: (text: string) => void;
   /** Rewind-and-resend: replaces the message and deletes everything after it. */
   editMessage: (messageId: string, text: string) => void;
@@ -54,7 +54,9 @@ function cacheNotebook(notebookId: string, snapshot: NotebookSnapshot): void {
 }
 
 export function evictNotebookCache(notebookId: string): void {
-  notebookCache.delete(notebookId);
+  for (const key of notebookCache.keys()) {
+    if (key.startsWith(`${notebookId}:`)) notebookCache.delete(key);
+  }
 }
 
 export function clearNotebookCache(): void {
@@ -71,8 +73,9 @@ function toCompleteMessages(snap: NotebookSnapshot): ChatMessage[] {
   }));
 }
 
-export function useTeachingSession(notebookId: string): TeachingSession {
-  const cached = notebookCache.get(notebookId);
+export function useTeachingSession(notebookId: string, activityId: string): TeachingSession {
+  const cacheKey = `${notebookId}:${activityId}`;
+  const cached = notebookCache.get(cacheKey);
   const [notebook, setNotebook] = useState<Notebook | null>(() => cached?.notebook ?? null);
   const [messages, setMessages] = useState<ChatMessage[]>(() => (cached ? toCompleteMessages(cached) : []));
   const [status, setStatus] = useState<SessionStatus>("loading");
@@ -94,7 +97,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
   /** Ids of messages already in local state — dedupes SSE echoes of our own sends. */
   const knownIds = useRef(new Set<string>());
   /** The notebook's type, mirrored so stable callbacks can name the persona. */
-  const typeRef = useRef<Notebook["type"] | null>(null);
+  const typeRef = useRef<"reverse-tutor" | "interview" | null>(null);
   /** Who the main thread is: Cyra interviews, Aria gets taught. */
   const who = useCallback(() => (typeRef.current === "interview" ? "Cyra" : "Aria"), []);
 
@@ -132,12 +135,12 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       rafPending.current = false;
       deltaBuffers.current.clear();
     };
-  }, [notebookId]);
+  }, [cacheKey]);
 
   const loadNotebook = useCallback(async () => {
-    const res = await api.getNotebook(notebookId);
-    cacheNotebook(notebookId, res);
-    typeRef.current = res.notebook.type;
+    const res = await api.getNotebook(notebookId, activityId);
+    cacheNotebook(cacheKey, res);
+    typeRef.current = res.activity.kind === "interview" ? "interview" : "reverse-tutor";
     setNotebook(res.notebook);
     setIntake(res.intake);
     setKnowledgeState(res.knowledgeState);
@@ -145,12 +148,12 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(toCompleteMessages(res));
     return res;
-  }, [notebookId]);
+  }, [notebookId, activityId, cacheKey]);
 
   useEffect(() => {
-    const prior = notebookCache.get(notebookId);
+    const prior = notebookCache.get(cacheKey);
     if (!prior || !notebook) return;
-    cacheNotebook(notebookId, {
+    cacheNotebook(cacheKey, {
       ...prior,
       notebook,
       intake,
@@ -160,14 +163,14 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         .filter((message) => message.status === "complete" && !message.id.startsWith(STREAMING_ID_PREFIX))
         .map(({ id, role, text, interrupted }) => ({ id, role, text, interrupted })),
     });
-  }, [notebookId, notebook, messages, status, intake, knowledgeState]);
+  }, [cacheKey, notebook, messages, status, intake, knowledgeState]);
 
   const startTurn = useCallback(
     async (text?: string, retry?: boolean, clientMessageId?: string): Promise<boolean> => {
       setError(null);
       setStatus("waiting");
       try {
-        await api.sendMessage(notebookId, text, retry, clientMessageId);
+        await api.sendMessage(notebookId, activityId, text, retry, clientMessageId);
         return true;
       } catch (err) {
         if (err instanceof ApiError && err.code === "turn_active") return true; // already running; SSE will drive UI
@@ -192,7 +195,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         return false;
       }
     },
-    [notebookId, who],
+    [notebookId, activityId, who],
   );
 
   // Initial load + kickoff auto-trigger.
@@ -204,8 +207,8 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     setDiscovering(false);
     setRagBuilding(false);
     setRagBuildFailed(false);
-    const snap = notebookCache.get(notebookId);
-    typeRef.current = snap?.notebook.type ?? null;
+    const snap = notebookCache.get(cacheKey);
+    typeRef.current = snap?.activity.kind === "interview" ? "interview" : snap ? "reverse-tutor" : null;
     setNotebook(snap?.notebook ?? null);
     setIntake(snap?.intake ?? null);
     setKnowledgeState(snap?.knowledgeState ?? null);
@@ -240,11 +243,11 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     return () => {
       cancelled = true;
     };
-  }, [notebookId, loadNotebook, startTurn]);
+  }, [cacheKey, loadNotebook, startTurn]);
 
   // SSE channel.
   useEffect(() => {
-    const es = new EventSource(`/api/notebooks/${notebookId}/events`);
+    const es = new EventSource(api.activityEventsUrl(notebookId, activityId));
 
     es.addEventListener("state", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SessionStateEvent;
@@ -296,7 +299,6 @@ export function useTeachingSession(notebookId: string): TeachingSession {
 
     es.addEventListener("sources-updated", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as { notebook: Notebook };
-      typeRef.current = data.notebook.type;
       setNotebook(data.notebook);
     });
 
@@ -306,7 +308,6 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         added: SourceFile[];
         failures: DiscoverFailure[];
       };
-      typeRef.current = data.notebook.type;
       setNotebook(data.notebook);
       setDiscovering(false);
       if (data.added.length > 0 && data.failures.length > 0) {
@@ -417,7 +418,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     });
 
     return () => es.close();
-  }, [notebookId, loadNotebook, scheduleFlush, who]);
+  }, [notebookId, activityId, loadNotebook, scheduleFlush, who]);
 
   const send = useCallback(
     (text: string) => {
@@ -458,7 +459,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       setMessages([...kept, { id: optimisticId, role: "teacher", text: trimmed, status: "complete" }]);
       setError(null);
       setStatus("waiting");
-      void api.editMessage(notebookId, messageId, trimmed, optimisticId).catch((err) => {
+      void api.editMessage(notebookId, activityId, messageId, trimmed, optimisticId).catch((err) => {
         // Unlike send(), a rejected edit (incl. turn_active) leaves this tab's
         // optimistic truncation wrong — resync the real transcript, then surface it.
         void loadNotebook().catch(() => {});
@@ -473,12 +474,12 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         setError(err instanceof Error ? err.message : "Couldn't edit the message");
       });
     },
-    [messages, notebookId, loadNotebook],
+    [messages, notebookId, activityId, loadNotebook],
   );
 
   const interrupt = useCallback(() => {
-    void api.interrupt(notebookId).catch(() => {});
-  }, [notebookId]);
+    void api.interrupt(notebookId, activityId).catch(() => {});
+  }, [notebookId, activityId]);
 
   const retry = useCallback(() => {
     void startTurn(undefined, true);
@@ -488,7 +489,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
     (payload: { skip?: boolean; answers?: IntakeAnswerPayload }) => {
       const researching =
         payload.skip === true
-          ? notebook?.type === "interview" || (notebook?.sourceFiles.length ?? 0) === 0
+          ? typeRef.current === "interview" || (notebook?.sourceFiles.length ?? 0) === 0
           : payload.answers?.research?.value !== "no";
       // Optimistic: the form yields to the progress indicator immediately.
       setIntake((prev) => (prev ? { ...prev, status: "done" } : prev));
@@ -496,7 +497,7 @@ export function useTeachingSession(notebookId: string): TeachingSession {
       setStatus("waiting");
       setKickoffRunning(true);
       if (researching) setActivity({ kind: "researching", phase: "searching" });
-      void api.submitIntake(notebookId, payload).catch((err) => {
+      void api.submitIntake(notebookId, activityId, payload).catch((err) => {
         setIntake((prev) => (prev ? { ...prev, status: "pending" } : prev));
         setStatus("idle");
         setKickoffRunning(false);
@@ -504,30 +505,31 @@ export function useTeachingSession(notebookId: string): TeachingSession {
         setError(err instanceof Error ? err.message : "Couldn't start the session");
       });
     },
-    [notebookId, notebook],
+    [notebookId, activityId, notebook],
   );
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
   const updateNotebook = useCallback((nb: Notebook) => {
-    typeRef.current = nb.type;
     setNotebook(nb);
   }, []);
 
   const discoverSources = useCallback(
-    (query: string) => {
-      const trimmed = query.trim();
-      if (!trimmed || discovering) return;
+    async (request: DiscoveryRequest) => {
+      if (!request.request.trim() || discovering) return;
       setDiscovering(true);
-      void api.discoverSources(notebookId, { query: trimmed }).catch((err) => {
+      try {
+        await api.discoverSources(notebookId, request);
+      } catch (err) {
         if (err instanceof ApiError && err.code === "discover_active") {
           setNotice(`${who()} is already looking for sources.`);
           setDiscovering(true);
-          return;
+        } else {
+          setDiscovering(false);
+          setNotice(err instanceof Error ? err.message : "Couldn't start source discovery.");
         }
-        setDiscovering(false);
-        setNotice(err instanceof Error ? err.message : "Couldn't start source discovery.");
-      });
+        throw err;
+      }
     },
     [discovering, notebookId, who],
   );

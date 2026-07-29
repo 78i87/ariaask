@@ -8,15 +8,33 @@ import { IconButton } from "../components/IconButton";
 import { ProgressIndicator } from "../components/ProgressIndicator";
 import { useSnackbar } from "../components/Snackbar";
 import { TopAppBar } from "../components/TopAppBar";
+import { TextField } from "../components/TextField";
 import { api } from "../lib/api";
-import type { SourceFile } from "../lib/types";
+import type { ProjectActivity, SourceFile } from "../lib/types";
 import { requestNewProject } from "./CoachSidebar";
 import { useLearningShell } from "./LearningShell";
 import { ProjectSourcesButton } from "./ProjectSourcesButton";
 import { AddSourcesDialog } from "./session/AddSourcesDialog";
 import { sourceIcon } from "./session/SourcesPanel";
 import { SourcePreviewDialog } from "./session/SourcePreviewDialog";
+import { AddActivityDialog } from "./project/AddActivityDialog";
 import "./ProjectView.css";
+
+export function EmptyProjectSources({ discovering }: { discovering: boolean }) {
+  return discovering ? (
+    <div className="project-view__empty" aria-live="polite">
+      <ProgressIndicator size={28} />
+      <span className="title-small">Finding sources…</span>
+      <span className="body-medium">Useful pages will appear here as Aria adds them.</span>
+    </div>
+  ) : (
+    <div className="project-view__empty">
+      <Icon name="library_books" size={28} />
+      <span className="title-small">No sources yet</span>
+      <span className="body-medium">Upload notes, articles or PDFs, or let Aria find material online.</span>
+    </div>
+  );
+}
 
 /** Project-level home: materials first, conversations added from the sidebar. */
 export function ProjectView() {
@@ -31,10 +49,19 @@ export function ProjectView() {
     projects: { notebooks, refresh },
   } = useLearningShell();
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [preview, setPreview] = useState<SourceFile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SourceFile | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [activityDeleteTarget, setActivityDeleteTarget] = useState<ProjectActivity | null>(null);
+  const [activityDeleting, setActivityDeleting] = useState(false);
+  const [activityRenameTarget, setActivityRenameTarget] = useState<ProjectActivity | null>(null);
+  const [activityRenameDraft, setActivityRenameDraft] = useState("");
+  const [activityRenaming, setActivityRenaming] = useState(false);
+  const [repairTarget, setRepairTarget] = useState<ProjectActivity | null>(null);
+  const [repairCvSource, setRepairCvSource] = useState("");
+  const [repairing, setRepairing] = useState(false);
 
   const current = useMemo(
     () => notebooks?.find((notebook) => notebook.id === id && !notebook.archivedAt) ?? null,
@@ -89,6 +116,61 @@ export function ProjectView() {
     }
   };
 
+  const createActivity = async (form: FormData): Promise<ProjectActivity> => {
+    if (!current) throw new Error("Project unavailable");
+    const result = await api.createActivity(current.id, form);
+    for (const warning of result.warnings) snackbar.show(warning);
+    await refresh();
+    setActivityOpen(false);
+    navigate(`/project/${current.id}/activity/${result.activity.id}`);
+    return result.activity;
+  };
+
+  const confirmDeleteActivity = async () => {
+    if (!current || !activityDeleteTarget || activityDeleting) return;
+    setActivityDeleting(true);
+    try {
+      await api.deleteActivity(current.id, activityDeleteTarget.id);
+      setActivityDeleteTarget(null);
+      await refresh();
+      snackbar.show("Activity deleted");
+    } catch (error) {
+      snackbar.show(error instanceof Error ? error.message : "Couldn't delete the activity");
+    } finally {
+      setActivityDeleting(false);
+    }
+  };
+
+  const confirmRenameActivity = async () => {
+    if (!current || !activityRenameTarget || !activityRenameDraft.trim() || activityRenaming) return;
+    setActivityRenaming(true);
+    try {
+      await api.renameActivity(current.id, activityRenameTarget.id, activityRenameDraft.trim());
+      setActivityRenameTarget(null);
+      await refresh();
+      snackbar.show("Activity renamed");
+    } catch (error) {
+      snackbar.show(error instanceof Error ? error.message : "Couldn't rename the activity");
+    } finally {
+      setActivityRenaming(false);
+    }
+  };
+
+  const confirmRepairActivity = async () => {
+    if (!current || !repairTarget || !repairCvSource || repairing) return;
+    setRepairing(true);
+    try {
+      await api.updateActivity(current.id, repairTarget.id, { cvSource: repairCvSource });
+      setRepairTarget(null);
+      await refresh();
+      snackbar.show("Interview setup updated");
+    } catch (error) {
+      snackbar.show(error instanceof Error ? error.message : "Couldn't update the interview");
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   const leading = narrow ? (
     <IconButton icon="menu" ariaLabel="Projects" onClick={() => setDrawerOpen(true)} />
   ) : sidebarCollapsed ? (
@@ -138,15 +220,90 @@ export function ProjectView() {
       />
 
       <section className="project-view__content" aria-labelledby="project-materials-heading">
+        <div className="project-view__activities">
+          <div className="project-view__section-heading">
+            <div>
+              <span className="project-view__eyebrow label-medium">Project workspace</span>
+              <h1 className="headline-medium">Activities</h1>
+              <p className="body-large">Add the kind of learning conversation you need. Each activity keeps its own history.</p>
+            </div>
+            <Button variant="filled" icon="add" onClick={() => setActivityOpen(true)}>
+              Add activity
+            </Button>
+          </div>
+
+          {current.activities.length === 0 ? (
+            <div className="project-view__empty">
+              <Icon name="psychology" size={28} />
+              <span className="title-small">No activities yet</span>
+              <span className="body-medium">Start with a learning coach, reverse tutor, or interview practice.</span>
+            </div>
+          ) : (
+            <ul className="project-view__activity-list">
+              {current.activities.map((activity) => (
+                <li key={activity.id} className="project-view__activity">
+                  <button
+                    type="button"
+                    className="project-view__activity-open"
+                    onClick={() => {
+                      if (activity.kind === "interview" && !activity.setupComplete) {
+                        setRepairTarget(activity);
+                        setRepairCvSource(current.sourceFiles[0]?.storedName ?? "");
+                      } else {
+                        navigate(`/project/${current.id}/activity/${activity.id}`);
+                      }
+                    }}
+                  >
+                    <Icon
+                      name={
+                        activity.kind === "coach"
+                          ? "psychology"
+                          : activity.kind === "interview"
+                            ? "work"
+                            : "school"
+                      }
+                      size={22}
+                    />
+                    <span>
+                      <span className="title-small">{activity.title}</span>
+                      <span className="body-medium">
+                        {activity.kind === "coach"
+                          ? "Learning coach"
+                          : activity.kind === "interview"
+                            ? activity.setupComplete
+                              ? "Interview practice"
+                              : "Interview practice · CV required"
+                            : "Reverse tutor"}
+                      </span>
+                    </span>
+                  </button>
+                  <IconButton
+                    icon="edit"
+                    ariaLabel={`Rename ${activity.title}`}
+                    onClick={() => {
+                      setActivityRenameTarget(activity);
+                      setActivityRenameDraft(activity.title);
+                    }}
+                  />
+                  <IconButton
+                    icon="delete"
+                    ariaLabel={`Delete ${activity.title}`}
+                    onClick={() => setActivityDeleteTarget(activity)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <div className="project-view__intro">
           <div>
-            <span className="project-view__eyebrow label-medium">Project workspace</span>
+            <span className="project-view__eyebrow label-medium">Shared context</span>
             <h1 id="project-materials-heading" className="headline-medium">
               Sources
             </h1>
             <p className="body-large">
-              Keep the project’s reading material here. Use the <strong>+</strong> beside the project name to add a
-              learning coach or {current.type === "interview" ? "interview practice" : "reverse tutor"}.
+              Keep the project’s material here. Every activity can use these sources.
             </p>
           </div>
           <Button variant="tonal" icon="add" onClick={() => setSourcesOpen(true)}>
@@ -155,11 +312,7 @@ export function ProjectView() {
         </div>
 
         {current.sourceFiles.length === 0 ? (
-          <div className="project-view__empty">
-            <Icon name="library_books" size={28} />
-            <span className="title-small">No sources yet</span>
-            <span className="body-medium">Upload notes, articles or PDFs, or let Aria find material online.</span>
-          </div>
+          <EmptyProjectSources discovering={discovering} />
         ) : (
           <ul className="project-view__sources">
             {current.sourceFiles.map((source) => (
@@ -179,27 +332,31 @@ export function ProjectView() {
         )}
       </section>
 
-      <AddSourcesDialog
-        open={sourcesOpen}
-        notebookId={current.id}
-        topicSuggestion={
-          current.type === "interview"
-            ? `${current.interview?.role ?? current.title}${current.interview?.company ? ` at ${current.interview.company}` : ""} interview questions`
-            : (current.topic ?? current.title)
-        }
-        discovering={discovering}
+        <AddSourcesDialog
+          open={sourcesOpen}
+          notebookId={current.id}
+          discovering={discovering}
         kickoffRunning={false}
         intakePending={false}
-        interview={current.type === "interview"}
+        interview={false}
         onClose={() => setSourcesOpen(false)}
         onAdded={() => void refresh()}
-        onDiscover={(query) => {
+        onDiscover={async (request) => {
           setDiscovering(true);
-          void api.discoverSources(current.id, { query }).catch((err) => {
+          try {
+            await api.discoverSources(current.id, request);
+          } catch (err) {
             setDiscovering(false);
-            snackbar.show(err instanceof Error ? err.message : "Couldn't start the search");
-          });
+            throw err;
+          }
         }}
+      />
+
+      <AddActivityDialog
+        open={activityOpen}
+        project={current}
+        onClose={() => setActivityOpen(false)}
+        onCreate={createActivity}
       />
 
       {preview && (
@@ -227,6 +384,93 @@ export function ProjectView() {
         <span className="body-medium">
           <strong>{deleteTarget?.originalName}</strong> will be removed from this project and its chats.
         </span>
+      </Dialog>
+
+      <Dialog
+        open={activityRenameTarget !== null}
+        onClose={() => {
+          if (!activityRenaming) setActivityRenameTarget(null);
+        }}
+        headline="Rename activity"
+        actions={
+          <>
+            <Button variant="text" onClick={() => setActivityRenameTarget(null)} disabled={activityRenaming}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void confirmRenameActivity()}
+              disabled={!activityRenameDraft.trim() || activityRenaming}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <TextField
+          label="Activity name"
+          value={activityRenameDraft}
+          onChange={setActivityRenameDraft}
+          onSubmit={() => void confirmRenameActivity()}
+          autoFocus
+        />
+      </Dialog>
+
+      <Dialog
+        open={activityDeleteTarget !== null}
+        onClose={() => {
+          if (!activityDeleting) setActivityDeleteTarget(null);
+        }}
+        icon="delete"
+        headline="Delete this activity?"
+        actions={
+          <>
+            <Button variant="text" onClick={() => setActivityDeleteTarget(null)} disabled={activityDeleting}>
+              Cancel
+            </Button>
+            <Button destructive onClick={() => void confirmDeleteActivity()} disabled={activityDeleting}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <span className="body-medium">
+          <strong>{activityDeleteTarget?.title}</strong> and its conversation will be permanently deleted. Shared
+          sources, plans, and learning-log entries will stay in the project.
+        </span>
+      </Dialog>
+
+      <Dialog
+        open={repairTarget !== null}
+        onClose={() => {
+          if (!repairing) setRepairTarget(null);
+        }}
+        headline="Choose a CV"
+        actions={
+          <>
+            <Button variant="text" onClick={() => setRepairTarget(null)} disabled={repairing}>
+              Cancel
+            </Button>
+            <Button onClick={() => void confirmRepairActivity()} disabled={!repairCvSource || repairing}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        {current.sourceFiles.length > 0 ? (
+          <select
+            className="add-activity__select body-medium"
+            value={repairCvSource}
+            onChange={(event) => setRepairCvSource(event.target.value)}
+          >
+            {current.sourceFiles.map((source) => (
+              <option key={source.storedName} value={source.storedName}>
+                {source.originalName}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="body-medium">Add the CV to shared sources first, then return to this activity.</span>
+        )}
       </Dialog>
     </main>
   );

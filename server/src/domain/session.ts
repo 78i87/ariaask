@@ -68,10 +68,14 @@ import {
   setRagBuildListener,
 } from "./rag.js";
 import {
+  buildDiscoveryClarificationPrompt,
   buildDiscoverPrompt,
   buildInterviewDiscoverPrompt,
   downloadDiscoveredSources,
+  parseDiscoveryClarificationQuestions,
   parseDiscoveredSources,
+  type DiscoveryClarificationQuestion,
+  type DiscoveryRefinement,
   type DiscoverFailure,
 } from "./discover.js";
 import { isInterview, toSummary } from "./store.js";
@@ -140,6 +144,13 @@ interface NotebookSession {
 export class SessionManager {
   private sessions = new Map<string, NotebookSession>();
   private discoveries = new Map<string, AbortController>();
+  /** Shared learner-map mutations must be read-modify-written in project order. */
+  private knowledgeQueues = new Map<string, Promise<void>>();
+
+  private getNotebook(id: string): Notebook | undefined {
+    const compatible = this.store as NotebookStore & { getSession?: (key: string) => Notebook | undefined };
+    return compatible.getSession?.(id) ?? this.store.get(id);
+  }
 
   constructor(
     private client: AppServerClient,
@@ -150,9 +161,14 @@ export class SessionManager {
     client.on("crashed", () => this.failAllActiveTurns("The student's connection dropped."));
     client.on("restarting", () => this.failAllActiveTurns("The Codex CLI restarted during this response. Please retry."));
     // Index builds surface as a status line; nobody attached → nobody to tell.
-    setRagBuildListener((notebookId) => {
-      const session = this.sessions.get(notebookId);
-      if (session) this.broadcastState(session);
+    setRagBuildListener((projectId) => {
+      const project = this.store.get(projectId);
+      const projectSession = this.sessions.get(projectId);
+      if (projectSession) this.broadcastState(projectSession);
+      for (const activity of project?.activities ?? []) {
+        const session = this.sessions.get(this.store.activityKey(projectId, activity.id));
+        if (session) this.broadcastState(session);
+      }
     });
   }
 
@@ -160,9 +176,10 @@ export class SessionManager {
 
   attach(notebookId: string, res: Response): void {
     const session = this.ensureSession(notebookId);
+    const projectId = this.store.parseActivityKey(notebookId)?.projectId ?? notebookId;
     const conn = new SseConnection(res, () => session.clients.delete(conn));
     session.clients.add(conn);
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     // Pre-warm the retrieval index (pre-existing notebooks have none) while
     // the user reads and types; fire-and-forget, fails open.
     if (nb) void ensureRagIndex(this.store, this.settings, nb);
@@ -173,18 +190,43 @@ export class SessionManager {
         turnId: session.turnId,
         kickoffRunning: session.state !== "idle" && session.kickoffTurn,
         intakeRunning: session.intakeResearch,
-        discoveryRunning: this.discoveries.has(notebookId),
-        ragBuilding: isRagIndexBuilding(notebookId),
-        ragBuildFailed: didLastRagBuildFail(notebookId),
-        activity: session.state !== "idle" || this.discoveries.has(notebookId) ? session.activity : null,
+        discoveryRunning: this.discoveries.has(projectId),
+        ragBuilding: isRagIndexBuilding(projectId),
+        ragBuildFailed: didLastRagBuildFail(projectId),
+        activity: session.state !== "idle" || this.discoveries.has(projectId) ? session.activity : null,
         partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
-        messageCount: nb?.messages.length ?? 0,
+        messageCount: Array.isArray(nb?.messages) ? nb.messages.length : 0,
       },
       ++session.seq,
     );
     if (!this.config.learningStateDisabled && nb?.userKnowledgeState) {
       conn.send("knowledge-state", { state: nb.userKnowledgeState }, ++session.seq);
     }
+  }
+
+  /** Project-level source/discovery stream used by the persistent workspace shell. */
+  attachProject(projectId: string, res: Response): void {
+    const project = this.store.get(projectId);
+    if (!project) throw new HttpError(404, "notebook_not_found");
+    const session = this.ensureSession(projectId);
+    const conn = new SseConnection(res, () => session.clients.delete(conn));
+    session.clients.add(conn);
+    conn.send(
+      "state",
+      {
+        turnActive: false,
+        turnId: null,
+        kickoffRunning: false,
+        intakeRunning: session.intakeResearch,
+        discoveryRunning: this.discoveries.has(projectId),
+        ragBuilding: isRagIndexBuilding(projectId),
+        ragBuildFailed: didLastRagBuildFail(projectId),
+        activity: this.discoveries.has(projectId) ? session.activity : null,
+        partials: {},
+        messageCount: 0,
+      },
+      ++session.seq,
+    );
   }
 
   getState(notebookId: string): { turnActive: boolean } {
@@ -200,7 +242,7 @@ export class SessionManager {
     retry = false,
     clientMessageId?: string,
   ): Promise<{ turnId: string | null }> {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
     if (session.state !== "idle") {
@@ -372,7 +414,7 @@ export class SessionManager {
         // Interview notebooks never run the belief evaluator — even its
         // bootstrap path would mint a learningState the mode must not have.
         await Promise.all([
-          this.runKnowledgeEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!),
+          this.runKnowledgeEvaluatorSerialized(nb, session, input, retryTeacher?.id ?? teacherMessageId!),
           ...(isInterview(nb) ? [] : [this.runEvaluator(nb, session, input, retryTeacher?.id ?? teacherMessageId!)]),
         ]);
       }
@@ -437,7 +479,7 @@ export class SessionManager {
       this.broadcast(session, "turn-started", { turnId: turn.id, kickoff });
       // Stop may have arrived while the turn/start RPC itself was in flight,
       // when there was no turn id to interrupt yet. Honor it now.
-      if (session.cancelRequested) void this.interrupt(nb.id);
+      if (session.cancelRequested) void this.interrupt(session.notebookId);
       if (nb.learningState && nb.learningState.lastChanges.length > 0) {
         // The realizations were delivered with this turn — don't replay them
         // on the next one. (A failed turn/start keeps them for the retry.)
@@ -466,15 +508,27 @@ export class SessionManager {
       if (teacherMessageId && !cancelled) {
         const idx = nb.messages.findIndex((m) => m.id === teacherMessageId);
         if (idx >= 0) {
+          let rebuildSharedKnowledge = false;
           nb.messages.splice(idx, 1);
           if (stateBeforeEval && nb.learningState !== stateBeforeEval) {
             nb.learningState = stateBeforeEval;
           }
           if (knowledgeBeforeEval && nb.userKnowledgeState !== knowledgeBeforeEval) {
-            nb.userKnowledgeState = knowledgeBeforeEval;
-            this.broadcast(session, "knowledge-state", { state: knowledgeBeforeEval });
+            if (isInterview(nb)) {
+              nb.userKnowledgeState = knowledgeBeforeEval;
+              this.broadcast(session, "knowledge-state", { state: knowledgeBeforeEval });
+            } else {
+              // Another reverse-tutor activity may have updated the shared
+              // map after this turn's evaluator. Rebuild from all surviving
+              // transcripts instead of restoring a stale snapshot.
+              rebuildSharedKnowledge = true;
+            }
           }
           await this.store.save(nb).catch(() => {});
+          if (rebuildSharedKnowledge) {
+            const rebuilt = await this.rebuildKnowledgeStateForProjectSerialized(nb.id).catch(() => null);
+            if (rebuilt) this.broadcast(session, "knowledge-state", { state: rebuilt });
+          }
           this.broadcastState(session);
         }
       }
@@ -510,7 +564,7 @@ export class SessionManager {
     text: string | undefined,
     clientMessageId?: string,
   ): Promise<{ turnId: string | null }> {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) throw new HttpError(404, "notebook_not_found");
     const session = this.ensureSession(notebookId);
     if (session.state !== "idle") {
@@ -597,14 +651,81 @@ export class SessionManager {
     }
   }
 
-  async startDiscovery(notebookId: string, query: string | null): Promise<{ accepted: true }> {
-    const nb = this.store.get(notebookId);
+  private discoveryContext(projectId: string, activityId: string | null): {
+    project: Notebook;
+    notebook: Notebook;
+    activityKind: "workspace" | "coach" | "reverse-tutor" | "interview";
+    activityTitle: string | null;
+  } {
+    const project = this.store.get(projectId);
+    if (!project) throw new HttpError(404, "notebook_not_found");
+    if (!activityId) {
+      return { project, notebook: project, activityKind: "workspace", activityTitle: null };
+    }
+    const activity = this.store.getActivity(projectId, activityId);
+    const notebook = activity ? this.store.getSession(this.store.activityKey(projectId, activityId)) : undefined;
+    if (!activity || !notebook) throw new HttpError(404, "activity_not_found");
+    return { project, notebook, activityKind: activity.kind, activityTitle: activity.title };
+  }
+
+  async clarifyDiscovery(
+    projectId: string,
+    request: string,
+    activityId: string | null,
+  ): Promise<{ questions: DiscoveryClarificationQuestion[]; tailored: boolean }> {
+    if (this.discoveries.has(projectId)) {
+      throw new HttpError(409, "discover_active", "Aria is already looking for sources.");
+    }
+    const context = this.discoveryContext(projectId, activityId);
+    try {
+      const settings = this.settings.get();
+      const interviewTarget = isInterview(context.notebook)
+        ? `${context.notebook.interview?.role ?? context.activityTitle ?? context.project.goal}${
+            context.notebook.interview?.company ? ` at ${context.notebook.interview.company}` : ""
+          }`
+        : null;
+      const manifest =
+        context.project.sourceFiles.length > 0
+          ? isInterview(context.notebook)
+            ? interviewMaterialsManifest(context.notebook.sourceFiles)
+            : sourcesManifest(context.project.sourceFiles)
+          : null;
+      const raw = await this.client.runOneShotTurn({
+        prompt: buildDiscoveryClarificationPrompt({
+          topic: context.project.goal,
+          activity: context.activityKind,
+          activityTitle: context.activityTitle,
+          interviewTarget,
+          focus: context.notebook.intake?.answers ? intakeFocus(context.notebook.intake.answers) : null,
+          request,
+          manifest,
+        }),
+        model: settings.model,
+        effort: "low",
+        timeoutMs: 20_000,
+        cwd: context.project.sourceFiles.length > 0 ? this.store.sourcesDir(projectId) : undefined,
+      });
+      const questions = parseDiscoveryClarificationQuestions(raw);
+      if (questions === null) throw new Error("invalid clarification response");
+      return { questions, tailored: true };
+    } catch (error) {
+      console.error(`[aria] source clarification failed for project ${projectId}; using the original request:`, error);
+      return { questions: [], tailored: false };
+    }
+  }
+
+  async startDiscovery(
+    projectId: string,
+    opts: { request: string | null; refinements: DiscoveryRefinement[]; activityId: string | null },
+  ): Promise<{ accepted: true }> {
+    const context = this.discoveryContext(projectId, opts.activityId);
+    const nb = context.notebook;
     if (!nb) throw new HttpError(404, "notebook_not_found");
     if (!nb.kickoffDone && nb.intake?.status === "pending") {
       throw new HttpError(409, "intake_pending", "Finish the setup form before finding sources.");
     }
-    const session = this.ensureSession(notebookId);
-    if (this.discoveries.has(notebookId) || session.intakeResearch) {
+    const session = this.ensureSession(projectId);
+    if (this.discoveries.has(projectId) || session.intakeResearch) {
       throw new HttpError(
         409,
         "discover_active",
@@ -613,26 +734,26 @@ export class SessionManager {
     }
 
     const controller = new AbortController();
-    this.discoveries.set(notebookId, controller);
-    void this.runDiscoveryBackground(notebookId, query, session, controller).catch((err) => {
-      console.error(`[aria] source discovery background failed for notebook ${notebookId}:`, err);
+    this.discoveries.set(projectId, controller);
+    void this.runDiscoveryBackground(projectId, opts, session, controller).catch((err) => {
+      console.error(`[aria] source discovery background failed for notebook ${projectId}:`, err);
     });
     return { accepted: true };
   }
 
   private async runDiscoveryBackground(
-    notebookId: string,
-    query: string | null,
+    projectId: string,
+    opts: { request: string | null; refinements: DiscoveryRefinement[]; activityId: string | null },
     session: NotebookSession,
     controller: AbortController,
   ): Promise<void> {
-    const initial = this.store.get(notebookId);
-    const addedNames: string[] = [];
+    const context = this.discoveryContext(projectId, opts.activityId);
+    const initial = context.notebook;
     let added: SourceFile[] = [];
     let failures: DiscoverFailure[] = [];
 
     this.setActivity(session, { kind: "researching", phase: "searching" });
-    this.broadcastState(session);
+    this.broadcastProjectState(projectId);
     try {
       if (!initial) return;
       const s = this.settings.get();
@@ -645,16 +766,18 @@ export class SessionManager {
               role: initial.interview?.role ?? initial.title,
               company: initial.interview?.company ?? null,
               note: null,
-              query,
+              request: opts.request,
+              refinements: opts.refinements,
               manifest: initial.sourceFiles.length > 0 ? interviewMaterialsManifest(initial.sourceFiles) : null,
               knownUrls,
               max: this.config.discoverMax,
             })
           : buildDiscoverPrompt({
-              topic: initial.topic ?? initial.title,
+              topic: context.project.goal,
               focus: initial.intake?.answers ? intakeFocus(initial.intake.answers) : null,
               note: null,
-              query,
+              request: opts.request,
+              refinements: opts.refinements,
               manifest: initial.sourceFiles.length > 0 ? sourcesManifest(initial.sourceFiles) : null,
               knownUrls,
               max: this.config.discoverMax,
@@ -668,18 +791,14 @@ export class SessionManager {
       });
       const discovered = parseDiscoveredSources(raw, this.config.discoverMax);
       if (!discovered || discovered.length === 0) {
-        failures = [{ url: query ?? initial.topic ?? initial.title, reason: "the web search found no usable pages" }];
+        failures = [{ url: opts.request ?? context.project.goal, reason: "the web search found no usable pages" }];
       } else {
         this.setActivity(session, { kind: "researching", phase: "downloading", completed: 0, total: discovered.length });
-        const result = await downloadDiscoveredSources(this.store, notebookId, discovered, {
+        const result = await downloadDiscoveredSources(this.store, projectId, discovered, {
           signal: controller.signal,
           onSource: (fresh, file) => {
-            fresh.pendingNewSources = [...(fresh.pendingNewSources ?? []), file.storedName];
-            if (fresh.coach?.kickoffDone) {
-              fresh.coach.pendingSourceNotes = [...(fresh.coach.pendingSourceNotes ?? []), file.originalName].slice(-10);
-            }
-            addedNames.push(file.storedName);
-            this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) });
+            this.store.queueSourceAdditions(fresh, [file]);
+            this.broadcastSourcesUpdated(fresh.id);
           },
           onProgress: (completed, total) =>
             this.setActivity(session, { kind: "researching", phase: "downloading", completed, total }),
@@ -688,42 +807,39 @@ export class SessionManager {
         failures = result.failures;
       }
 
-      const fresh = this.store.get(notebookId);
+      const fresh = this.store.get(projectId);
       if (fresh && added.length > 0) {
-        // The downloader saves per source. This final save is a cheap
-        // persistence point for pendingNewSources mutations made above.
-        const pending = new Set(fresh.pendingNewSources ?? []);
-        for (const name of addedNames) pending.add(name);
-        fresh.pendingNewSources = [...pending];
+        // The downloader saves per source. This final save persists the
+        // per-activity pending-source notes queued above.
         await this.store.save(fresh);
         void ensureRagIndex(this.store, this.settings, fresh, { retryNow: true });
-        void this.rebuildKnowledgeState(fresh, session, { forceGraphGeneration: true }).catch((err) =>
-          console.error(`[aria] user knowledge rebuild after discovery failed for notebook ${notebookId}:`, err),
+        void this.rebuildKnowledgeStateForProjectSerialized(fresh.id).catch((err) =>
+          console.error(`[aria] user knowledge rebuild after discovery failed for notebook ${projectId}:`, err),
         );
       }
     } catch (err) {
       if (!controller.signal.aborted) {
-        console.error(`[aria] source discovery failed for notebook ${notebookId}:`, err);
+        console.error(`[aria] source discovery failed for notebook ${projectId}:`, err);
         failures = [
           {
-            url: query ?? initial?.topic ?? initial?.title ?? "online search",
+            url: opts.request ?? context.project.goal,
             reason: err instanceof Error ? err.message : "Discovery failed.",
           },
         ];
       }
     } finally {
-      this.discoveries.delete(notebookId);
-      const fresh = this.store.get(notebookId);
+      this.discoveries.delete(projectId);
+      const fresh = this.store.get(projectId);
       if (fresh) {
-        this.broadcast(session, "discover-completed", { notebook: toSummary(fresh), added, failures });
+        this.broadcastProjectEvent(projectId, "discover-completed", { notebook: toSummary(fresh), added, failures });
       }
-      this.broadcastState(session);
+      this.broadcastProjectState(projectId);
     }
   }
 
   async interrupt(notebookId: string): Promise<boolean> {
     const session = this.sessions.get(notebookId);
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!session || !nb || session.state === "idle") return false;
     if (session.state === "starting") {
       // The student turn hasn't reached Codex yet (the belief evaluator or
@@ -761,18 +877,19 @@ export class SessionManager {
 
   /** The attach() snapshot, pushed mid-session — clients refetch when messageCount drifts. */
   private broadcastState(session: NotebookSession): void {
-    const nb = this.store.get(session.notebookId);
+    const nb = this.getNotebook(session.notebookId);
+    const projectId = this.store.parseActivityKey(session.notebookId)?.projectId ?? session.notebookId;
     this.broadcast(session, "state", {
       turnActive: session.state !== "idle",
       turnId: session.turnId,
       kickoffRunning: session.state !== "idle" && session.kickoffTurn,
       intakeRunning: session.intakeResearch,
-      discoveryRunning: this.discoveries.has(session.notebookId),
-      ragBuilding: isRagIndexBuilding(session.notebookId),
-      ragBuildFailed: didLastRagBuildFail(session.notebookId),
-      activity: session.state !== "idle" || this.discoveries.has(session.notebookId) ? session.activity : null,
+      discoveryRunning: this.discoveries.has(projectId),
+      ragBuilding: isRagIndexBuilding(projectId),
+      ragBuildFailed: didLastRagBuildFail(projectId),
+      activity: session.state !== "idle" || this.discoveries.has(projectId) ? session.activity : null,
       partials: session.kickoffTurn ? {} : Object.fromEntries(session.partials),
-      messageCount: nb?.messages.length ?? 0,
+      messageCount: Array.isArray(nb?.messages) ? nb.messages.length : 0,
     });
   }
 
@@ -833,7 +950,8 @@ export class SessionManager {
     if (!nb.intake || nb.intake.status !== "pending" || nb.intake.generatedQuestions !== null) {
       return Promise.resolve();
     }
-    const existing = this.intakeGenerations.get(nb.id);
+    const key = this.store.sessionKey(nb);
+    const existing = this.intakeGenerations.get(key);
     if (existing) return existing;
 
     const run = (async () => {
@@ -853,16 +971,16 @@ export class SessionManager {
         console.error(`[aria] intake question generation failed for notebook ${nb.id}; deterministic-only form:`, err);
         questions = [];
       }
-      const fresh = this.store.get(nb.id);
+      const fresh = this.getNotebook(this.store.sessionKey(nb));
       // A late resolution must never change a form the user may already be
       // reading (GET persists [] after its cap) or has already submitted.
       if (fresh?.intake && fresh.intake.status === "pending" && fresh.intake.generatedQuestions === null) {
         fresh.intake.generatedQuestions = questions ?? [];
         await this.store.save(fresh);
       }
-    })().finally(() => this.intakeGenerations.delete(nb.id));
+    })().finally(() => this.intakeGenerations.delete(key));
 
-    this.intakeGenerations.set(nb.id, run);
+    this.intakeGenerations.set(key, run);
     return run;
   }
 
@@ -872,7 +990,7 @@ export class SessionManager {
    * so callers must invoke this BEFORE responding.
    */
   async runIntakePipeline(notebookId: string): Promise<void> {
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     const session = this.ensureSession(notebookId);
     if (!nb || !nb.intake || session.state !== "idle") return;
 
@@ -915,7 +1033,7 @@ export class SessionManager {
               role: nb.interview?.role ?? nb.title,
               company: nb.interview?.company ?? null,
               note: answers.researchNote,
-              query: null,
+              request: null,
               manifest: nb.sourceFiles.length > 0 ? interviewMaterialsManifest(nb.sourceFiles) : null,
               knownUrls: [],
               max: this.config.discoverMax,
@@ -924,7 +1042,7 @@ export class SessionManager {
               topic: nb.topic ?? nb.title,
               focus: intakeFocus(answers),
               note: answers.researchNote,
-              query: null,
+              request: null,
               manifest: nb.sourceFiles.length > 0 ? sourcesManifest(nb.sourceFiles) : null,
               knownUrls: [],
               max: this.config.discoverMax,
@@ -941,12 +1059,15 @@ export class SessionManager {
       this.setActivity(session, { kind: "researching", phase: "downloading", completed: 0, total: discovered.length });
       const result = await downloadDiscoveredSources(this.store, nb.id, discovered, {
         signal: session.researchAbort?.signal,
-        onSource: (fresh) => this.broadcast(session, "sources-updated", { notebook: toSummary(fresh) }),
+        onSource: (fresh, file) => {
+          this.store.queueSourceAdditions(fresh, [file]);
+          this.broadcastSourcesUpdated(fresh.id);
+        },
         onProgress: (completed, total) =>
           this.setActivity(session, { kind: "researching", phase: "downloading", completed, total }),
       });
       if (result.added.length === 0) throw new Error("no discovered sources could be downloaded");
-      const fresh = this.store.get(nb.id);
+      const fresh = this.getNotebook(this.store.sessionKey(nb));
       if (!fresh) return; // notebook deleted mid-research
       fresh.intake!.research = "done";
       await this.store.save(fresh);
@@ -955,7 +1076,7 @@ export class SessionManager {
     } catch (err) {
       const aborted = session.researchAbort?.signal.aborted === true;
       if (!aborted) console.error(`[aria] online source discovery failed for notebook ${nb.id}; proceeding without it:`, err);
-      const fresh = this.store.get(nb.id);
+      const fresh = this.getNotebook(this.store.sessionKey(nb));
       if (fresh?.intake) {
         fresh.intake.research = "failed";
         await this.store.save(fresh);
@@ -1013,7 +1134,7 @@ export class SessionManager {
 
   ensureKnowledgeState(notebookId: string): KnowledgeState | null {
     if (this.config.learningStateDisabled) return null;
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) return null;
     if (nb.userKnowledgeState) return nb.userKnowledgeState;
     if (this.client.state !== "running") return null;
@@ -1029,10 +1150,37 @@ export class SessionManager {
   }
 
   async rebuildKnowledgeStateForNotebook(notebookId: string): Promise<KnowledgeState | null> {
+    if (this.store.get(notebookId)) return this.rebuildKnowledgeStateForProjectSerialized(notebookId);
     if (this.config.learningStateDisabled) return null;
-    const nb = this.store.get(notebookId);
+    const nb = this.getNotebook(notebookId);
     if (!nb) return null;
     return this.rebuildKnowledgeState(nb, this.sessions.get(notebookId), { forceGraphGeneration: true });
+  }
+
+  async rebuildKnowledgeStateForProject(projectId: string): Promise<KnowledgeState | null> {
+    if (this.config.learningStateDisabled) return null;
+    const project = this.store.get(projectId);
+    if (!project) return null;
+    const tutors = project.activities.filter((activity) => activity.kind === "reverse-tutor");
+    if (tutors.length === 0) {
+      delete project.userKnowledgeState;
+      await this.store.save(project);
+      return null;
+    }
+    const key = this.store.activityKey(projectId, tutors[0]!.id);
+    const nb = this.getNotebook(key);
+    if (!nb) return null;
+    const messages = tutors
+      .flatMap((activity) => activity.messages)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return this.rebuildKnowledgeState(nb, this.sessions.get(key), {
+      forceGraphGeneration: true,
+      messages,
+    });
+  }
+
+  rebuildKnowledgeStateForProjectSerialized(projectId: string): Promise<KnowledgeState | null> {
+    return this.serializeKnowledge(projectId, () => this.rebuildKnowledgeStateForProject(projectId));
   }
 
   private async buildKnowledgeGraph(nb: Notebook, forceGeneration = false, signal?: AbortSignal): Promise<KnowledgeState> {
@@ -1092,6 +1240,7 @@ export class SessionManager {
       forceGraphGeneration?: boolean;
       carryForwardOnTruncation?: boolean;
       signal?: AbortSignal;
+      messages?: ChatMessage[];
     } = {},
   ): Promise<KnowledgeState> {
     let base: KnowledgeState;
@@ -1110,7 +1259,15 @@ export class SessionManager {
             : emptyKnowledgeState(nb.topic ?? nb.title);
     }
 
-    const messages = nb.messages.filter((m) => m.id !== opts.excludeMessageId);
+    const sharedMessages =
+      opts.messages ??
+      (isInterview(nb)
+        ? nb.messages
+        : (this.store.get(nb.id)?.activities ?? [])
+            .filter((activity) => activity.kind === "reverse-tutor")
+            .flatMap((activity) => activity.messages)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+    const messages = sharedMessages.filter((m) => m.id !== opts.excludeMessageId);
     const lastTeacherId = [...messages].reverse().find((m) => m.role === "teacher")?.id ?? null;
     let state = base;
     if (messages.some((m) => m.role === "teacher")) {
@@ -1230,6 +1387,31 @@ export class SessionManager {
       if (nb.userKnowledgeState) nb.userKnowledgeState.lastChanges = [];
       console.error(`[aria] user knowledge evaluator failed for notebook ${nb.id}; map unchanged:`, err);
     }
+  }
+
+  private runKnowledgeEvaluatorSerialized(
+    nb: Notebook,
+    session: NotebookSession,
+    teacherText: string,
+    teacherMessageId: string,
+  ): Promise<void> {
+    return this.serializeKnowledge(nb.id, () =>
+      this.runKnowledgeEvaluator(nb, session, teacherText, teacherMessageId),
+    );
+  }
+
+  private serializeKnowledge<T>(projectId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.knowledgeQueues.get(projectId) ?? Promise.resolve();
+    const result = previous.catch(() => {}).then(work);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.knowledgeQueues.set(projectId, tail);
+    void tail.finally(() => {
+      if (this.knowledgeQueues.get(projectId) === tail) this.knowledgeQueues.delete(projectId);
+    });
+    return result;
   }
 
   /**
@@ -1436,7 +1618,7 @@ export class SessionManager {
     session: NotebookSession,
     msg: { id: string; text: string; turnId: string | null; interrupted?: true },
   ): Promise<void> {
-    const nb = this.store.get(session.notebookId);
+    const nb = this.getNotebook(session.notebookId);
     if (!nb || !msg.text.trim()) return;
     const record: ChatMessage = {
       id: msg.id,
@@ -1458,7 +1640,7 @@ export class SessionManager {
   }
 
   private async onTurnCompleted(session: NotebookSession, p: TurnCompletedNotification): Promise<void> {
-    const nb = this.store.get(session.notebookId);
+    const nb = this.getNotebook(session.notebookId);
     this.clearWatchdog(session);
 
     let kickoffEmpty = false;
@@ -1523,7 +1705,7 @@ export class SessionManager {
       session.researchAbort = null;
       // The caller's wording assumes the Aria student; interview notebooks
       // get the interviewer equivalent.
-      const nb = this.store.get(session.notebookId);
+      const nb = this.getNotebook(session.notebookId);
       const sessionMessage = nb && isInterview(nb) ? message.replace("The student's", "The interviewer's") : message;
       void (async () => {
         if (!session.kickoffTurn) {
@@ -1550,7 +1732,7 @@ export class SessionManager {
     this.clearWatchdog(session);
     session.watchdog = setTimeout(() => {
       console.error(`[aria] turn watchdog fired for notebook ${session.notebookId}`);
-      const nb = this.store.get(session.notebookId);
+      const nb = this.getNotebook(session.notebookId);
       // Capture the turn being watched so a force-reset can only ever affect
       // THIS turn — never a subsequent turn that started in the meantime.
       const armedTurnId = session.turnId;
@@ -1612,10 +1794,31 @@ export class SessionManager {
     this.broadcast(session, "activity", activity);
   }
 
+  /** Project-wide lifecycle events also reach every initialized activity tab. */
+  private initializedProjectSessions(projectId: string): NotebookSession[] {
+    const project = this.store.get(projectId);
+    if (!project) return [];
+    const sessions = [this.ensureSession(projectId)];
+    for (const activity of project.activities) {
+      const activitySession = this.sessions.get(this.store.activityKey(projectId, activity.id));
+      if (activitySession) sessions.push(activitySession);
+    }
+    return sessions;
+  }
+
+  private broadcastProjectState(projectId: string): void {
+    for (const session of this.initializedProjectSessions(projectId)) this.broadcastState(session);
+  }
+
+  private broadcastProjectEvent(projectId: string, event: string, data: unknown): void {
+    for (const session of this.initializedProjectSessions(projectId)) this.broadcast(session, event, data);
+  }
+
   /** Notify shell clients after sources change in pipelines outside this manager. */
-  broadcastSourcesUpdated(notebookId: string): void {
-    const nb = this.store.get(notebookId);
-    if (!nb) return;
-    this.broadcast(this.ensureSession(notebookId), "sources-updated", { notebook: toSummary(nb) });
+  broadcastSourcesUpdated(projectId: string): void {
+    const project = this.store.get(projectId);
+    if (!project) return;
+    const payload = { notebook: toSummary(project) };
+    this.broadcastProjectEvent(projectId, "sources-updated", payload);
   }
 }

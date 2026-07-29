@@ -6,7 +6,7 @@ import path from "node:path";
 import { canonicalUrl, cleanTitle, downloadDiscoveredSources, markdownWithSource, truncateWords } from "./discover.js";
 import { approxWordCount } from "./extract.js";
 import { ensureRagIndex } from "./rag.js";
-import { sanitizeName, type Notebook, type NotebookStore, type SourceFile } from "./store.js";
+import { sanitizeName, type NotebookStore, type SourceFile } from "./store.js";
 import type { SettingsStore } from "./settings.js";
 
 const execFileAsync = promisify(execFile);
@@ -152,15 +152,9 @@ async function ingestYouTube(
     originUrl: watchUrl,
   };
   fresh.sourceFiles.push(file);
-  noteForCoach(fresh, file.originalName);
+  store.queueSourceAdditions(fresh, [file]);
   await store.save(fresh);
   onSource?.();
-}
-
-/** Tell an already-greeted coach about a source its pinned manifest predates. */
-function noteForCoach(nb: Notebook, originalName: string): void {
-  if (!nb.coach?.kickoffDone) return;
-  nb.coach.pendingSourceNotes = [...(nb.coach.pendingSourceNotes ?? []), originalName].slice(-10);
 }
 
 /** In-flight ingestion per notebook, so the coach kickoff can wait for pasted links. */
@@ -222,7 +216,7 @@ export function ingestLinks(
         other.map((url) => ({ title: "", url, why: null })),
         {
           onSource: (fresh, file) => {
-            noteForCoach(fresh, file.originalName);
+            store.queueSourceAdditions(fresh, [file]);
             opts.onSource?.();
           },
         },

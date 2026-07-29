@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from "react";
-import { Outlet, useLocation, useMatch } from "react-router-dom";
+import { Outlet, useMatch } from "react-router-dom";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useNotebooks, type NotebooksController } from "../lib/useNotebooks";
 import { CoachSidebar } from "./CoachSidebar";
@@ -29,16 +29,12 @@ export function useLearningShell(): LearningShellState {
  * pane; the project list and its expanded rows never unmount and flash.
  */
 export function LearningShell() {
-  const location = useLocation();
   const projectMatch = useMatch("/project/:id");
-  const coachMatch = useMatch("/learn/:id");
-  const teachMatch = useMatch("/notebook/:id");
-  const notebookId = projectMatch?.params.id ?? coachMatch?.params.id ?? teachMatch?.params.id;
-  const activeChat = location.pathname.startsWith("/project/")
-    ? "project"
-    : location.pathname.startsWith("/notebook/")
-      ? "teach"
-      : "coach";
+  const activityMatch = useMatch("/project/:id/activity/:aid");
+  const readingMatch = useMatch("/project/:id/read/:rid");
+  const notebookId = projectMatch?.params.id ?? activityMatch?.params.id ?? readingMatch?.params.id;
+  const activeActivityId = activityMatch?.params.aid;
+  const activeReadingId = readingMatch?.params.rid;
   const narrow = useMediaQuery("(max-width: 900px)");
   const projects = useNotebooks();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -63,7 +59,8 @@ export function LearningShell() {
       <div className="learning-shell">
         <CoachSidebar
           notebookId={notebookId}
-          activeChat={activeChat}
+          activeActivityId={activeActivityId}
+          activeReadingId={activeReadingId}
           projects={projects}
           collapsed={sidebarCollapsed}
           onCollapsedChange={setSidebarCollapsed}

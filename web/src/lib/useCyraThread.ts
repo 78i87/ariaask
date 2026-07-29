@@ -20,7 +20,7 @@ export interface CyraThreadSession {
 const STREAMING_ID_PREFIX = "streaming:";
 
 /** The notebook's list of Cyra conversations, newest first. */
-export function useCyraThreads(notebookId: string, enabled = true): {
+export function useCyraThreads(notebookId: string, activityId: string, enabled = true): {
   threads: CyraThreadSummary[];
   /** True once the first fetch settles — gates UI that picks a default thread. */
   loaded: boolean;
@@ -31,14 +31,14 @@ export function useCyraThreads(notebookId: string, enabled = true): {
   const refresh = useCallback(async () => {
     if (!enabled) return;
     try {
-      const res = await api.listCyraThreads(notebookId);
+      const res = await api.listCyraThreads(notebookId, activityId);
       setThreads([...res.threads].reverse());
     } catch {
       /* the bar just shows what it last knew */
     } finally {
       setLoaded(true);
     }
-  }, [notebookId, enabled]);
+  }, [notebookId, activityId, enabled]);
   useEffect(() => {
     setThreads([]);
     setLoaded(false);
@@ -53,7 +53,7 @@ export function useCyraThreads(notebookId: string, enabled = true): {
  * kickoff/intake machinery. Inert while threadId is null (the new-question
  * composer view owns that state).
  */
-export function useCyraThread(notebookId: string, threadId: string | null): CyraThreadSession {
+export function useCyraThread(notebookId: string, activityId: string, threadId: string | null): CyraThreadSession {
   const [messages, setMessages] = useState<CyraChatMessage[]>([]);
   const [status, setStatus] = useState<CyraStatus>(threadId ? "loading" : "idle");
   const [activity, setActivity] = useState<CyraActivity>(null);
@@ -94,7 +94,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
 
   const loadThread = useCallback(async () => {
     if (!threadId) return null;
-    const res = await api.getCyraThread(notebookId, threadId);
+    const res = await api.getCyraThread(notebookId, activityId, threadId);
     persistedCount.current = res.messages.length;
     knownIds.current = new Set(res.messages.map((m) => m.id));
     setMessages(
@@ -107,7 +107,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       })),
     );
     return res;
-  }, [notebookId, threadId]);
+  }, [notebookId, activityId, threadId]);
 
   // Initial load (and full reset when switching threads).
   useEffect(() => {
@@ -144,7 +144,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
   // SSE channel — one per open Cyra thread, closed on switch.
   useEffect(() => {
     if (!threadId) return;
-    const es = new EventSource(api.cyraEventsUrl(notebookId, threadId));
+    const es = new EventSource(api.cyraEventsUrl(notebookId, activityId, threadId));
 
     es.addEventListener("state", (e) => {
       const data = JSON.parse((e as MessageEvent).data) as {
@@ -247,7 +247,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
     });
 
     return () => es.close();
-  }, [notebookId, threadId, loadThread, scheduleFlush]);
+  }, [notebookId, activityId, threadId, loadThread, scheduleFlush]);
 
   const send = useCallback(
     (text: string) => {
@@ -260,7 +260,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       persistedCount.current += 1;
       setError(null);
       setStatus("waiting");
-      void api.sendCyraMessage(notebookId, threadId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
+      void api.sendCyraMessage(notebookId, activityId, threadId, { text: trimmed, clientMessageId: optimisticId }).catch((err) => {
         if (err instanceof ApiError && err.code === "turn_active") return; // SSE will drive the UI
         if (err instanceof ApiError && err.code === "turn_cancelled") {
           setStatus("idle");
@@ -273,7 +273,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
         setError(err instanceof Error ? err.message : "Failed to reach Cyra");
       });
     },
-    [notebookId, threadId],
+    [notebookId, activityId, threadId],
   );
 
   const editMessage = useCallback(
@@ -293,7 +293,7 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
       setMessages([...kept, { id: optimisticId, role: "user", text: trimmed, status: "complete" }]);
       setError(null);
       setStatus("waiting");
-      void api.editCyraMessage(notebookId, threadId, messageId, trimmed, optimisticId).then(
+      void api.editCyraMessage(notebookId, activityId, threadId, messageId, trimmed, optimisticId).then(
         () => onSuccess?.(),
         (err) => {
           // A rejected edit leaves this tab's optimistic truncation wrong — resync.
@@ -307,22 +307,22 @@ export function useCyraThread(notebookId: string, threadId: string | null): Cyra
         },
       );
     },
-    [notebookId, threadId, messages, loadThread],
+    [notebookId, activityId, threadId, messages, loadThread],
   );
 
   const interrupt = useCallback(() => {
-    if (threadId) void api.interruptCyra(notebookId, threadId).catch(() => {});
-  }, [notebookId, threadId]);
+    if (threadId) void api.interruptCyra(notebookId, activityId, threadId).catch(() => {});
+  }, [notebookId, activityId, threadId]);
 
   const retry = useCallback(() => {
     if (!threadId) return;
     setError(null);
     setStatus("waiting");
-    void api.sendCyraMessage(notebookId, threadId, { retry: true }).catch((err) => {
+    void api.sendCyraMessage(notebookId, activityId, threadId, { retry: true }).catch((err) => {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Failed to reach Cyra");
     });
-  }, [notebookId, threadId]);
+  }, [notebookId, activityId, threadId]);
 
   return { messages, status, activity, error, send, editMessage, interrupt, retry };
 }

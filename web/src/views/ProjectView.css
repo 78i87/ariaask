@@ -18,6 +18,70 @@
   padding: 48px 32px 64px;
 }
 
+.project-view__activities {
+  margin-bottom: 56px;
+}
+
+.project-view__section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  margin-bottom: 28px;
+}
+
+.project-view__section-heading h1 {
+  margin: 4px 0 10px;
+}
+
+.project-view__section-heading p {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.project-view__activity-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-view__activity {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 72px;
+  padding: 6px 8px 6px 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.project-view__activity-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-view__activity-open > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.project-view__activity-open .body-medium {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
 .project-view__intro {
   display: flex;
   align-items: flex-end;
@@ -98,6 +162,12 @@
   }
 
   .project-view__intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .project-view__section-heading {
     align-items: flex-start;
     flex-direction: column;
     gap: 20px;

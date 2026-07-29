@@ -1,4 +1,7 @@
 .srcs__empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--md-sys-color-on-surface-variant);
   margin: 0;
 }

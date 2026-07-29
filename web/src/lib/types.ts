@@ -18,6 +18,24 @@ export interface DiscoverFailure {
   reason: string;
 }
 
+export interface DiscoveryClarificationQuestion {
+  id: string;
+  question: string;
+  options: IntakeOption[];
+  allowsCustom: true;
+}
+
+export interface DiscoveryRefinement {
+  question: string;
+  answer: string;
+}
+
+export interface DiscoveryRequest {
+  request: string;
+  refinements: DiscoveryRefinement[];
+  activityId?: string;
+}
+
 export interface IntakeOption {
   value: string;
   label: string;
@@ -45,19 +63,27 @@ export interface NotebookInterview {
   company: string | null;
 }
 
+export type ActivityKind = "coach" | "reverse-tutor" | "interview";
+
+export interface ProjectActivity {
+  id: string;
+  kind: ActivityKind;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  setupComplete: boolean;
+  interview?: NotebookInterview;
+}
+
 export interface Notebook {
   id: string;
   title: string;
-  type: "topic" | "files" | "interview";
-  topic: string | null;
-  interview?: NotebookInterview | null;
+  goal: string;
   sourceFiles: SourceFile[];
+  activities: ProjectActivity[];
   createdAt: string;
-  lastTaughtAt: string | null;
-  messageCount: number;
-  hasCoachChat: boolean;
-  hasTeachBackChat: boolean;
-  hasInterviewChat: boolean;
+  updatedAt: string;
   archivedAt: string | null;
 }
 
